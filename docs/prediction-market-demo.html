@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StakePot — Engine Demo</title>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#FAFDF7; --ink:#10241B; --green:#0E7A3D; --green-deep:#0A5A2D;
+  --red:#C93A2E; --gold:#E3A81C; --muted:#5E7267; --line:#DCE7DC; --card:#FFFFFF;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:var(--paper);color:var(--ink);font-family:'Archivo',sans-serif;font-size:15px;line-height:1.45}
+.wrap{max-width:460px;margin:0 auto;padding:14px 14px 60px}
+header{padding:10px 2px 16px}
+.brand{font-weight:900;font-size:21px;letter-spacing:-.5px}
+.brand span{color:var(--green)}
+.tag{color:var(--muted);font-size:12.5px;margin-top:2px}
+.engineline{position:sticky;top:0;z-index:9;background:var(--ink);color:#fff;border-radius:10px;
+  padding:9px 12px;font-family:'Space Mono',monospace;font-size:11.5px;display:flex;justify-content:space-between;gap:8px;margin-bottom:16px}
+.engineline b{color:var(--gold)}
+.engineline .zero{color:#7BE29A}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:18px}
+.eyebrow{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:700}
+.eyebrow.live::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:6px;animation:pulse 1.6s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+h2{font-weight:800;font-size:16.5px;margin:5px 0 3px;letter-spacing:-.2px}
+.src{font-size:11.5px;color:var(--muted);margin-bottom:12px}
+.bigpct{font-family:'Space Mono',monospace;font-weight:700;font-size:34px;letter-spacing:-1px}
+.bigpct small{font-size:13px;color:var(--muted);font-weight:400;letter-spacing:0}
+.argbar{height:26px;border-radius:8px;overflow:hidden;display:flex;margin:10px 0 6px;border:1px solid var(--line)}
+.argbar .yes{background:var(--green);transition:width .45s cubic-bezier(.2,.8,.2,1)}
+.argbar .no{background:var(--red);transition:width .45s cubic-bezier(.2,.8,.2,1);flex:1}
+.barlbl{display:flex;justify-content:space-between;font-family:'Space Mono',monospace;font-size:11.5px;margin-bottom:12px}
+.barlbl .y{color:var(--green-deep);font-weight:700}.barlbl .n{color:var(--red);font-weight:700}
+.chips{display:flex;gap:8px;margin:8px 0 10px}
+.chip{flex:1;border:1.5px solid var(--line);background:#fff;border-radius:9px;padding:7px 0;font-weight:700;font-size:13px;cursor:pointer;font-family:'Space Mono',monospace}
+.chip.sel{border-color:var(--ink);background:var(--ink);color:#fff}
+.btnrow{display:flex;gap:9px}
+button.act{flex:1;border:none;border-radius:10px;padding:12px 0;font-weight:800;font-size:14px;cursor:pointer;font-family:'Archivo',sans-serif;transition:transform .08s}
+button.act:active{transform:scale(.97)}
+.buyyes{background:var(--green);color:#fff}.buyno{background:var(--red);color:#fff}
+.sellbtn{background:#fff;border:1.5px solid var(--ink)!important;color:var(--ink)}
+.pos{margin-top:12px;border-top:1px dashed var(--line);padding-top:10px;font-size:12.5px;font-family:'Space Mono',monospace;display:flex;justify-content:space-between;align-items:center}
+.pnl-up{color:var(--green-deep);font-weight:700}.pnl-dn{color:var(--red);font-weight:700}
+.spark{display:flex;align-items:flex-end;gap:2px;height:34px;margin:10px 0 2px}
+.spark i{flex:1;background:var(--green);opacity:.75;border-radius:2px 2px 0 0;min-height:2px;transition:height .3s}
+.mo-row{display:flex;align-items:center;gap:10px;margin:9px 0}
+.mo-name{width:86px;font-weight:700;font-size:13px}
+.mo-bar{flex:1;height:18px;background:#EFF5EF;border-radius:6px;overflow:hidden}
+.mo-fill{height:100%;background:var(--green);transition:width .45s cubic-bezier(.2,.8,.2,1)}
+.mo-fill.c2{background:#2E86C9}.mo-fill.c3{background:var(--gold)}.mo-fill.c4{background:#8B5CB8}
+.mo-pct{width:52px;text-align:right;font-family:'Space Mono',monospace;font-size:12.5px;font-weight:700}
+.mo-buy{border:1.5px solid var(--line);background:#fff;border-radius:7px;font-weight:800;padding:4px 9px;cursor:pointer;font-size:12px}
+.pool{display:flex;flex-direction:column;gap:10px;margin:12px 0}
+.pool-side{border:1px solid var(--line);border-radius:10px;padding:10px}
+.pool-top{display:flex;justify-content:space-between;font-size:12.5px;font-weight:700;margin-bottom:6px}
+.meter{height:10px;background:#EFF5EF;border-radius:5px;overflow:hidden}
+.meter i{display:block;height:100%;background:var(--green);transition:width .4s}
+.meter i.r{background:var(--red)}
+.meter-lbl{font-family:'Space Mono',monospace;font-size:10.5px;color:var(--muted);margin-top:4px}
+.stakebtn{margin-top:7px;width:100%;border:none;border-radius:8px;padding:9px 0;font-weight:800;cursor:pointer;font-size:13px}
+.locked{opacity:.45;pointer-events:none}
+.badge{display:inline-block;font-size:10.5px;font-weight:800;letter-spacing:.06em;border-radius:6px;padding:3px 8px;margin-left:6px;vertical-align:2px}
+.badge.wait{background:#FDF3D7;color:#8A6A0E}.badge.on{background:#DFF3E5;color:var(--green-deep)}
+.resolve{margin-top:12px;width:100%;background:var(--ink);color:#fff;border:none;border-radius:10px;padding:11px;font-weight:800;cursor:pointer;font-size:13.5px}
+.receipt{margin-top:12px;background:#F3F8F3;border:1px solid var(--line);border-radius:10px;padding:12px;font-family:'Space Mono',monospace;font-size:11.5px;white-space:pre-line;display:none}
+.note{font-size:11.5px;color:var(--muted);margin-top:8px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;background:var(--ink);color:#fff;
+  padding:9px 16px;border-radius:99px;font-size:12.5px;font-family:'Space Mono',monospace;opacity:0;transition:opacity .25s;pointer-events:none;max-width:92%;text-align:center}
+.toast.show{opacity:1}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <div class="brand">Stake<span>Pot</span> <span style="font-weight:400;color:var(--muted);font-size:13px">· engine demo</span></div>
+  <div class="tag">Every button runs the real v1.1 formula. Watch the gold line — it never moves off zero.</div>
+</header>
+
+<div class="engineline">
+  <span>POT ALL MARKETS <b id="gpot">₦0</b></span>
+  <span>PLATFORM COST <b class="zero" id="gcost">₦0.00</b></span>
+</div>
+
+<!-- ============ MARKET 1: BINARY OFFICIAL ============ -->
+<div class="card" id="m1card">
+  <div class="eyebrow live">Official market · live</div>
+  <h2>Naira above ₦1,500/$ on Friday?</h2>
+  <div class="src">Source: CBN official closing rate · Freezes Fri 9:00</div>
+  <div class="bigpct"><span id="m1pct">50.0%</span> <small>YES</small></div>
+  <div class="argbar"><div class="yes" id="m1bary" style="width:50%"></div><div class="no"></div></div>
+  <div class="barlbl"><span class="y">YES</span><span class="n" id="m1nopct">NO 50.0%</span></div>
+  <div class="spark" id="m1spark"></div>
+  <div class="chips" id="m1chips">
+    <div class="chip" data-v="500">₦500</div>
+    <div class="chip sel" data-v="1000">₦1k</div>
+    <div class="chip" data-v="2000">₦2k</div>
+    <div class="chip" data-v="5000">₦5k</div>
+  </div>
+  <div class="btnrow">
+    <button class="act buyyes" onclick="m1buy(0)">Buy YES</button>
+    <button class="act buyno" onclick="m1buy(1)">Buy NO</button>
+  </div>
+  <div class="pos">
+    <span id="m1pos">No position yet</span>
+    <button class="act sellbtn" style="flex:0 0 auto;padding:7px 14px;font-size:12px" onclick="m1sell()">Sell all</button>
+  </div>
+  <button class="resolve" onclick="m1resolve()">Resolve market → CBN says YES</button>
+  <div class="receipt" id="m1rcpt"></div>
+</div>
+
+<!-- ============ MARKET 2: MULTI-OUTCOME ============ -->
+<div class="card" id="m2card">
+  <div class="eyebrow live">Official market · multi-outcome</div>
+  <h2>Who wins the governorship?</h2>
+  <div class="src">Source: INEC declared winner · Prices always sum to 100%</div>
+  <div id="m2rows"></div>
+  <div class="note">Tap <b>+₦1k</b> on a candidate and watch every other bar rebalance — the 100% guarantee, live.</div>
+  <button class="resolve" onclick="m2resolve()">Resolve market → INEC declares Adaeze</button>
+  <div class="receipt" id="m2rcpt"></div>
+</div>
+
+<!-- ============ MARKET 3: COMMUNITY POOL ============ -->
+<div class="card" id="m3card">
+  <div class="eyebrow">Community market <span class="badge wait" id="m3badge">FUNDING</span></div>
+  <h2>Will our LGA road be commissioned by Sept 30?</h2>
+  <div class="src">Created by @EmekaObi · Source: State Ministry of Works bulletin · Voids Oct 15</div>
+  <div class="pool">
+    <div class="pool-side">
+      <div class="pool-top"><span style="color:var(--green-deep)">YES pool</span><span id="m3ya" style="font-family:'Space Mono',monospace">₦0</span></div>
+      <div class="meter"><i id="m3ym" style="width:0%"></i></div>
+      <div class="meter-lbl" id="m3yl">₦0 of ₦20,000 · 0 of 4 backers</div>
+      <button class="stakebtn" style="background:var(--green);color:#fff" onclick="m3stake(0)">Stake ₦5,000 YES</button>
+    </div>
+    <div class="pool-side">
+      <div class="pool-top"><span style="color:var(--red)">NO pool</span><span id="m3na" style="font-family:'Space Mono',monospace">₦0</span></div>
+      <div class="meter"><i class="r" id="m3nm" style="width:0%"></i></div>
+      <div class="meter-lbl" id="m3nl">₦0 of ₦20,000 · 0 of 4 backers</div>
+      <button class="stakebtn" style="background:var(--red);color:#fff" onclick="m3stake(1)">Stake ₦5,000 NO</button>
+    </div>
+  </div>
+  <div class="note" id="m3note">Both pools must fill before this market goes live — if either side falls short, everyone is auto-refunded. (Demo: each tap is one backer.)</div>
+  <button class="resolve locked" id="m3resbtn" onclick="m3resolve()">Resolve market → Ministry confirms YES</button>
+  <div class="receipt" id="m3rcpt"></div>
+</div>
+
+<div class="note" style="text-align:center;padding:0 10px">
+  Demo of the hybrid engine (LMSR-curve pricing, pot-share payouts) from Architecture v1.1 §2.3.
+  Points shown as ₦ for feel — the real launch is points mode.
+</div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------- v1.1 engine (exact) ---------- */
+function mkMarket(n,L){return{n,L,q:new Array(n).fill(0),pot:0,C0:L*Math.log(n)};}
+function C(m){const mx=Math.max(...m.q)/m.L;let s=0;for(const q of m.q)s+=Math.exp(q/m.L-mx);return m.L*(mx+Math.log(s));}
+function prices(m){const mx=Math.max(...m.q)/m.L;const e=m.q.map(q=>Math.exp(q/m.L-mx));const s=e.reduce((a,b)=>a+b,0);return e.map(v=>v/s);}
+function buy(m,i,money){const p=prices(m)[i];const d=m.L*Math.log((Math.exp(money/m.L)-1+p)/p);m.q[i]+=d;m.pot+=money;return d;}
+function sell(m,i,shares){const c0=C(m);m.q[i]-=shares;const refund=c0-C(m);m.pot-=refund;return refund;}
+
+const fmt=n=>'₦'+Math.round(n).toLocaleString('en-NG');
+const fmt2=n=>'₦'+n.toLocaleString('en-NG',{minimumFractionDigits:2,maximumFractionDigits:2});
+let totalIn=0,totalOut=0;
+function engineline(){
+  document.getElementById('gpot').textContent=fmt(M1.pot+M2.pot+m3.yes+m3.no);
+  document.getElementById('gcost').textContent=fmt2(Math.abs(totalIn-totalOut-(M1.pot+M2.pot+m3.yes+m3.no))<0.01?0:totalIn-totalOut-(M1.pot+M2.pot+m3.yes+m3.no));
+}
+function toast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(t._x);t._x=setTimeout(()=>t.classList.remove('show'),2400);}
+
+/* ---------- Market 1: binary ---------- */
+const M1=mkMarket(2,25000); // L = 25x typical stake per tuning rule
+let m1shares=[0,0],m1paid=0,m1hist=[50],m1done=false,m1amt=1000;
+document.getElementById('m1chips').addEventListener('click',e=>{
+  if(!e.target.dataset.v)return;
+  document.querySelectorAll('#m1chips .chip').forEach(c=>c.classList.remove('sel'));
+  e.target.classList.add('sel');m1amt=+e.target.dataset.v;
+});
+function m1draw(){
+  const p=prices(M1)[0]*100;
+  document.getElementById('m1pct').textContent=p.toFixed(1)+'%';
+  document.getElementById('m1nopct').textContent='NO '+(100-p).toFixed(1)+'%';
+  document.getElementById('m1bary').style.width=p+'%';
+  m1hist.push(p);if(m1hist.length>36)m1hist.shift();
+  const sp=document.getElementById('m1spark');sp.innerHTML='';
+  m1hist.forEach(v=>{const i=document.createElement('i');i.style.height=(v/100*34)+'px';sp.appendChild(i);});
+  const est=M1.q[0]>0?M1.pot/M1.q[0]:0;
+  const val=m1shares[0]*est; // simple YES-side estimate for demo
+  const pos=document.getElementById('m1pos');
+  if(m1shares[0]<0.01&&m1shares[1]<0.01){pos.textContent='No position yet';}
+  else{
+    const side=m1shares[0]>m1shares[1]?'YES':'NO';
+    const sh=Math.max(m1shares[0],m1shares[1]);
+    pos.innerHTML=`${side} · ${sh.toFixed(0)} shares · paid ${fmt(m1paid)}`;
+  }
+  engineline();
+}
+function m1buy(i){
+  if(m1done)return toast('Market resolved — scroll for the receipt');
+  totalIn+=m1amt;m1paid+=m1amt;
+  m1shares[i]+=buy(M1,i,m1amt);
+  m1draw();toast(`Bought ${i===0?'YES':'NO'} for ${fmt(m1amt)} — price moved`);
+}
+function m1sell(){
+  if(m1done)return;
+  let refund=0;
+  for(const i of[0,1]){if(m1shares[i]>0.01){refund+=sell(M1,i,m1shares[i]);m1shares[i]=0;}}
+  if(refund<=0)return toast('Nothing to sell yet');
+  totalOut+=refund;
+  const pnl=refund-m1paid;
+  toast(`Sold all for ${fmt(refund)} · ${pnl>=0?'profit':'loss'} ${fmt(Math.abs(pnl))} — paid from the pot`);
+  m1paid=0;m1draw();
+}
+function m1resolve(){
+  if(m1done)return;m1done=true;
+  const fee=M1.pot*0.02, dist=M1.pot-fee;
+  const yourPay=M1.q[0]>0?dist*(m1shares[0]/M1.q[0]):0;
+  totalOut+=dist+fee;
+  const r=document.getElementById('m1rcpt');r.style.display='block';
+  r.textContent=
+`RESOLVED YES · CBN rate above ₦1,500
+Pot collected ......... ${fmt2(M1.pot)}
+Platform fee (2%) ..... ${fmt2(fee)}
+Paid to YES holders ... ${fmt2(dist)}
+  └ your YES shares ... ${fmt2(yourPay)}
+Pot remaining ......... ₦0.00
+PLATFORM COST ......... ₦0.00  ✔`;
+  M1.pot=0;engineline();
+  document.getElementById('m1card').querySelectorAll('.buyyes,.buyno,.sellbtn,.resolve').forEach(b=>b.classList.add('locked'));
+}
+
+/* ---------- Market 2: multi-outcome ---------- */
+const CANDS=['Adaeze','Bello','Chinedu','Any other'];
+const M2=mkMarket(4,30000);
+// seed a realistic opening: platform seed trades
+[[0,9000],[1,7000],[2,5000],[3,3000]].forEach(([i,m])=>{totalIn+=m;buy(M2,i,m);});
+let m2shares=[0,0,0,0],m2done=false;
+function m2draw(){
+  const ps=prices(M2);
+  const rows=document.getElementById('m2rows');rows.innerHTML='';
+  CANDS.forEach((c,i)=>{
+    const row=document.createElement('div');row.className='mo-row';
+    row.innerHTML=`<div class="mo-name">${c}</div>
+      <div class="mo-bar"><div class="mo-fill ${i>0?'c'+(i+1):''}" style="width:${ps[i]*100}%"></div></div>
+      <div class="mo-pct">${(ps[i]*100).toFixed(1)}%</div>
+      <button class="mo-buy" ${m2done?'disabled':''} onclick="m2buy(${i})">+₦1k</button>`;
+    rows.appendChild(row);
+  });
+  engineline();
+}
+function m2buy(i){
+  if(m2done)return;
+  totalIn+=1000;m2shares[i]+=buy(M2,i,1000);
+  m2draw();toast(`Backed ${CANDS[i]} — all four rebalanced to 100%`);
+}
+function m2resolve(){
+  if(m2done)return;m2done=true;
+  const fee=M2.pot*0.02,dist=M2.pot-fee;
+  const yourPay=M2.q[0]>0?dist*(m2shares[0]/M2.q[0]):0;
+  totalOut+=dist+fee;
+  const r=document.getElementById('m2rcpt');r.style.display='block';
+  r.textContent=
+`RESOLVED · INEC declares Adaeze
+Pot collected ......... ${fmt2(M2.pot)}
+Platform fee (2%) ..... ${fmt2(fee)}
+Paid to Adaeze holders  ${fmt2(dist)}
+  └ your shares ....... ${fmt2(yourPay)}
+All other outcomes .... ₦0 (their stakes funded the winners)
+PLATFORM COST ......... ₦0.00  ✔`;
+  M2.pot=0;m2draw();
+}
+
+/* ---------- Market 3: community pool ---------- */
+const m3={yes:0,no:0,yb:0,nb:0,live:false,done:false,myYes:0};
+const NEED=20000,BACKERS=4;
+function m3draw(){
+  document.getElementById('m3ya').textContent=fmt(m3.yes);
+  document.getElementById('m3na').textContent=fmt(m3.no);
+  document.getElementById('m3ym').style.width=Math.min(100,m3.yes/NEED*100)+'%';
+  document.getElementById('m3nm').style.width=Math.min(100,m3.no/NEED*100)+'%';
+  document.getElementById('m3yl').textContent=`${fmt(m3.yes)} of ${fmt(NEED)} · ${m3.yb} of ${BACKERS} backers`;
+  document.getElementById('m3nl').textContent=`${fmt(m3.no)} of ${fmt(NEED)} · ${m3.nb} of ${BACKERS} backers`;
+  if(!m3.live&&m3.yes>=NEED&&m3.no>=NEED&&m3.yb>=BACKERS&&m3.nb>=BACKERS){
+    m3.live=true;
+    const b=document.getElementById('m3badge');b.textContent='LIVE';b.className='badge on';
+    document.getElementById('m3resbtn').classList.remove('locked');
+    document.getElementById('m3note').innerHTML='<b>Market activated!</b> Both sides met the threshold — stakes are locked in escrow until resolution.';
+    toast('Community market is LIVE — both sides filled');
+  }
+  engineline();
+}
+function m3stake(side){
+  if(m3.done)return;
+  if(m3.live)return toast('Funding window closed — market is live');
+  totalIn+=5000;
+  if(side===0){m3.yes+=5000;m3.yb++;m3.myYes+=5000;}else{m3.no+=5000;m3.nb++;}
+  m3draw();
+}
+function m3resolve(){
+  if(m3.done||!m3.live)return;m3.done=true;
+  const losing=m3.no,fee=losing*0.03,plat=losing*0.02,creator=losing*0.01,dist=losing-fee;
+  const myShare=m3.myYes/m3.yes, myWin=dist*myShare;
+  totalOut+=m3.yes+dist+fee;
+  const r=document.getElementById('m3rcpt');r.style.display='block';
+  r.textContent=
+`RESOLVED YES · Ministry bulletin confirms
+Losing pool (NO) ...... ${fmt2(losing)}
+Fee 3% ................ ${fmt2(fee)}
+  ├ platform 2% ....... ${fmt2(plat)}
+  └ creator @EmekaObi . ${fmt2(creator)}
+Shared by YES side .... ${fmt2(dist)}
+  └ your YES stakes ... stake back + ${fmt2(myWin)}
+PLATFORM COST ......... ₦0.00  ✔`;
+  m3.yes=0;m3.no=0;engineline();
+  document.getElementById('m3card').querySelectorAll('.stakebtn,.resolve').forEach(b=>b.classList.add('locked'));
+}
+
+m1draw();m2draw();m3draw();
+</script>
+</body>
+</html>

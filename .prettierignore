@@ -4,3 +4,10 @@ dist/
 coverage/
 pnpm-lock.yaml
 apps/api/prisma/migrations/
+docs/prediction-market-demo.html
+docs/platform-architecture.md
+docs/market-rulebook.md
+docs/build-plan.md
+docs/product-brief.md
+apps/web/public/spcoin.svg
+scripts/*.py
