@@ -139,12 +139,34 @@ export const shadows = {
   lifted: '0 2px 8px 0 rgb(16 36 27 / 0.08)',
 } as const;
 
+/**
+ * SPcoin — the points-mode currency, specified in §7.4 as an object rather than
+ * a number with a label.
+ *
+ * Gold is money-only per the palette rule, and SPcoin is the only *object* ever
+ * rendered in gold. The asset itself lives at apps/web/public/spcoin.svg.
+ */
+export const spcoin = {
+  /** Radial gradient, light to dark. */
+  gradient: ['#F6C453', '#E3A81C', '#B8860B'],
+  /** The inner face the pot silhouette and SP monogram sit on. */
+  face: palette.greenDeep,
+  /** Inline balance size, e.g. `<coin> 12,400 SP`. */
+  smallPx: 18,
+  /** Wallet header and win moments. */
+  fullPx: 48,
+} as const;
+
 /** Motion tokens. */
 export const motion = {
   /** Count-up on a price tick, with a green/red tint over the same window. */
   priceTickMs: 250,
+  /** The ticket-view chart line draws in once on open. */
+  chartDrawMs: 600,
   /** The argument bar's easing. */
   barEase: 'cubic-bezier(.2,.8,.2,1)',
+  /** Buttons depress on press — the only scale transform in the system. */
+  pressScale: 0.97,
 } as const;
 
 /** CSS custom property names, so the preset and any hand-written CSS agree. */

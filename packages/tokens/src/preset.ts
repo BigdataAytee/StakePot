@@ -11,6 +11,7 @@ import {
   semantic,
   shadows,
   spacingUnit,
+  spcoin,
   typeScale,
   typeScaleAliases,
   type SemanticRole,
@@ -95,7 +96,14 @@ export const tailwindPreset: Partial<Config> = {
         [1, 2, 3, 4, 6, 8, 12, 16, 24].map((step) => [`grid-${step}`, `${step * spacingUnit}px`]),
       ),
       transitionTimingFunction: { bar: motion.barEase },
-      transitionDuration: { tick: `${motion.priceTickMs}ms` },
+      transitionDuration: {
+        tick: `${motion.priceTickMs}ms`,
+        chart: `${motion.chartDrawMs}ms`,
+      },
+      scale: { press: String(motion.pressScale) },
+      backgroundImage: {
+        spcoin: `radial-gradient(circle at 30% 25%, ${spcoin.gradient.join(', ')})`,
+      },
       keyframes: {
         'tick-up': {
           '0%': { color: themed('rise').replace('<alpha-value>', '1') },

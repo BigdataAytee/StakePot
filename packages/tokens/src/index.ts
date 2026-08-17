@@ -18,6 +18,7 @@ export {
   semantic,
   shadows,
   spacingUnit,
+  spcoin,
   typeScale,
   typeScaleAliases,
 } from './tokens';
