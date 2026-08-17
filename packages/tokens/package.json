@@ -1,0 +1,28 @@
+{
+  "name": "@stakeam/tokens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "StakeAm design tokens — architecture §7.4. Exported as a Tailwind preset.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "test": "vitest run --passWithNoTests",
+    "test:props": "vitest run --passWithNoTests",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src --max-warnings=0",
+    "migrate": "node -e \"console.log('no database in packages/tokens — run pnpm --filter @stakeam/api migrate')\""
+  },
+  "peerDependencies": {
+    "tailwindcss": "^3.4.0"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.18",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
