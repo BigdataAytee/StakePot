@@ -8,12 +8,16 @@
     "node": ">=20.11.0"
   },
   "scripts": {
+    "libs": "pnpm --filter \"./packages/*\" build",
+    "predev": "pnpm run libs",
     "dev": "pnpm -r --parallel --if-present dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "test:props": "pnpm -r test:props",
     "test:load": "k6 run scripts/load/smoke.js",
     "lint": "pnpm -r lint",
+    "//typecheck": "The apps resolve @stakeam/* through dist, so the libraries have to exist before tsc runs. Without this, typecheck fails on a clean checkout — which is exactly what CI is.",
+    "pretypecheck": "pnpm run libs",
     "typecheck": "pnpm -r typecheck",
     "migrate": "pnpm --filter @stakeam/api migrate",
     "format": "prettier --write .",
