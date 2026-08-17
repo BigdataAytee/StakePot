@@ -1,0 +1,759 @@
+// StakeAm data model — architecture §3.
+//
+// Conventions:
+//   * tables are snake_case via @@map; model and field names stay idiomatic Prisma
+//   * ids are cuid unless the row is naturally keyed or is high-volume time series
+//   * every money or share quantity is Decimal(38,18) — never Float, anywhere
+//   * `ledger` and `admin_audit` are append-only; the REVOKE that enforces it
+//     lives in prisma/migrations/20240101000001_ledger_append_only
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------- enums
+
+enum Currency {
+  PTS
+  NGN
+}
+
+enum UserRole {
+  user
+  creator
+  resolver
+  admin
+}
+
+enum LedgerType {
+  signup_bonus
+  trade_buy
+  trade_sell
+  stake
+  seed
+  payout
+  refund
+  fee_platform
+  fee_creator
+  bond_post
+  bond_refund
+  bond_forfeit
+  prize
+}
+
+enum FundClass {
+  user_escrow
+  user_available
+  platform_fees
+  prize_pool
+}
+
+enum MarketShelf {
+  official
+  community
+}
+
+enum MarketState {
+  draft
+  seeding
+  funding
+  active
+  frozen
+  pending_resolution
+  dispute_window
+  resolved
+  voided
+}
+
+enum TradeSide {
+  buy
+  sell
+}
+
+enum BondState {
+  held
+  refunded
+  forfeited
+}
+
+enum DraftSource {
+  ai
+  community
+}
+
+enum DraftState {
+  suggested
+  approved
+  rejected
+}
+
+enum ApprovalState {
+  pending
+  approved
+  rejected
+}
+
+enum TemplateCategory {
+  bbnaija
+  football
+  election
+  economic
+  awards
+  transfer
+  other
+}
+
+enum OpportunitySource {
+  calendar
+  search_gap
+  seasonal
+}
+
+enum CommentState {
+  live
+  flagged
+  removed
+}
+
+enum AnnotationType {
+  open
+  activation
+  big_trade
+  news
+  freeze
+  resolution
+}
+
+// ---------------------------------------------------------------- identity & money
+
+model User {
+  id              String   @id @default(cuid())
+  email           String?  @unique
+  phone           String?  @unique
+  contactVerified Boolean  @default(false)
+  /// 0 = unverified, 1 = contact verified, 2 = KYC passed
+  tier            Int      @default(0)
+  kycRef          String?
+  pwHash          String
+  role            UserRole @default(user)
+  /// Not enumerated in §3; kept free-form until the states are pinned down.
+  status          String   @default("active")
+  createdAt       DateTime @default(now())
+
+  wallets            Wallet[]
+  ledgerEntries      LedgerEntry[]
+  trades             Trade[]
+  positions          Position[]
+  markets            Market[]            @relation("MarketCreator")
+  syndicates         Syndicate[]
+  syndicateMembers   SyndicateMember[]
+  bonds              Bond[]
+  disputes           Dispute[]
+  supportTickets     SupportTicket[]
+  rgSettings         RgSettings?
+  notifications      Notification[]
+  events             Event[]
+  creatorProfile     CreatorProfile?
+  following          Follower[]          @relation("Follows")
+  followers          Follower[]          @relation("FollowedBy")
+  autopsies          MarketAutopsy[]
+  comments           Comment[]
+  reputation         Reputation[]
+  squadsOwned        Squad[]
+  squadMemberships   SquadMember[]
+  challenges         Challenge[]
+  topCalls           TopCall[]
+  opportunities      Opportunity[]
+  proposedResolutions Resolution[]       @relation("ResolutionProposer")
+  finalizedResolutions Resolution[]      @relation("ResolutionFinalizer")
+
+  @@map("users")
+}
+
+model Wallet {
+  userId    String
+  currency  Currency
+  available Decimal  @default(0) @db.Decimal(38, 18)
+  escrowed  Decimal  @default(0) @db.Decimal(38, 18)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, currency])
+  @@map("wallets")
+}
+
+/// APPEND-ONLY. UPDATE and DELETE are revoked from the application role in
+/// migration 20240101000001_ledger_append_only — corrections are new rows.
+model LedgerEntry {
+  id        String     @id @default(cuid())
+  userId    String
+  marketId  String?
+  type      LedgerType
+  fundClass FundClass
+  amount    Decimal    @db.Decimal(38, 18)
+  currency  Currency
+  ref       String?
+  createdAt DateTime   @default(now())
+
+  user   User    @relation(fields: [userId], references: [id])
+  market Market? @relation(fields: [marketId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([marketId, createdAt])
+  @@index([type, createdAt])
+  @@map("ledger")
+}
+
+// ---------------------------------------------------------------- markets & trading
+
+model Market {
+  id                 String      @id @default(cuid())
+  shelf              MarketShelf
+  question           String
+  sourceName         String
+  sourceUrl          String
+  criteriaJson       Json
+  edgeCasesJson      Json
+  eventDate          DateTime
+  voidDate           DateTime
+  state              MarketState @default(draft)
+  creatorId          String?
+  /// Liquidity constant L from §2.3. Immutable once the market is created.
+  liquidityParam     Decimal     @db.Decimal(38, 18)
+  potTotal           Decimal     @default(0) @db.Decimal(38, 18)
+  feeBps             Int
+  resolvedOutcomeId  String?
+  resolutionEvidence String?
+  createdAt          DateTime    @default(now())
+
+  creator         User?             @relation("MarketCreator", fields: [creatorId], references: [id])
+  resolvedOutcome Outcome?          @relation("ResolvedOutcome", fields: [resolvedOutcomeId], references: [id])
+  outcomes        Outcome[]         @relation("MarketOutcomes")
+  trades          Trade[]
+  positions       Position[]
+  ledgerEntries   LedgerEntry[]
+  syndicates      Syndicate[]
+  bonds           Bond[]
+  resolutions     Resolution[]
+  disputes        Dispute[]
+  outcomeLog      MarketOutcomeLog?
+  supportTickets  SupportTicket[]
+  autopsy         MarketAutopsy?
+  comments        Comment[]
+  challenges      Challenge[]
+  topCalls        TopCall[]
+  priceHistory    PriceHistory[]
+  annotations     MarketAnnotation[]
+
+  @@index([shelf, state])
+  @@index([state, eventDate])
+  @@map("markets")
+}
+
+model Outcome {
+  id                String  @id @default(cuid())
+  marketId          String
+  label             String
+  sharesOutstanding Decimal @default(0) @db.Decimal(38, 18)
+  priceCurrent      Decimal @default(0) @db.Decimal(38, 18)
+  /// The catch-all bucket on a multi-outcome ticket.
+  isOther           Boolean @default(false)
+
+  market       Market         @relation("MarketOutcomes", fields: [marketId], references: [id], onDelete: Cascade)
+  wonBy        Market[]       @relation("ResolvedOutcome")
+  trades       Trade[]
+  positions    Position[]
+  resolutionsProposed Resolution[] @relation("ProposedOutcome")
+  resolutionsFinal    Resolution[] @relation("FinalOutcome")
+  priceHistory PriceHistory[]
+
+  @@index([marketId])
+  @@map("outcomes")
+}
+
+model Trade {
+  id         String    @id @default(cuid())
+  marketId   String
+  outcomeId  String
+  userId     String
+  side       TradeSide
+  shares     Decimal   @db.Decimal(38, 18)
+  cost       Decimal   @db.Decimal(38, 18)
+  fee        Decimal   @default(0) @db.Decimal(38, 18)
+  priceAfter Decimal   @db.Decimal(38, 18)
+  /// Idempotency key — a retried trade request must never double-fill.
+  requestId  String    @unique
+  createdAt  DateTime  @default(now())
+
+  market  Market  @relation(fields: [marketId], references: [id])
+  outcome Outcome @relation(fields: [outcomeId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([marketId, createdAt])
+  @@index([userId, createdAt])
+  @@map("trades")
+}
+
+model Position {
+  userId      String
+  marketId    String
+  outcomeId   String
+  shares      Decimal @default(0) @db.Decimal(38, 18)
+  avgPrice    Decimal @default(0) @db.Decimal(38, 18)
+  realizedPnl Decimal @default(0) @db.Decimal(38, 18)
+
+  user    User    @relation(fields: [userId], references: [id])
+  market  Market  @relation(fields: [marketId], references: [id])
+  outcome Outcome @relation(fields: [outcomeId], references: [id])
+
+  @@id([userId, marketId, outcomeId])
+  @@index([marketId])
+  @@map("positions")
+}
+
+// ---------------------------------------------------------------- syndicates & bonds
+
+model Syndicate {
+  id          String   @id @default(cuid())
+  marketId    String
+  creatorId   String
+  roundEndsAt DateTime
+  minTotal    Decimal  @db.Decimal(38, 18)
+  /// Not enumerated in §3.
+  state       String   @default("open")
+
+  market  Market            @relation(fields: [marketId], references: [id])
+  creator User              @relation(fields: [creatorId], references: [id])
+  members SyndicateMember[]
+
+  @@index([marketId])
+  @@map("syndicates")
+}
+
+model SyndicateMember {
+  id           String  @id @default(cuid())
+  syndicateId  String
+  userId       String
+  contribution Decimal @db.Decimal(38, 18)
+  feeSharePct  Decimal @db.Decimal(38, 18)
+
+  syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@unique([syndicateId, userId])
+  @@map("syndicate_members")
+}
+
+model Bond {
+  id        String    @id @default(cuid())
+  marketId  String
+  creatorId String
+  amount    Decimal   @db.Decimal(38, 18)
+  state     BondState @default(held)
+
+  market  Market @relation(fields: [marketId], references: [id])
+  creator User   @relation(fields: [creatorId], references: [id])
+
+  @@index([creatorId, state])
+  @@map("bonds")
+}
+
+// ---------------------------------------------------------------- resolution & disputes
+
+model Resolution {
+  id                 String    @id @default(cuid())
+  marketId           String
+  proposedBy         String
+  proposedOutcomeId  String
+  evidenceUrl        String
+  proposedAt         DateTime  @default(now())
+  finalizedBy        String?
+  finalizedAt        DateTime?
+  finalOutcomeId     String?
+
+  market          Market   @relation(fields: [marketId], references: [id])
+  proposer        User     @relation("ResolutionProposer", fields: [proposedBy], references: [id])
+  finalizer       User?    @relation("ResolutionFinalizer", fields: [finalizedBy], references: [id])
+  proposedOutcome Outcome  @relation("ProposedOutcome", fields: [proposedOutcomeId], references: [id])
+  finalOutcome    Outcome? @relation("FinalOutcome", fields: [finalOutcomeId], references: [id])
+
+  @@index([marketId])
+  @@map("resolutions")
+}
+
+model Dispute {
+  id          String  @id @default(cuid())
+  marketId    String
+  userId      String
+  evidenceUrl String
+  text        String
+  /// Not enumerated in §3.
+  state       String  @default("open")
+  decidedBy   String?
+  decision    String?
+
+  market Market @relation(fields: [marketId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([marketId, state])
+  @@map("disputes")
+}
+
+// ---------------------------------------------------------------- drafting & review
+
+model MarketDraft {
+  id                String      @id @default(cuid())
+  source            DraftSource
+  templateJson      Json
+  balanceEstimate   Decimal     @db.Decimal(38, 18)
+  engagementScore   Decimal     @db.Decimal(38, 18)
+  blocklistFlags    Json
+  state             DraftState  @default(suggested)
+  reviewedBy        String?
+  createdAt         DateTime    @default(now())
+
+  @@index([state, createdAt])
+  @@map("market_drafts")
+}
+
+model MarketOutcomeLog {
+  marketId     String  @id
+  initialSplit Decimal @db.Decimal(38, 18)
+  finalSplit   Decimal @db.Decimal(38, 18)
+  volume       Decimal @db.Decimal(38, 18)
+  disputeCount Int     @default(0)
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@map("market_outcomes_log")
+}
+
+model Approval {
+  id          String        @id @default(cuid())
+  actionType  String
+  payloadJson Json
+  requestedBy String
+  approver1   String?
+  approver2   String?
+  state       ApprovalState @default(pending)
+  createdAt   DateTime      @default(now())
+
+  @@index([state, createdAt])
+  @@map("approvals")
+}
+
+/// APPEND-ONLY, same REVOKE as `ledger`.
+model AdminAudit {
+  id         String   @id @default(cuid())
+  staffId    String
+  action     String
+  targetRef  String
+  beforeJson Json?
+  afterJson  Json?
+  ip         String
+  ts         DateTime @default(now())
+
+  @@index([staffId, ts])
+  @@map("admin_audit")
+}
+
+model ReconciliationRun {
+  id          String   @id @default(cuid())
+  runDate     DateTime
+  ledgerTotal Decimal  @db.Decimal(38, 18)
+  walletTotal Decimal  @db.Decimal(38, 18)
+  bankTotal   Decimal? @db.Decimal(38, 18)
+  /// Not enumerated in §3.
+  status      String
+  diff        Decimal  @db.Decimal(38, 18)
+  clearedBy   String?
+
+  @@index([runDate])
+  @@map("reconciliation_runs")
+}
+
+// ---------------------------------------------------------------- support, RG, comms
+
+model SupportTicket {
+  id         String   @id @default(cuid())
+  userId     String
+  marketId   String?
+  category   String
+  state      String   @default("open")
+  slaDue     DateTime
+  assignedTo String?
+  createdAt  DateTime @default(now())
+
+  user   User    @relation(fields: [userId], references: [id])
+  market Market? @relation(fields: [marketId], references: [id])
+
+  @@index([state, slaDue])
+  @@map("support_tickets")
+}
+
+model RgSettings {
+  userId       String    @id
+  depositLimit Decimal?  @db.Decimal(38, 18)
+  stakeLimit   Decimal?  @db.Decimal(38, 18)
+  lossLimit    Decimal?  @db.Decimal(38, 18)
+  cooloffUntil DateTime?
+  selfExcluded Boolean   @default(false)
+  updatedAt    DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("rg_settings")
+}
+
+model Notification {
+  id          String    @id @default(cuid())
+  userId      String
+  type        String
+  payloadJson Json
+  channel     String
+  sentAt      DateTime  @default(now())
+  readAt      DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, sentAt])
+  @@map("notifications")
+}
+
+model Event {
+  id             String   @id @default(cuid())
+  userId         String?
+  name           String
+  propertiesJson Json
+  ts             DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([name, ts])
+  @@index([userId, ts])
+  @@map("events")
+}
+
+// ---------------------------------------------------------------- creators & community
+
+model CreatorProfile {
+  userId            String  @id
+  /// 1 | 2 | 3
+  level             Int     @default(1)
+  cleanResolutions  Int     @default(0)
+  totalVolumeHosted Decimal @default(0) @db.Decimal(38, 18)
+  accuracyPct       Decimal @default(0) @db.Decimal(38, 18)
+  badgeFlags        Json
+  followerCount     Int     @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("creator_profiles")
+}
+
+model Follower {
+  followerId String
+  creatorId  String
+  notify     Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  follower User @relation("Follows", fields: [followerId], references: [id], onDelete: Cascade)
+  creator  User @relation("FollowedBy", fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@id([followerId, creatorId])
+  @@index([creatorId])
+  @@map("followers")
+}
+
+model TicketTemplate {
+  id                String           @id @default(cuid())
+  category          TemplateCategory
+  templateJson      Json
+  localisableFields Json
+  seasonWindow      String?
+  active            Boolean          @default(true)
+
+  opportunities Opportunity[]
+
+  @@index([category, active])
+  @@map("ticket_templates")
+}
+
+model Opportunity {
+  id           String            @id @default(cuid())
+  source       OpportunitySource
+  title        String
+  templateId   String?
+  demandScore  Decimal           @db.Decimal(38, 18)
+  claimedBy    String?
+  expiresAt    DateTime
+
+  template TicketTemplate? @relation(fields: [templateId], references: [id])
+  claimer  User?           @relation(fields: [claimedBy], references: [id])
+
+  @@index([expiresAt])
+  @@map("opportunities")
+}
+
+model MarketAutopsy {
+  marketId       String   @id
+  creatorId      String
+  outcomeSummary String
+  tipsJson       Json
+  createdAt      DateTime @default(now())
+
+  market  Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  creator User   @relation(fields: [creatorId], references: [id])
+
+  @@map("market_autopsies")
+}
+
+model Comment {
+  id       String       @id @default(cuid())
+  marketId String
+  userId   String
+  text     String
+  /// Snapshot of the commenter's position at the time, e.g. "YES@62" or "none".
+  positionSnapshot String
+  parentId String?
+  state    CommentState @default(live)
+  createdAt DateTime    @default(now())
+
+  market  Market    @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  user    User      @relation(fields: [userId], references: [id])
+  parent  Comment?  @relation("CommentThread", fields: [parentId], references: [id])
+  replies Comment[] @relation("CommentThread")
+
+  @@index([marketId, createdAt])
+  @@map("comments")
+}
+
+model Reputation {
+  userId      String
+  category    String
+  accuracyPct Decimal @db.Decimal(38, 18)
+  calibration Decimal @db.Decimal(38, 18)
+  title       String?
+  season      String
+  sampleSize  Int     @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, category, season])
+  @@map("reputation")
+}
+
+model Squad {
+  id             String   @id @default(cuid())
+  name           String
+  ownerId        String
+  memberCount    Int      @default(0)
+  /// Not enumerated in §3.
+  screeningState String   @default("pending")
+  createdAt      DateTime @default(now())
+
+  owner       User             @relation(fields: [ownerId], references: [id])
+  members     SquadMember[]
+  challengesA SquadChallenge[] @relation("SquadA")
+  challengesB SquadChallenge[] @relation("SquadB")
+
+  @@map("squads")
+}
+
+model SquadMember {
+  squadId  String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  squad Squad @relation(fields: [squadId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([squadId, userId])
+  @@map("squad_members")
+}
+
+model SquadChallenge {
+  id             String  @id @default(cuid())
+  squadA         String
+  squadB         String
+  marketSetJson  Json
+  period         String
+  scoreA         Decimal @default(0) @db.Decimal(38, 18)
+  scoreB         Decimal @default(0) @db.Decimal(38, 18)
+  /// Not enumerated in §3.
+  state          String  @default("open")
+
+  a Squad @relation("SquadA", fields: [squadA], references: [id])
+  b Squad @relation("SquadB", fields: [squadB], references: [id])
+
+  @@map("squad_challenges")
+}
+
+model Challenge {
+  id               String   @id @default(cuid())
+  marketId         String
+  challengerId     String
+  positionSnapshot String
+  linkToken        String   @unique
+  acceptedBy       String?
+  createdAt        DateTime @default(now())
+
+  market     Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  challenger User   @relation(fields: [challengerId], references: [id])
+
+  @@map("challenges")
+}
+
+model TopCall {
+  id              String  @id @default(cuid())
+  week            String
+  userId          String
+  marketId        String
+  entryPrice      Decimal @db.Decimal(38, 18)
+  resolvedOutcome String
+  featured        Boolean @default(false)
+
+  user   User   @relation(fields: [userId], references: [id])
+  market Market @relation(fields: [marketId], references: [id])
+
+  @@index([week, featured])
+  @@map("top_calls")
+}
+
+// ---------------------------------------------------------------- chart data
+
+/// High-volume time series: a bigint identity key rather than a cuid, since
+/// nothing links to these rows by id.
+model PriceHistory {
+  id        BigInt   @id @default(autoincrement())
+  marketId  String
+  outcomeId String
+  price     Decimal  @db.Decimal(38, 18)
+  pot       Decimal  @db.Decimal(38, 18)
+  ts        DateTime @default(now())
+
+  market  Market  @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  outcome Outcome @relation(fields: [outcomeId], references: [id], onDelete: Cascade)
+
+  @@index([marketId, outcomeId, ts])
+  @@map("price_history")
+}
+
+/// The §7.2 chart annotations.
+model MarketAnnotation {
+  id       String         @id @default(cuid())
+  marketId String
+  type     AnnotationType
+  label    String
+  ts       DateTime       @default(now())
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([marketId, ts])
+  @@map("market_annotations")
+}
