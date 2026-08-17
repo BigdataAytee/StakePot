@@ -1,0 +1,9 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Every colour, radius, type step and motion token comes from the
+ * @stakeam/tokens Tailwind preset, which injects the light/dark custom
+ * properties as base styles. Nothing belongs in this file that could be a token.
+ */
