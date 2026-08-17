@@ -19,7 +19,8 @@ datasource db {
 // ---------------------------------------------------------------- enums
 
 enum Currency {
-  PTS
+  /// SPcoin — the points-mode currency (§2.2, §7.4). Flips to NGN at licensing.
+  SPC
   NGN
 }
 
@@ -168,6 +169,7 @@ model User {
   squadMemberships   SquadMember[]
   challenges         Challenge[]
   topCalls           TopCall[]
+  leaderboardSnapshots LeaderboardSnapshot[]
   opportunities      Opportunity[]
   proposedResolutions Resolution[]       @relation("ResolutionProposer")
   finalizedResolutions Resolution[]      @relation("ResolutionFinalizer")
@@ -756,4 +758,19 @@ model MarketAnnotation {
 
   @@index([marketId, ts])
   @@map("market_annotations")
+}
+
+/// §3 leaderboard snapshots — served from replicas, never the trade path (§11).
+model LeaderboardSnapshot {
+  period   String
+  userId   String
+  profit   Decimal @db.Decimal(38, 18)
+  accuracy Decimal @db.Decimal(38, 18)
+  rank     Int
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([period, userId])
+  @@index([period, rank])
+  @@map("leaderboard_snapshots")
 }
