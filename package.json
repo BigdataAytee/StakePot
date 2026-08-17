@@ -1,0 +1,47 @@
+{
+  "name": "stakeam",
+  "version": "0.1.0",
+  "private": true,
+  "description": "StakeAm — Nigeria's prediction market. Phase 0 scaffold.",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --if-present dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "test:props": "pnpm -r test:props",
+    "test:load": "k6 run scripts/load/smoke.js",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "migrate": "pnpm --filter @stakeam/api migrate",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "prepare": "husky"
+  },
+  "pnpm": {
+    "//": "pnpm 10 blocks lifecycle scripts by default. These need theirs: prisma downloads query engines, argon2 and sharp build/fetch native binaries, esbuild installs its platform binary.",
+    "onlyBuiltDependencies": [
+      "@prisma/client",
+      "@prisma/engines",
+      "@sentry/cli",
+      "argon2",
+      "esbuild",
+      "prisma",
+      "sharp"
+    ]
+  },
+  "//scale-trigger": "kafkajs — architecture §12 scale trigger ONLY. Deliberately NOT installed in Phase 0. Add to apps/api dependencies when the events table / trade fan-out exceeds what Redis Streams can carry, and not before.",
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^26.2.0",
+    "eslint": "^9.39.0",
+    "eslint-config-prettier": "^10.1.8",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.6",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.4"
+  }
+}

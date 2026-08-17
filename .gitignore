@@ -1,0 +1,38 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# secrets — never commit real values, .env.example is the template
+.env
+.env.*
+!.env.example
+
+# test / coverage
+coverage/
+.vitest/
+playwright-report/
+test-results/
+
+# prisma
+prisma/migrations/dev.db*
+
+# logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# editors / OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# sentry
+.sentryclirc
