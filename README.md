@@ -6,8 +6,10 @@ call. Winners split the pot, creators earn from the markets they start, and ever
 result settles against one official source — no house, no house edge, receipts
 forever.
 
-Full product copy lives in [`docs/README.md`](docs/README.md). The Phase 0
-specification is [`docs/spec-addendum-phase0.md`](docs/spec-addendum-phase0.md).
+The source of truth is [`docs/platform-architecture.md`](docs/platform-architecture.md)
+and [`docs/market-rulebook.md`](docs/market-rulebook.md).
+[`docs/spec-addendum-phase0.md`](docs/spec-addendum-phase0.md) records how the
+Phase 0 scaffold reconciles against them, and the open questions it raised.
 
 ## Status: Phase 0 — scaffold
 

@@ -1,20 +1,22 @@
 # scripts
 
-## Reference simulations (pending)
+## Reference simulations
 
-`pricing_sim.py` and `ai_backtest.py` belong here as the reference originals.
-They were not in the repository when Phase 0 was scaffolded — drop them in
-unchanged, and keep them unchanged: they are the thing the TypeScript is checked
-against, not a second implementation to maintain.
+`pricing_sim.py` and `ai_backtest.py` are the reference originals, kept unchanged
+— §2.3 asks for the simulation to live in the repo as a regression test, and
+these are what the TypeScript is checked _against_, not a second implementation
+to maintain. Do not edit them to match the TS; if they disagree, one of them is
+wrong and that is the finding.
 
-The port lands as tests, not as a rewrite:
+`pricing_sim.py` is ported in
+[`packages/engine/src/__tests__/pricing-sim.test.ts`](../packages/engine/src/__tests__/pricing-sim.test.ts).
+Its multi-trader runs use a numpy PRNG that cannot be reproduced in TypeScript,
+so the port covers the deterministic scenarios exactly (SIM 3's whale stress
+case) and asserts the claims the simulation makes about the rest: platform cost
+of exactly zero, a pot that never goes negative, an exact round trip.
 
-- `pricing_sim.py` → cases in `packages/engine/src/__tests__/`, asserting the TS
-  engine reproduces the Python's numbers for the same inputs. The fast-check
-  suite already proves the invariants hold; this proves the two implementations
-  agree on specific values.
-- `ai_backtest.py` → a scored fixture run for the §2.9 question engine, once
-  step 6 brings in `@anthropic-ai/sdk`.
+`ai_backtest.py` is ported when step 6 brings in `@anthropic-ai/sdk` for the
+§2.9 question engine.
 
 ## Load testing
 
