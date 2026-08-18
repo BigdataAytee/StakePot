@@ -11,7 +11,7 @@ concurrency:
 
 env:
   DATABASE_URL: postgresql://stakeam:stakeam@localhost:5432/stakeam
-  SHADOW_DATABASE_URL: postgresql://stakeam:stakeam@localhost:5432/stakeam_shadow
+  TEST_DATABASE_URL: postgresql://stakeam:stakeam@localhost:5432/stakeam_test
   REDIS_URL: redis://localhost:6379
   JWT_SECRET: ci-only-secret-not-used-for-anything-32ch
   NEXT_TELEMETRY_DISABLED: '1'
@@ -63,14 +63,22 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The ledger's guarantees are database guarantees — append-only grants,
+      # triggers, transactional atomicity — so its tests need a migrated schema
+      # before they run, on a database of their own that they are free to wipe.
+      - name: Apply migrations
+        run: pnpm --filter @stakeam/api exec prisma migrate deploy
+
+      - name: Prepare the integration database
+        run: |
+          psql "$DATABASE_URL" -c 'CREATE DATABASE stakeam_test;'
+          DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @stakeam/api exec prisma migrate deploy
+
       - name: Test
         run: pnpm test
 
-      - name: Property tests (engine invariants)
+      - name: Property tests (engine + ledger invariants)
         run: pnpm test:props
-
-      - name: Apply migrations
-        run: pnpm --filter @stakeam/api exec prisma migrate deploy
 
       - name: Schema has not drifted from migrations
         run: |
