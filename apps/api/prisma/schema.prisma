@@ -121,6 +121,14 @@ enum CommentState {
   removed
 }
 
+/// §6.4b: a key is `active`, has a `pending` successor awaiting its effective
+/// date, or is `superseded`.
+enum ConfigState {
+  active
+  pending
+  superseded
+}
+
 enum AnnotationType {
   open
   activation
@@ -773,4 +781,47 @@ model LeaderboardSnapshot {
   @@id([period, userId])
   @@index([period, rank])
   @@map("leaderboard_snapshots")
+}
+
+// ---------------------------------------------------------------- platform config (§6.4b)
+
+/// Every tunable value in the architecture lives here, never in code: fees,
+/// exit-fee rate, activation thresholds, window lengths, bond size, Tier limits,
+/// RG defaults, dispute-window length, the kyc_required_at switch.
+///
+/// Changes are proposals through the four-eyes workflow (§2.10), take effect
+/// after a visible delay, and never apply retroactively — a market already open
+/// resolves under the values in force when it opened.
+model PlatformConfig {
+  key         String
+  valueJson   Json
+  effectiveAt DateTime
+  version     Int
+  state       ConfigState @default(pending)
+
+  @@id([key, version])
+  @@index([key, state])
+  @@index([state, effectiveAt])
+  @@map("platform_config")
+}
+
+/// APPEND-ONLY, same REVOKE and triggers as `ledger`.
+///
+/// §6.4b: "one-click rollback creates a new proposal, never an edit of
+/// history". A config history that can be rewritten is not an audit trail, and
+/// these rows are the record of who changed platform economics and why.
+model ConfigVersion {
+  id          String    @id @default(cuid())
+  key         String
+  oldValue    Json?
+  newValue    Json
+  /// Mandatory free text — §6.4b requires a stated reason on every change.
+  reason      String
+  proposedBy  String
+  approvedBy  String
+  proposedAt  DateTime  @default(now())
+  activatedAt DateTime?
+
+  @@index([key, proposedAt])
+  @@map("config_versions")
 }
