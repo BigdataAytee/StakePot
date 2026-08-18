@@ -21,6 +21,17 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   await prisma.resolution.deleteMany();
   await prisma.priceHistory.deleteMany();
   await prisma.marketAnnotation.deleteMany();
+  await prisma.bond.deleteMany();
+  await prisma.syndicateMember.deleteMany();
+  await prisma.syndicate.deleteMany();
+  await prisma.dispute.deleteMany();
+  await prisma.marketOutcomeLog.deleteMany();
+  await prisma.marketAutopsy.deleteMany();
+  await prisma.comment.deleteMany();
+  await prisma.challenge.deleteMany();
+  await prisma.topCall.deleteMany();
+  await prisma.supportTicket.deleteMany();
+  await prisma.marketDraft.deleteMany();
   await prisma.market.deleteMany();
 
   await prisma.wallet.updateMany({ data: { available: 0, escrowed: 0 } });

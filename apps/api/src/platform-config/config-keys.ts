@@ -27,6 +27,25 @@ export const CONFIG_SCHEMAS = {
   community_platform_bps: z.number().int().nonnegative(),
   exit_fee_rate: z.number().min(0).max(0.02),
 
+  // Community shelf (§2.4, §2.5, Rulebook Part 3)
+  conduct_bond_spc: z.number().nonnegative(),
+  funding_window_hours: z.number().int().positive(),
+  community_activation_pool_spc: z.number().nonnegative(),
+  community_activation_backers: z.number().int().nonnegative(),
+  /**
+   * `per_outcome` is the Rulebook rule as written; `total_pot` is the amendment
+   * §2.9's backtest recommends for wide fields. Seeded to the rulebook rule —
+   * adopting the amendment is a rulebook decision, not a code one.
+   */
+  community_activation_mode: z.enum(['per_outcome', 'total_pot']),
+  community_activation_total_pot_spc: z.number().nonnegative(),
+  community_activation_min_funded_outcomes: z.number().int().positive(),
+
+  // AI question engine (§2.9 rule 3)
+  ai_balance_low: z.number().min(0).max(1),
+  ai_balance_high: z.number().min(0).max(1),
+  ai_balance_multi_max: z.number().min(0).max(1),
+
   // Financial controls (§2.10)
   reconciliation_tolerance_spc: z.number().nonnegative(),
   withdrawals_frozen: z.boolean(),

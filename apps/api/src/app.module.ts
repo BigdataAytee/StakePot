@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { CommunityModule } from './community/community.module';
 import { HealthController } from './health/health.controller';
 import { LedgerModule } from './ledger/ledger.module';
 import { MetricsController } from './observability/metrics.controller';
@@ -23,6 +24,7 @@ import { WalletModule } from './wallet/wallet.module';
     AuthModule,
     ReconciliationModule,
     TradeModule,
+    CommunityModule,
     RealtimeModule,
     HttpModule,
   ],

@@ -93,7 +93,7 @@ export class TradeService {
       const existing = await this.replay(tx, input.requestId);
       if (existing) return existing;
 
-      const loaded = await this.lockAndLoad(tx, input.marketId);
+      const loaded = await this.lockAndLoad(tx, input.marketId, input.userId);
       const index = indexOf(loaded, input.outcomeId);
 
       // Escrow first: a trade the user cannot fund must not move the market.
@@ -223,7 +223,7 @@ export class TradeService {
    * concurrent trade on the same market. Postgres queues the second writer here
    * rather than letting it price off state that is about to change.
    */
-  private async lockAndLoad(tx: Tx, marketId: string) {
+  private async lockAndLoad(tx: Tx, marketId: string, userId?: string) {
     await tx.$queryRaw`SELECT id FROM markets WHERE id = ${marketId} FOR UPDATE`;
 
     const market = await tx.market.findUniqueOrThrow({
@@ -232,6 +232,16 @@ export class TradeService {
     });
     if (market.state !== 'active') {
       throw new TradeError(`market is ${market.state} — trading is closed`);
+    }
+
+    // §2.5: "Creator cannot place directional stakes in own market (enforced at
+    // trade endpoint), except symmetric seed." A creator who can take a side in
+    // the market they also settle has both the motive and the means, and the
+    // conduct bond is not a substitute for removing the conflict.
+    if (userId !== undefined && market.creatorId !== null && market.creatorId === userId) {
+      throw new TradeError(
+        'you created this market, so you cannot take a side in it — only a symmetric seed',
+      );
     }
 
     const exitFeeRate = await this.config.get('exit_fee_rate');
