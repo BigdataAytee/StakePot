@@ -10,7 +10,11 @@ import { LedgerModule } from './ledger/ledger.module';
 import { MetricsController } from './observability/metrics.controller';
 import { PlatformConfigModule } from './platform-config/platform-config.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
+import { RgModule } from './rg/rg.module';
+import { StatusModule } from './status/status.module';
+import { SupportModule } from './support/support.module';
 import { ResolutionModule } from './resolution/resolution.module';
 import { HttpModule } from './http/http.module';
 import { RealtimeModule } from './realtime/realtime.module';
@@ -30,6 +34,10 @@ import { WalletModule } from './wallet/wallet.module';
     ResolutionModule,
     ApprovalsModule,
     AdminModule,
+    NotificationsModule,
+    RgModule,
+    SupportModule,
+    StatusModule,
     CommunityModule,
     RealtimeModule,
     HttpModule,

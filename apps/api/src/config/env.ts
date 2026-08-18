@@ -26,6 +26,10 @@ const schema = z.object({
   VAPID_PRIVATE_KEY: z.string().optional(),
   VAPID_SUBJECT: z.string().default('mailto:support@stakeam.ng'),
 
+  /** SMTP connection string for transactional email (§2.12). */
+  SMTP_URL: z.string().optional(),
+  EMAIL_FROM: z.string().default('StakeAm <no-reply@stakeam.ng>'),
+
   WEB_ORIGIN: z.string().default('http://localhost:3000'),
 });
 

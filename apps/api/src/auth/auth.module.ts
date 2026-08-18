@@ -5,6 +5,7 @@ import { env } from '../config/env';
 import { WalletModule } from '../wallet/wallet.module';
 import { AuthService } from './auth.service';
 import { OtpService } from './otp.service';
+import { TotpService } from './totp.service';
 
 @Module({
   imports: [
@@ -16,7 +17,7 @@ import { OtpService } from './otp.service';
       signOptions: { expiresIn: env.JWT_EXPIRES_IN as `${number}m` },
     }),
   ],
-  providers: [AuthService, OtpService],
-  exports: [AuthService, OtpService],
+  providers: [AuthService, OtpService, TotpService],
+  exports: [AuthService, OtpService, TotpService],
 })
 export class AuthModule {}

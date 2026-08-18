@@ -5,9 +5,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AuthService } from '../auth/auth.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { EmailSender } from '../notifications/email.sender';
+import { NotificationsService } from '../notifications/notifications.service';
+import { PushSender } from '../notifications/push.sender';
+import { SmsSender } from '../notifications/sms.sender';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
+import { RgService } from '../rg/rg.service';
 import { resetDatabase } from '../testing/reset';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { TradeService } from '../trade/trade.service';
@@ -49,10 +54,23 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
       config,
     );
     const voids = new MarketVoidService(ledger);
-    community = new CommunityService(prisma, config, wallet, voids);
-    trades = new TradeService(prisma, ledger, wallet, config, {
-      publish: async () => undefined,
-    } as unknown as PriceCacheService);
+    // Notifications are best-effort by design; in tests they run against the
+    // same database with every channel unconfigured, so they record and move on.
+    const notifications = new NotificationsService(
+      prisma,
+      new PushSender(prisma),
+      new EmailSender(),
+      new SmsSender(),
+    );
+    community = new CommunityService(prisma, config, wallet, voids, notifications);
+    trades = new TradeService(
+      prisma,
+      ledger,
+      wallet,
+      config,
+      { publish: async () => undefined } as unknown as PriceCacheService,
+      new RgService(prisma, config),
+    );
     reconciliation = new ReconciliationService(prisma, config);
   });
 

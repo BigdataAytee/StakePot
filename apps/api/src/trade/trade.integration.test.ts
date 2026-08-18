@@ -10,6 +10,7 @@ import { PlatformConfigService } from '../platform-config/platform-config.servic
 import type { PrismaService } from '../prisma/prisma.service';
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { WalletService } from '../wallet/wallet.service';
+import { RgService } from '../rg/rg.service';
 import { resetDatabase } from '../testing/reset';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { ResolutionService } from './resolution.service';
@@ -57,7 +58,14 @@ describe.skipIf(!TEST_DATABASE_URL)('binary official market, end to end', () => 
     // never publishes must not change what a trade did. Stubbed so these tests
     // stay off Redis and prove exactly that.
     const priceFeed = { publish: async () => undefined } as unknown as PriceCacheService;
-    trades = new TradeService(prisma, ledger, wallet, config, priceFeed);
+    trades = new TradeService(
+      prisma,
+      ledger,
+      wallet,
+      config,
+      priceFeed,
+      new RgService(prisma, config),
+    );
     resolution = new ResolutionService(prisma, ledger, config);
     reconciliation = new ReconciliationService(prisma, config);
   });
@@ -184,7 +192,9 @@ describe.skipIf(!TEST_DATABASE_URL)('binary official market, end to end', () => 
         marketId: market.id,
         outcomeId: yes.id,
         userId,
-        amount: '999999999',
+        // Under the platform's daily stake cap (§2.12) and far above the
+        // trader's balance, so this exercises funding rather than the RG gate.
+        amount: '900000',
         requestId: 'req-broke',
       }),
     ).rejects.toThrow(/insufficient funds/);

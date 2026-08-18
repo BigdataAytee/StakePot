@@ -5,6 +5,7 @@ import { env } from '../config/env';
 import { logger } from '../logger';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResolutionFlowService } from '../resolution/resolution-flow.service';
+import { SupportService } from '../support/support.service';
 import { CommunityService } from './community.service';
 import { SeedService } from './seed.service';
 
@@ -21,7 +22,7 @@ const QUEUE = 'funding-window';
  * flipping markets whose event has started into `pending_resolution` so the
  * shelf stops saying LIVE during the match.
  */
-type CloseKind = 'window' | 'seeding' | 'dispute' | 'freeze-sweep';
+type CloseKind = 'window' | 'seeding' | 'dispute' | 'freeze-sweep' | 'sla-sweep';
 
 interface CloseJob {
   readonly marketId: string;
@@ -48,6 +49,7 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
     private readonly community: CommunityService,
     private readonly seeds: SeedService,
     private readonly resolutions: ResolutionFlowService,
+    private readonly support: SupportService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -94,6 +96,10 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
         return this.resolutions.closeDisputeWindow(marketId);
       case 'freeze-sweep':
         return { frozen: await this.resolutions.freezeDueMarkets() };
+      case 'sla-sweep':
+        // §2.12's "SLA timers with escalation". A breach is a state of the
+        // queue, so it is swept rather than timed per ticket.
+        return { escalated: await this.support.escalateOverdue() };
       case 'window':
         return this.community.closeWindow(marketId);
     }
@@ -179,6 +185,11 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       'freeze-sweep',
       { every: 300_000 },
       { name: 'close', data: { marketId: '', kind: 'freeze-sweep' } },
+    );
+    await this.queue?.upsertJobScheduler(
+      'sla-sweep',
+      { every: 300_000 },
+      { name: 'close', data: { marketId: '', kind: 'sla-sweep' } },
     );
 
     return windows.length + rounds.length + windowsOnResults.length;

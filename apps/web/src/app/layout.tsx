@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next';
 import { archivo, spaceMono } from '@/lib/fonts';
+import { RealityCheck } from '@/components/reality-check';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -18,7 +19,11 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${archivo.variable} ${spaceMono.variable}`}>
-      <body>{children}</body>
+      <body>
+        {/* §2.12's session reality check sits above everything, on every screen. */}
+        <RealityCheck />
+        {children}
+      </body>
     </html>
   );
 }

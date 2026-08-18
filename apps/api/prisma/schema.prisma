@@ -118,6 +118,50 @@ enum ApprovalState {
   rejected
 }
 
+/// Where a support ticket is (§2.12, §6.7). `waiting_on_user` stops the SLA
+/// clock — a ticket the team has answered is not a ticket the team is late on.
+enum TicketState {
+  open
+  waiting_on_user
+  escalated
+  resolved
+  closed
+}
+
+/// §2.12's categories. RG requests are their own category because they are the
+/// one kind of ticket that is never a support question — it is a person asking
+/// to be stopped, and it has the tightest SLA.
+enum TicketCategory {
+  payout_query
+  dispute
+  account
+  rg_request
+  other
+}
+
+/// How a notification reached someone (§2.12).
+enum NotificationChannel {
+  in_app
+  push
+  email
+  sms
+}
+
+/// A status-page incident's severity (§2.12). Three, matching §6.10's alarm
+/// discipline — anything else is decoration.
+enum IncidentSeverity {
+  informational
+  degraded
+  outage
+}
+
+enum IncidentState {
+  investigating
+  identified
+  monitoring
+  resolved
+}
+
 /// A dispute's life (§2.6, Rulebook Part 1 §5). `withdrawn` is the filer
 /// changing their mind; only a resolver can uphold or reject.
 enum DisputeState {
@@ -195,6 +239,10 @@ model User {
   tier            Int      @default(0)
   kycRef          String?
   pwHash          String
+  /// TOTP shared secret (§2.11). Present once enrolment starts; `totpConfirmedAt`
+  /// is what makes it live, so a half-finished enrolment cannot lock anyone out.
+  totpSecret      String?
+  totpConfirmedAt DateTime?
   role            UserRole @default(user)
   /// Not enumerated in §3; kept free-form until the states are pinned down.
   status          String   @default("active")
@@ -212,6 +260,9 @@ model User {
   supportTickets     SupportTicket[]
   rgSettings         RgSettings?
   notifications      Notification[]
+  notificationPrefs  NotificationPreference[]
+  pushSubscriptions  PushSubscription[]
+  supportMessages    SupportMessage[]
   events             Event[]
   creatorProfile     CreatorProfile?
   following          Follower[]          @relation("Follows")
@@ -591,29 +642,62 @@ model ReconciliationRun {
 // ---------------------------------------------------------------- support, RG, comms
 
 model SupportTicket {
-  id         String   @id @default(cuid())
-  userId     String
-  marketId   String?
-  category   String
-  state      String   @default("open")
-  slaDue     DateTime
-  assignedTo String?
-  createdAt  DateTime @default(now())
+  id          String         @id @default(cuid())
+  userId      String
+  marketId    String?
+  category    TicketCategory
+  subject     String
+  state       TicketState    @default(open)
+  /// When the team is late. Set from the category's SLA at open, and paused by
+  /// moving the ticket to `waiting_on_user`.
+  slaDue      DateTime
+  assignedTo  String?
+  escalatedAt DateTime?
+  resolvedAt  DateTime?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
 
-  user   User    @relation(fields: [userId], references: [id])
-  market Market? @relation(fields: [marketId], references: [id])
+  user     User             @relation(fields: [userId], references: [id])
+  market   Market?          @relation(fields: [marketId], references: [id])
+  messages SupportMessage[]
 
   @@index([state, slaDue])
+  @@index([userId, createdAt])
   @@map("support_tickets")
+}
+
+/// One turn in a ticket's conversation. `staffOnly` is an internal note: the
+/// support desk needs somewhere to think that is not shown to the user.
+model SupportMessage {
+  id        String   @id @default(cuid())
+  ticketId  String
+  authorId  String
+  body      String
+  staffOnly Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  author User          @relation(fields: [authorId], references: [id])
+
+  @@index([ticketId, createdAt])
+  @@map("support_messages")
 }
 
 model RgSettings {
   userId       String    @id
+  /// Daily limits. Null means "no limit of your own" — the platform cap still
+  /// applies, and in points mode it sits high but is fully enforced (§2.12).
   depositLimit Decimal?  @db.Decimal(38, 18)
   stakeLimit   Decimal?  @db.Decimal(38, 18)
   lossLimit    Decimal?  @db.Decimal(38, 18)
   cooloffUntil DateTime?
   selfExcluded Boolean   @default(false)
+  /// When the exclusion was taken. Permanent per §2.12, and this is the record
+  /// of when it started — a self-exclusion with no date is not evidence.
+  selfExcludedAt DateTime?
+  /// §2.12's session reality check, at [60] minutes of continuous use.
+  sessionStartedAt   DateTime?
+  lastRealityCheckAt DateTime?
   updatedAt    DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -622,18 +706,81 @@ model RgSettings {
 }
 
 model Notification {
-  id          String    @id @default(cuid())
+  id          String              @id @default(cuid())
   userId      String
   type        String
   payloadJson Json
-  channel     String
-  sentAt      DateTime  @default(now())
+  channel     NotificationChannel
+  /// Null while the send is pending or if the channel refused it; the row is
+  /// written either way, so "we tried to tell them" is a fact on the record.
+  sentAt      DateTime?           @default(now())
+  failure     String?
   readAt      DateTime?
+  createdAt   DateTime            @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId, sentAt])
+  @@index([userId, createdAt])
   @@map("notifications")
+}
+
+/// Per-user, per-channel opt-outs (§2.12). A missing row means the channel's
+/// default applies, so a new channel does not silently start messaging people.
+model NotificationPreference {
+  userId  String
+  channel NotificationChannel
+  enabled Boolean             @default(true)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, channel])
+  @@map("notification_preferences")
+}
+
+/// A browser's push endpoint (web-push). Keyed by endpoint because that is what
+/// the browser rotates, and a stale one must be replaced rather than duplicated.
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("push_subscriptions")
+}
+
+/// The public status page (§2.12): "incidents posted with timestamps —
+/// transparency as a feature."
+model StatusIncident {
+  id         String           @id @default(cuid())
+  title      String
+  severity   IncidentSeverity
+  state      IncidentState    @default(investigating)
+  startedAt  DateTime         @default(now())
+  resolvedAt DateTime?
+  postedBy   String
+  updates    IncidentUpdate[]
+
+  @@index([state, startedAt])
+  @@map("status_incidents")
+}
+
+model IncidentUpdate {
+  id         String        @id @default(cuid())
+  incidentId String
+  state      IncidentState
+  body       String
+  postedBy   String
+  createdAt  DateTime      @default(now())
+
+  incident StatusIncident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, createdAt])
+  @@map("incident_updates")
 }
 
 model Event {

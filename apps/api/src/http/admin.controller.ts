@@ -21,6 +21,8 @@ import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { FundingWindowWorker } from '../community/funding-window.worker';
 import { Roles, RolesGuard, STAFF_ROLES } from '../auth/roles.guard';
 import { LedgerService } from '../ledger/ledger.service';
+import { SupportError, SupportService } from '../support/support.service';
+import { TotpError } from '../auth/totp.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResolutionFlowError, ResolutionFlowService } from '../resolution/resolution-flow.service';
 
@@ -32,6 +34,16 @@ export class ProposeApprovalDto {
 
 export class DecideApprovalDto {
   @IsOptional() @IsString() @MinLength(10) reason?: string;
+}
+
+export class ApproveDto {
+  /** §6.4b: the approve button triggers the step-up 2FA inline. */
+  @IsOptional() @IsString() totpCode?: string;
+}
+
+export class StaffReplyDto {
+  @IsString() @MinLength(2) body!: string;
+  @IsOptional() @IsBoolean() staffOnly?: boolean;
 }
 
 export class ProposeResolutionDto {
@@ -78,6 +90,7 @@ export class AdminController {
     private readonly resolutions: ResolutionFlowService,
     private readonly ledger: LedgerService,
     private readonly windows: FundingWindowWorker,
+    private readonly support: SupportService,
   ) {}
 
   private actor(request: RequestWithUser): Actor {
@@ -296,9 +309,17 @@ export class AdminController {
   @Post('approvals/:id/approve')
   @UseGuards(JwtGuard, RolesGuard)
   @Roles(...(STAFF_ROLES as UserRole[]))
-  async approve(@Req() request: RequestWithUser, @Param('id') id: string) {
+  async approve(
+    @Req() request: RequestWithUser,
+    @Param('id') id: string,
+    @Body() body: ApproveDto,
+  ) {
     const approval = await this.run(() =>
-      this.approvals.approve({ approvalId: id, actor: this.actor(request) }),
+      this.approvals.approve({
+        approvalId: id,
+        actor: this.actor(request),
+        ...(body.totpCode === undefined ? {} : { totpCode: body.totpCode }),
+      }),
     );
     return { id: approval.id, state: approval.state, executedAt: approval.executedAt };
   }
@@ -454,6 +475,51 @@ export class AdminController {
     return { id: dispute.id, state: dispute.state };
   }
 
+  // -------------------------------------------------------- support desk (§6.7)
+
+  /**
+   * The queue, with the user's read-only context and nothing else — no balances,
+   * because §6.7 says the support role never sees ledger internals.
+   */
+  @Get('support')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('support', 'trust_safety', 'admin')
+  async supportQueue(@Query('state') state?: 'open' | 'escalated' | 'waiting_on_user') {
+    return this.support.queue(state === undefined ? {} : { state });
+  }
+
+  @Post('support/:id/reply')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('support', 'trust_safety', 'admin')
+  async supportReply(
+    @Req() request: RequestWithUser,
+    @Param('id') ticketId: string,
+    @Body() body: StaffReplyDto,
+  ) {
+    const actor = this.actor(request);
+    const ticket = await this.run(() =>
+      this.support.reply({
+        ticketId,
+        authorId: actor.userId,
+        authorRole: actor.role,
+        body: body.body,
+        ...(body.staffOnly === undefined ? {} : { staffOnly: body.staffOnly }),
+      }),
+    );
+    return { id: ticket.id, state: ticket.state };
+  }
+
+  @Post('support/:id/resolve')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('support', 'trust_safety', 'admin')
+  async supportResolve(@Req() request: RequestWithUser, @Param('id') ticketId: string) {
+    const actor = this.actor(request);
+    const ticket = await this.run(() =>
+      this.support.resolve({ ticketId, staffId: actor.userId, role: actor.role }),
+    );
+    return { id: ticket.id, state: ticket.state };
+  }
+
   @Get('users/:id')
   @UseGuards(JwtGuard, RolesGuard)
   @Roles('trust_safety', 'finance', 'admin')
@@ -487,7 +553,12 @@ export class AdminController {
     try {
       return await operation();
     } catch (error) {
-      if (error instanceof ApprovalError || error instanceof ResolutionFlowError) {
+      if (
+        error instanceof ApprovalError ||
+        error instanceof ResolutionFlowError ||
+        error instanceof SupportError ||
+        error instanceof TotpError
+      ) {
         throw new BadRequestException(error.message);
       }
       throw error;

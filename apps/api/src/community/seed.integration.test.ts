@@ -5,9 +5,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AuthService } from '../auth/auth.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { EmailSender } from '../notifications/email.sender';
+import { NotificationsService } from '../notifications/notifications.service';
+import { PushSender } from '../notifications/push.sender';
+import { SmsSender } from '../notifications/sms.sender';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { PriceCacheService } from '../realtime/price-cache.service';
+import { RgService } from '../rg/rg.service';
 import { resetDatabase } from '../testing/reset';
 import { ResolutionService } from '../trade/resolution.service';
 import { TradeService } from '../trade/trade.service';
@@ -47,6 +52,14 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
     await config.refresh();
     const ledger = new LedgerService(prisma);
     const voids = new MarketVoidService(ledger);
+    // Notifications are best-effort by design; in tests they run against the
+    // same database with every channel unconfigured, so they record and move on.
+    const notifications = new NotificationsService(
+      prisma,
+      new PushSender(prisma),
+      new EmailSender(),
+      new SmsSender(),
+    );
     wallet = new WalletService(prisma, ledger);
     auth = new AuthService(
       prisma,
@@ -54,11 +67,16 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
     );
-    community = new CommunityService(prisma, config, wallet, voids);
+    community = new CommunityService(prisma, config, wallet, voids, notifications);
     seeds = new SeedService(prisma, config, wallet, voids);
-    trades = new TradeService(prisma, ledger, wallet, config, {
-      publish: async () => undefined,
-    } as unknown as PriceCacheService);
+    trades = new TradeService(
+      prisma,
+      ledger,
+      wallet,
+      config,
+      { publish: async () => undefined } as unknown as PriceCacheService,
+      new RgService(prisma, config),
+    );
     resolution = new ResolutionService(prisma, ledger, config);
   });
 

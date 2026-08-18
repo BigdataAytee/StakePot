@@ -63,6 +63,21 @@ export const CONFIG_SCHEMAS = {
   ai_balance_high: z.number().min(0).max(1),
   ai_balance_multi_max: z.number().min(0).max(1),
 
+  // Support desk and responsible gambling (§2.12, §6.7)
+  /** Hours until a ticket is late, per category. */
+  support_sla_hours: z.record(z.string(), z.number().int().positive()),
+  /** §2.12's session reality check, after this many minutes of continuous use. */
+  reality_check_minutes: z.number().int().positive(),
+  /**
+   * The platform's own daily caps. High in points mode and fully enforced —
+   * §2.12 wants the flows exercised long before a licence depends on them.
+   */
+  rg_platform_stake_limit_spc: z.number().positive(),
+  rg_platform_loss_limit_spc: z.number().positive(),
+  rg_cooloff_max_days: z.number().int().positive(),
+  /** The helpline text shown wherever limits are (§2.12). */
+  rg_helpline: z.string().min(1),
+
   // Financial controls (§2.10)
   reconciliation_tolerance_spc: z.number().nonnegative(),
   withdrawals_frozen: z.boolean(),

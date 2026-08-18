@@ -17,6 +17,7 @@ export default function ApprovalsInbox() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
+  const [codes, setCodes] = useState<Record<string, string>>({});
 
   const load = (): void => {
     void admin
@@ -93,10 +94,23 @@ export default function ApprovalsInbox() {
               </p>
 
               <div className="mt-3 flex items-center gap-2">
+                {/* §6.4b: the approve button triggers the step-up 2FA inline. */}
+                <input
+                  value={codes[item.id] ?? ''}
+                  onChange={(event) =>
+                    setCodes((current) => ({ ...current, [item.id]: event.target.value }))
+                  }
+                  inputMode="numeric"
+                  placeholder="2FA code"
+                  aria-label={`Authenticator code to approve ${item.actionType}`}
+                  className="w-28 rounded-sm border border-border bg-surface px-2 py-1.5 font-mono text-sm tabular-nums"
+                />
                 <button
                   type="button"
-                  disabled={busy === item.id}
-                  onClick={() => void act(item.id, () => admin.approve(item.id))}
+                  disabled={busy === item.id || (codes[item.id] ?? '').trim().length < 6}
+                  onClick={() =>
+                    void act(item.id, () => admin.approve(item.id, (codes[item.id] ?? '').trim()))
+                  }
                   className="rounded-sm bg-rise px-3 py-1.5 text-sm font-bold text-paper disabled:opacity-40"
                 >
                   Approve &amp; execute

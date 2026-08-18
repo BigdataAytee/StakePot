@@ -9,11 +9,17 @@ import { JwtGuard } from '../auth/jwt.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { env } from '../config/env';
 import { LedgerModule } from '../ledger/ledger.module';
+import { NotificationsModule } from '../notifications/notifications.module';
+import { RgModule } from '../rg/rg.module';
+import { StatusModule } from '../status/status.module';
+import { SupportModule } from '../support/support.module';
 import { ResolutionModule } from '../resolution/resolution.module';
 import { TradeModule } from '../trade/trade.module';
 import { WalletModule } from '../wallet/wallet.module';
+import { AccountController } from './account.controller';
 import { AdminController } from './admin.controller';
 import { AuthController } from './auth.controller';
+import { StatusController } from './status.controller';
 import { CommunityController } from './community.controller';
 import { MarketsController } from './markets.controller';
 import { TradesController } from './trades.controller';
@@ -25,7 +31,11 @@ import { TradesController } from './trades.controller';
     AuthModule,
     CommunityModule,
     LedgerModule,
+    NotificationsModule,
     ResolutionModule,
+    RgModule,
+    StatusModule,
+    SupportModule,
     TradeModule,
     WalletModule,
     JwtModule.register({
@@ -34,8 +44,10 @@ import { TradesController } from './trades.controller';
     }),
   ],
   controllers: [
+    AccountController,
     AdminController,
     AuthController,
+    StatusController,
     CommunityController,
     MarketsController,
     TradesController,

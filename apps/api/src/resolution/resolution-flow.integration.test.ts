@@ -7,13 +7,20 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AdminAuditService } from '../audit/admin-audit.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { AuthService } from '../auth/auth.service';
+import { TotpService } from '../auth/totp.service';
+import { generateSync } from 'otplib';
 import { CommunityService } from '../community/community.service';
 import { SeedService } from '../community/seed.service';
 import { MarketVoidService } from '../community/void.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { EmailSender } from '../notifications/email.sender';
+import { NotificationsService } from '../notifications/notifications.service';
+import { PushSender } from '../notifications/push.sender';
+import { SmsSender } from '../notifications/sms.sender';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import type { PrismaService } from '../prisma/prisma.service';
 import type { PriceCacheService } from '../realtime/price-cache.service';
+import { RgService } from '../rg/rg.service';
 import { resetDatabase } from '../testing/reset';
 import { ResolutionService } from '../trade/resolution.service';
 import { TradeService } from '../trade/trade.service';
@@ -52,6 +59,14 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
 
     const ledger = new LedgerService(prisma);
     const voids = new MarketVoidService(ledger);
+    // Notifications are best-effort by design; in tests they run against the
+    // same database with every channel unconfigured, so they record and move on.
+    const notifications = new NotificationsService(
+      prisma,
+      new PushSender(prisma),
+      new EmailSender(),
+      new SmsSender(),
+    );
     const audit = new AdminAuditService(prisma);
     wallet = new WalletService(prisma, ledger);
     auth = new AuthService(
@@ -60,18 +75,24 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
     );
-    community = new CommunityService(prisma, config, wallet, voids);
+    community = new CommunityService(prisma, config, wallet, voids, notifications);
     seeds = new SeedService(prisma, config, wallet, voids);
-    trades = new TradeService(prisma, ledger, wallet, config, {
-      publish: async () => undefined,
-    } as unknown as PriceCacheService);
+    trades = new TradeService(
+      prisma,
+      ledger,
+      wallet,
+      config,
+      { publish: async () => undefined } as unknown as PriceCacheService,
+      new RgService(prisma, config),
+    );
     flow = new ResolutionFlowService(
       prisma,
       config,
       new ResolutionService(prisma, ledger, config),
       audit,
+      notifications,
     );
-    approvals = new ApprovalsService(prisma, ledger, voids, config, audit);
+    approvals = new ApprovalsService(prisma, ledger, voids, config, audit, new TotpService(prisma));
   });
 
   afterAll(async () => {
@@ -115,6 +136,20 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       await prisma.user.update({ where: { id: userId }, data: { role } });
     }
     return { userId, role, ip: '10.0.0.9' };
+  }
+
+  /**
+   * A staff member with 2FA live, since §6.4b's approve button demands a fresh
+   * code. `code()` returns one for the moment it is called.
+   */
+  async function staffWith2fa(email: string, role: UserRole) {
+    const actor = await person(email, role);
+    const enrolment = await new TotpService(prisma).beginEnrolment(actor.userId);
+    await new TotpService(prisma).confirmEnrolment(
+      actor.userId,
+      generateSync({ secret: enrolment.secret }),
+    );
+    return { ...actor, code: () => generateSync({ secret: enrolment.secret }) };
   }
 
   /** A live seeded market with two ordinary stakers on it. */
@@ -407,7 +442,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
 
     it('forfeits a bond on the second eye, and never twice', async () => {
       const finance = await person('f-finance@example.ng', 'finance');
-      const boss = await person('f-admin@example.ng', 'admin');
+      const boss = await staffWith2fa('f-admin@example.ng', 'admin');
       const creator = await person('f-creator@example.ng');
       const { marketId } = await liveMarket(creator.userId);
 
@@ -420,7 +455,11 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
         reason: 'Creator abandoned resolution after the void date.',
         actor: finance,
       });
-      const done = await approvals.approve({ approvalId: approval.id, actor: boss });
+      const done = await approvals.approve({
+        approvalId: approval.id,
+        actor: boss,
+        totpCode: boss.code(),
+      });
       expect(done.state).toBe('approved');
       expect(done.executedAt).not.toBeNull();
 
@@ -443,9 +482,9 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
         reason: 'Duplicate proposal filed by mistake.',
         actor: finance,
       });
-      await expect(approvals.approve({ approvalId: again.id, actor: boss })).rejects.toThrow(
-        /already forfeited/,
-      );
+      await expect(
+        approvals.approve({ approvalId: again.id, actor: boss, totpCode: boss.code() }),
+      ).rejects.toThrow(/already forfeited/);
       const stuck = await prisma.approval.findUniqueOrThrow({ where: { id: again.id } });
       expect(stuck.state).toBe('pending');
       expect(stuck.executedAt).toBeNull();
@@ -453,7 +492,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
 
     it('voids a live market through the workflow and refunds everyone', async () => {
       const finance = await person('v-finance@example.ng', 'finance');
-      const boss = await person('v-admin@example.ng', 'admin');
+      const boss = await staffWith2fa('v-admin@example.ng', 'admin');
       const creator = await person('v-creator@example.ng');
       const punter = await person('v-punter@example.ng');
 
@@ -477,7 +516,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
         reason: 'The MPC meeting was cancelled; the source will never publish.',
         actor: finance,
       });
-      await approvals.approve({ approvalId: approval.id, actor: boss });
+      await approvals.approve({ approvalId: approval.id, actor: boss, totpCode: boss.code() });
 
       const voided = await prisma.market.findUniqueOrThrow({ where: { id: marketId } });
       expect(voided.state).toBe('voided');
@@ -493,7 +532,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
 
     it('corrects a balance with a reversing entry, never an edit', async () => {
       const finance = await person('adj-finance@example.ng', 'finance');
-      const boss = await person('adj-admin@example.ng', 'admin');
+      const boss = await staffWith2fa('adj-admin@example.ng', 'admin');
       const punter = await person('adj-punter@example.ng');
 
       const before = await wallet.balanceOf(punter.userId);
@@ -503,7 +542,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
         reason: 'Goodwill credit for the outage on the 12th, ticket #441.',
         actor: finance,
       });
-      await approvals.approve({ approvalId: approval.id, actor: boss });
+      await approvals.approve({ approvalId: approval.id, actor: boss, totpCode: boss.code() });
 
       const after = await wallet.balanceOf(punter.userId);
       expect(after.available.minus(before.available).eq(new Decimal('250.5'))).toBe(true);
@@ -523,7 +562,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
 
     it('lands a config change as a pending version that activates on its delay', async () => {
       const finance = await person('c-finance@example.ng', 'finance');
-      const boss = await person('c-admin@example.ng', 'admin');
+      const boss = await staffWith2fa('c-admin@example.ng', 'admin');
 
       const before = await config.get('exit_fee_rate');
       const approval = await approvals.propose({
@@ -532,7 +571,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
         reason: 'Board approved the exit fee moving to 1.5% from the 1st.',
         actor: finance,
       });
-      await approvals.approve({ approvalId: approval.id, actor: boss });
+      await approvals.approve({ approvalId: approval.id, actor: boss, totpCode: boss.code() });
 
       // §6.4b: never retroactively — the live value is unchanged until the delay
       // has run, so markets already open keep the terms they opened under.

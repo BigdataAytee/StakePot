@@ -26,6 +26,14 @@ export class TermiiSmsProvider implements SmsProvider {
   ) {}
 
   async sendOtp(phone: string, code: string): Promise<SmsDispatch> {
+    return this.send(
+      phone,
+      `${code} is your StakeAm code. It expires in 10 minutes. Never share it.`,
+    );
+  }
+
+  /** A composed transactional message — notifications (§2.12) and OTPs alike. */
+  async send(phone: string, text: string): Promise<SmsDispatch> {
     if (this.apiKey === undefined || this.apiKey.length === 0) {
       throw new IntegrationError('TERMII_KEY is not configured', this.name);
     }
@@ -36,7 +44,7 @@ export class TermiiSmsProvider implements SmsProvider {
       body: JSON.stringify({
         to: phone,
         from: this.senderId,
-        sms: `${code} is your StakeAm code. It expires in 10 minutes. Never share it.`,
+        sms: text,
         type: 'plain',
         channel: 'generic',
         api_key: this.apiKey,

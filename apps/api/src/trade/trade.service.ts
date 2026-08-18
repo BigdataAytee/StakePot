@@ -9,6 +9,7 @@ import { indexOf, outcomeAt, toEngineState } from '../market/market-state';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PriceCacheService } from '../realtime/price-cache.service';
+import { RgService } from '../rg/rg.service';
 import { WalletService } from '../wallet/wallet.service';
 
 export class TradeError extends Error {
@@ -60,6 +61,7 @@ export class TradeService {
     private readonly wallet: WalletService,
     private readonly config: PlatformConfigService,
     private readonly prices: PriceCacheService,
+    private readonly rg: RgService,
   ) {}
 
   /**
@@ -95,6 +97,11 @@ export class TradeService {
 
       const loaded = await this.lockAndLoad(tx, input.marketId, input.userId);
       const index = indexOf(loaded, input.outcomeId);
+
+      // §2.12's limits are checked here rather than at the edge: this is the one
+      // path money can leave a user's balance through, so a self-exclusion that
+      // holds here holds everywhere, including on any endpoint added later.
+      await this.rg.assertMayStake(input.userId, amount);
 
       // Escrow first: a trade the user cannot fund must not move the market.
       await this.wallet.escrow({

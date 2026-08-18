@@ -4,6 +4,7 @@ import type { Dispute, Resolution, UserRole } from '@prisma/client';
 import { AdminAuditService } from '../audit/admin-audit.service';
 import { STAFF_ROLES } from '../auth/roles.guard';
 import { type Tx } from '../ledger/ledger.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResolutionService, type ResolveOutcome } from '../trade/resolution.service';
@@ -47,6 +48,7 @@ export class ResolutionFlowService {
     private readonly config: PlatformConfigService,
     private readonly payouts: ResolutionService,
     private readonly audit: AdminAuditService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -320,6 +322,26 @@ export class ResolutionFlowService {
       where: { id: market.id },
       data: { disputeClosesAt: null },
     });
+
+    // Everyone who was paid, and everyone who argued, hears about it — after the
+    // money has moved, because that is when it is true (§2.12).
+    for (const payout of result.payouts) {
+      if (payout.payout.lte(0)) continue;
+      await this.notifications.notify({
+        userId: payout.userId,
+        type: 'payout',
+        body: `${outcome.label} won. ${payout.payout.toFixed(2)} is in your balance.`,
+        data: { marketId: market.id },
+      });
+    }
+    for (const dispute of disputes) {
+      await this.notifications.notify({
+        userId: dispute.userId,
+        type: 'dispute_update',
+        body: `Your dispute was ${dispute.state}. The market settled on ${outcome.label}.`,
+        data: { marketId: market.id },
+      });
+    }
 
     await this.audit.record({
       staffId: params.actor.userId,

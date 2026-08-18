@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, Gavel, LayoutDashboard, ShieldCheck, Wallet } from 'lucide-react';
+import { AlertTriangle, Gavel, LayoutDashboard, LifeBuoy, ShieldCheck, Wallet } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -24,6 +24,7 @@ const SCREENS = [
   { href: '/admin/resolution', label: 'Resolution', icon: Gavel },
   { href: '/admin/approvals', label: 'Approvals', icon: ShieldCheck },
   { href: '/admin/money', label: 'Money room', icon: Wallet },
+  { href: '/admin/support', label: 'Support desk', icon: LifeBuoy },
 ] as const;
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {

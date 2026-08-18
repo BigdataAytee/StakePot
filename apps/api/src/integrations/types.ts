@@ -73,4 +73,6 @@ export interface SmsDispatch {
 
 export interface SmsProvider {
   sendOtp(phone: string, code: string): Promise<SmsDispatch>;
+  /** A transactional message (§2.12's notifications), already composed. */
+  send(phone: string, text: string): Promise<SmsDispatch>;
 }

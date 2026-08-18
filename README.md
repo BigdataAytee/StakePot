@@ -15,8 +15,10 @@ Phase 0 scaffold reconciles against them, and the open questions it raised.
 
 Money core, live market and ticket view, multi-outcome markets, community
 creation with AI screening, Path B symmetric seeds, Sponsor Syndicates and
-conduct bonds, and — as of step 8 — the resolution and dispute flow, four-eyes
-approvals, and the admin cockpit's first four screens at `/admin`.
+conduct bonds, the resolution and dispute flow, four-eyes approvals, the admin
+cockpit at `/admin` — and, as of step 9, the company layer: responsible-gambling
+limits, support ticketing with SLAs, notifications, staff 2FA and a public
+status page at `/status`.
 
 ## Quickstart
 
@@ -64,6 +66,9 @@ pnpm dev                      # web on :3000, api on :3001
 - **The pot invariants are asserts, not enforcement.** If
   `pot === C(q) − C(q0)` or `Σstaked === pot` ever fires, the implementation is
   wrong — do not clamp around it.
+- **Self-exclusion always wins** (§2.12). It is checked inside the transaction
+  that moves the money, it blocks staking and never withdrawal, and there is no
+  code path that undoes it — reinstatement is a person's decision, not a button.
 - **No god button** (§6). No screen lets one person edit a balance, resolve a
   market without a trail, or spend escrow. Voids after activation, bond
   forfeitures, manual ledger corrections and config changes are proposals; a

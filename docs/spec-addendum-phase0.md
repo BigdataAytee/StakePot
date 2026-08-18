@@ -168,6 +168,59 @@ permission matrix that cannot express "support reads tickets but not the ledger"
 is not a permission matrix. Roles are checked by a guard on the handler, so an
 endpoint that forgets to declare who may call it is an endpoint nobody may call.
 
+## The company layer (step 9)
+
+**A limit can always be tightened, and only loosened when you are not on a
+break.** §2.12 does not spell the asymmetry out, but a limit you can raise in
+the moment you most want to raise it is not a limit. Tightening lands
+immediately; loosening is refused while a cool-off runs. A cool-off itself can
+be extended and never shortened — somebody reaching for that control a second
+time is not asking for less of it.
+
+**Self-exclusion has no undo, deliberately.** There is no method to reverse it:
+reinstatement is a support request a human handles. It blocks staking and
+nothing else — the balance stays withdrawable, because the difference between
+protecting somebody and holding their money hostage is exactly that.
+
+**The RG gate lives in the trade path, before escrow.** It is checked inside the
+transaction that moves the money rather than at the edge, so a self-exclusion
+holds on any endpoint added later. That ordering also means a stake that is both
+over a limit and unaffordable reports the limit: the gate comes before the
+write, which is the right way round.
+
+**Losses are read from the ledger, not from a counter.** A daily loss is money
+that left `user_available` and did not come back — stakes, less payouts,
+refunds and early exits — so nothing can defeat the limit by forgetting to
+increment something.
+
+**Every notification writes a row, including the ones that failed.** The channel
+result lands on the row with the reason. A silently-failed message and one never
+attempted look identical otherwise, and "we told them" is a claim the support
+desk has to be able to check. Delivery is best-effort by design: a market must
+settle whether or not an SMS gateway is up.
+
+**The SLA clock pauses when the ball is in the user's court.** A staff reply moves
+the ticket to `waiting_on_user`; the user's reply restarts it from the
+category's SLA. A desk that counts its own waiting time as lateness stops
+believing its own amber. Internal notes are not answers and do not stop the
+clock.
+
+**Step-up 2FA runs after the questions about _who_.** §6.4b puts a fresh TOTP
+challenge on the approve button; that check now sits after the self-approval and
+role checks, because there is no point asking somebody to reach for their phone
+to authorise an action they were never allowed to take. It fails closed for an
+unenrolled staff account — §2.11 makes 2FA mandatory for staff, so "not enrolled
+yet" is a reason to stop.
+
+**The status page never rewrites itself.** An incident is a title and a timeline;
+a correction is another update, not an edit. The daily reconciliation result is
+published on it, because hiding the platform's own money check would be the
+opposite of "transparency as a feature".
+
+Packages installed for this step, all from §5.1's step-9 line: `web-push`,
+`otplib`, `qrcode`, `nodemailer`. The Termii client from step 1 gained a
+`send()` alongside `sendOtp()` rather than a second SMS client.
+
 ## Still open
 
 **The §2.3 liquidity tuning rule understates price impact by 1/p.** Unchanged in

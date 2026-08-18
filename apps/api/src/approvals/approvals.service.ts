@@ -5,6 +5,7 @@ import { Decimal } from '@stakeam/engine';
 
 import { AdminAuditService } from '../audit/admin-audit.service';
 import { MONEY_ROLES } from '../auth/roles.guard';
+import { TotpService } from '../auth/totp.service';
 import { MarketVoidService } from '../community/void.service';
 import { NotImplementedError } from '../integrations/errors';
 import { LedgerService, type Tx } from '../ledger/ledger.service';
@@ -51,6 +52,7 @@ export class ApprovalsService {
     private readonly voids: MarketVoidService,
     private readonly config: PlatformConfigService,
     private readonly audit: AdminAuditService,
+    private readonly totp: TotpService,
   ) {}
 
   /**
@@ -119,7 +121,12 @@ export class ApprovalsService {
    * is the part no session can talk its way past — a different person, with a
    * role that is allowed to move money.
    */
-  async approve(params: { approvalId: string; actor: Actor }): Promise<Approval> {
+  async approve(params: {
+    approvalId: string;
+    actor: Actor;
+    /** The fresh TOTP code §6.4b requires inline on the approve button. */
+    totpCode?: string;
+  }): Promise<Approval> {
     const { actor } = params;
 
     const approved = await this.prisma.$transaction(async (tx) => {
@@ -145,6 +152,16 @@ export class ApprovalsService {
           `moving money needs a ${MONEY_ROLES.join(' or ')} approver — you are ${actor.role}`,
         );
       }
+
+      // §6.4b's step-up, after the questions about *who* this is: there is no
+      // point asking somebody to reach for their phone to authorise an action
+      // they were never allowed to take. Nothing has been written at this point,
+      // so a failed challenge rolls back an empty transaction.
+      await this.totp.assertStepUp({
+        userId: actor.userId,
+        role: actor.role,
+        ...(params.totpCode === undefined ? {} : { code: params.totpCode }),
+      });
 
       await this.execute(tx, approval.actionType, approval.payloadJson, {
         approvalId: approval.id,

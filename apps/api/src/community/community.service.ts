@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { Decimal } from '@stakeam/engine';
 
 import { type Tx } from '../ledger/ledger.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -32,6 +33,7 @@ export class CommunityService {
     private readonly config: PlatformConfigService,
     private readonly wallet: WalletService,
     private readonly voids: MarketVoidService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -184,7 +186,7 @@ export class CommunityService {
   }> {
     const floor = await this.config.get('participation_floor_users');
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM markets WHERE id = ${marketId} FOR UPDATE`;
 
       const market = await tx.market.findUniqueOrThrow({ where: { id: marketId } });
@@ -215,9 +217,34 @@ export class CommunityService {
       }
 
       const reason = `only ${stakers.length} of ${floor} backers staked`;
-      await this.voids.voidAndRefund(tx, marketId, reason);
-      return { outcome: 'voided' as const, reason };
+      const refunded = await this.voids.voidAndRefund(tx, marketId, reason);
+      return { outcome: 'voided' as const, reason, refunded };
     });
+
+    await this.announceRefunds(result, marketId);
+    return result;
+  }
+
+  /**
+   * Tell everyone their money is back — after the commit, never before.
+   *
+   * A refund notification that arrives ahead of the transaction it describes is
+   * a message that can turn out to be false, and this is the one topic where
+   * that is unacceptable.
+   */
+  private async announceRefunds(
+    result: { outcome: string; reason?: string; refunded?: readonly { userId: string }[] },
+    marketId: string,
+  ): Promise<void> {
+    if (result.outcome !== 'voided' || result.refunded === undefined) return;
+    for (const row of result.refunded) {
+      await this.notifications.notify({
+        userId: row.userId,
+        type: 'refund',
+        body: `A market you backed was voided — ${result.reason ?? 'it did not go ahead'}. Every naira is back in your balance.`,
+        data: { marketId },
+      });
+    }
   }
 
   /**
@@ -233,7 +260,7 @@ export class CommunityService {
   }> {
     const rules = await this.activationRules();
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM markets WHERE id = ${marketId} FOR UPDATE`;
 
       const market = await tx.market.findUniqueOrThrow({
@@ -258,9 +285,12 @@ export class CommunityService {
         return { outcome: 'activated' as const };
       }
 
-      await this.voidAndRefund(tx, marketId, decision.reason);
-      return { outcome: 'voided' as const, reason: decision.reason };
+      const refunded = await this.voidAndRefund(tx, marketId, decision.reason);
+      return { outcome: 'voided' as const, reason: decision.reason, refunded };
     });
+
+    await this.announceRefunds(result, marketId);
+    return result;
   }
 
   /**
@@ -271,8 +301,8 @@ export class CommunityService {
    * who resolved dishonestly, which is a `bond.forfeit` proposal through the
    * four-eyes workflow (§2.10) — never a method on this service.
    */
-  private async voidAndRefund(tx: Tx, marketId: string, reason: string): Promise<void> {
-    await this.voids.voidAndRefund(tx, marketId, reason);
+  private async voidAndRefund(tx: Tx, marketId: string, reason: string) {
+    return this.voids.voidAndRefund(tx, marketId, reason);
   }
 
   /** Money staked and distinct backers per outcome, excluding the creator. */

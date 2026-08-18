@@ -22,7 +22,12 @@ import { LedgerService, type Tx } from '../ledger/ledger.service';
 export class MarketVoidService {
   constructor(private readonly ledger: LedgerService) {}
 
-  async voidAndRefund(tx: Tx, marketId: string, reason: string): Promise<void> {
+  async voidAndRefund(
+    tx: Tx,
+    marketId: string,
+    reason: string,
+  ): Promise<readonly { userId: string; amount: Decimal }[]> {
+    const refunded: { userId: string; amount: Decimal }[] = [];
     const escrowed = await tx.ledgerEntry.groupBy({
       by: ['userId'],
       where: { marketId, fundClass: 'user_escrow' },
@@ -32,6 +37,7 @@ export class MarketVoidService {
     for (const row of escrowed) {
       const held = new Decimal(row._sum.amount?.toString() ?? '0');
       if (held.lte(0)) continue;
+      refunded.push({ userId: row.userId, amount: held });
       await this.ledger.post(
         tx,
         [
@@ -86,5 +92,10 @@ export class MarketVoidService {
     await tx.marketAnnotation.create({
       data: { marketId, type: 'resolution', label: `Voided — ${reason}. Everyone refunded.` },
     });
+
+    // Returned rather than announced from in here: the callers are inside a
+    // transaction, and telling somebody their money is back before the commit
+    // that puts it back is a message that can turn out to be false.
+    return refunded;
   }
 }

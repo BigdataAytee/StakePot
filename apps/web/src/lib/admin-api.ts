@@ -110,6 +110,24 @@ export interface ReservesExport {
   solvent: boolean;
 }
 
+export interface SupportQueueTicket {
+  id: string;
+  subject: string;
+  category: string;
+  state: string;
+  slaState: 'ok' | 'due_soon' | 'breached' | 'paused';
+  slaDue: string;
+  createdAt: string;
+  user: { id: string; email: string | null; phone: string | null; tier: number; status: string };
+  market: { id: string; question: string; state: string } | null;
+  messages: { id: string; authorId: string; body: string; staffOnly: boolean; createdAt: string }[];
+}
+
+export interface TotpStatus {
+  enrolled: boolean;
+  confirmedAt: string | null;
+}
+
 export function adminToken(): string | null {
   if (typeof window === 'undefined') return null;
   return window.localStorage.getItem('stakeam.token');
@@ -143,9 +161,10 @@ export const admin = {
   dashboard: () => request<DashboardView>('/admin/dashboard'),
   resolutionQueue: () => request<QueueMarket[]>('/admin/resolution-queue'),
   approvals: () => request<PendingApproval[]>('/admin/approvals'),
-  approve: (id: string) =>
+  approve: (id: string, totpCode: string) =>
     request<{ state: string }>(`/admin/approvals/${id}/approve`, {
       method: 'POST',
+      body: JSON.stringify({ totpCode }),
     }),
   reject: (id: string, reason: string) =>
     request<{ state: string }>(`/admin/approvals/${id}/reject`, {
@@ -171,6 +190,24 @@ export const admin = {
     return request<LedgerRow[]>(`/admin/ledger${suffix === '' ? '' : `?${suffix}`}`);
   },
   reconciliation: () => request<ReconciliationRow[]>('/admin/reconciliation'),
+  supportQueue: () => request<SupportQueueTicket[]>('/admin/support'),
+  supportReply: (id: string, body: string, staffOnly = false) =>
+    request<{ state: string }>(`/admin/support/${id}/reply`, {
+      method: 'POST',
+      body: JSON.stringify({ body, staffOnly }),
+    }),
+  supportResolve: (id: string) =>
+    request<{ state: string }>(`/admin/support/${id}/resolve`, { method: 'POST' }),
+  totpStatus: () => request<TotpStatus>('/account/2fa'),
+  totpEnrol: () =>
+    request<{ otpauth: string; qr: string; secret: string }>('/account/2fa/enrol', {
+      method: 'POST',
+    }),
+  totpConfirm: (code: string) =>
+    request<TotpStatus>('/account/2fa/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
   reserves: () => request<ReservesExport>('/admin/reserves'),
   decideDispute: (disputeId: string, upheld: boolean, decision: string) =>
     request<{ state: string }>(`/admin/disputes/${disputeId}/decide`, {
