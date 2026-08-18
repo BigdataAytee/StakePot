@@ -93,7 +93,14 @@ jobs:
             INSERT INTO users (id, \"contactVerified\", tier, \"pwHash\", role, status)
             VALUES ('ci_user', true, 0, 'x', 'user', 'active');
             INSERT INTO ledger (id, \"userId\", type, \"fundClass\", amount, currency)
-            VALUES ('ci_entry', 'ci_user', 'signup_bonus', 'user_available', 100, 'PTS');
+            VALUES ('ci_entry', 'ci_user', 'signup_bonus', 'user_available', 100,
+              -- Read the points currency off the enum rather than naming it. This
+              -- step is about the append-only rule, and hardcoding 'PTS' here is
+              -- exactly what broke it when §2.2 renamed the value to 'SPC'.
+              (SELECT enumlabel FROM pg_enum e
+                 JOIN pg_type t ON t.oid = e.enumtypid
+                WHERE t.typname = 'Currency'
+                ORDER BY e.enumsortorder LIMIT 1)::\"Currency\");
           "
           if psql "$DATABASE_URL" -c "UPDATE ledger SET amount = 999 WHERE id = 'ci_entry';" 2>/dev/null; then
             echo "::error::ledger accepted an UPDATE — append-only enforcement is broken"
