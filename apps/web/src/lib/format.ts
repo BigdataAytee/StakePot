@@ -7,24 +7,39 @@
 
 const NAIRA = '₦';
 
+/**
+ * The sign belongs in front of the currency, not inside it.
+ *
+ * `₦-500.00` is what you get by concatenating a symbol onto a formatted
+ * negative, and it reads as a typo. Wallet history is full of debits, so this
+ * is the difference between a statement and a puzzle.
+ */
+function signed(n: number, body: string): string {
+  return n < 0 ? `-${NAIRA}${body}` : `${NAIRA}${body}`;
+}
+
 /** ₦9,000 · ₦1.2m — a pot should be readable at a glance, not counted. */
 export function money(value: string | number): string {
   const n = typeof value === 'string' ? Number.parseFloat(value) : value;
   if (!Number.isFinite(n)) return `${NAIRA}0`;
-  if (Math.abs(n) >= 1_000_000)
-    return `${NAIRA}${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}m`;
-  if (Math.abs(n) >= 10_000) return `${NAIRA}${Math.round(n / 1000)}k`;
-  return `${NAIRA}${n.toLocaleString('en-NG', { maximumFractionDigits: 0 })}`;
+  const magnitude = Math.abs(n);
+  if (magnitude >= 1_000_000)
+    return signed(n, `${(magnitude / 1_000_000).toFixed(magnitude >= 10_000_000 ? 0 : 1)}m`);
+  if (magnitude >= 10_000) return signed(n, `${Math.round(magnitude / 1000)}k`);
+  return signed(n, magnitude.toLocaleString('en-NG', { maximumFractionDigits: 0 }));
 }
 
 /** Exact to the kobo, for the trade sheet where the number is the commitment. */
 export function exactMoney(value: string | number): string {
   const n = typeof value === 'string' ? Number.parseFloat(value) : value;
   if (!Number.isFinite(n)) return `${NAIRA}0.00`;
-  return `${NAIRA}${n.toLocaleString('en-NG', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+  return signed(
+    n,
+    Math.abs(n).toLocaleString('en-NG', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }),
+  );
 }
 
 /** A probability as a percentage: 0.62 → 62. */

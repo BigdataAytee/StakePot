@@ -33,6 +33,13 @@ export const NOTIFICATION_TYPES = {
   // §2.8's weekly prize. Email as well: money arriving is worth a record
   // somewhere the recipient can find again.
   prize: { title: 'You won a prize', channels: ['in_app', 'push', 'email'] },
+  // §2.1's Tier 1 gate. Every channel the contact could be: the code has to
+  // reach whichever of email or phone the person signed up with, and the in-app
+  // copy is what a support agent reads back when delivery failed.
+  contact_verification: {
+    title: 'Your verification code',
+    channels: ['in_app', 'email', 'sms'],
+  },
   rg_confirmation: {
     title: 'Your limits changed',
     // Deliberately every channel, including SMS: a person who has just excluded

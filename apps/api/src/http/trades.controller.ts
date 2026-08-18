@@ -176,6 +176,39 @@ export class TradesController {
     };
   }
 
+  /**
+   * The Wallet screen's history (§2.16d).
+   *
+   * Read straight from the ledger, which is why it is complete by construction:
+   * there is no second place a money event could have been recorded, so a line
+   * missing here would mean the money never moved. Only the user's own
+   * `user_available` legs — the escrow legs are the same events seen from the
+   * pot's side, and showing both would double every row on screen.
+   */
+  @Get('me/wallet/history')
+  @UseGuards(JwtGuard)
+  async walletHistory(@Req() request: RequestWithUser) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+
+    const entries = await this.prisma.ledgerEntry.findMany({
+      where: { userId: user.userId, fundClass: 'user_available' },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      include: { market: { select: { id: true, question: true } } },
+    });
+
+    return entries.map((entry) => ({
+      id: entry.id,
+      type: entry.type,
+      amount: entry.amount.toString(),
+      createdAt: entry.createdAt.toISOString(),
+      marketId: entry.marketId,
+      marketQuestion: entry.market?.question ?? null,
+      ref: entry.ref,
+    }));
+  }
+
   /** Open positions, for the ticket's position panel (§7.2d). */
   @Get('me/positions')
   @UseGuards(JwtGuard)

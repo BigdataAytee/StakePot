@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { MarketDetail, OutcomeView } from '@/lib/api';
 import { API_URL } from '@/lib/api';
 import { exactMoney, kobo, percent } from '@/lib/format';
+import { usePublicConfig } from '@/lib/public-config';
 
 /** The quick chips §7.2d specifies for amount-first entry. */
 const AMOUNT_CHIPS = [500, 1000, 2000, 5000];
@@ -46,6 +47,7 @@ export function TradeSheet({
   onClose: () => void;
   onFilled: () => void;
 }) {
+  const config = usePublicConfig();
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
@@ -78,8 +80,38 @@ export function TradeSheet({
     if (!Number.isFinite(liquidity) || liquidity <= 0) return null;
 
     if (side === 'sell') {
-      // Quoted from the same curve, but the server is what actually fills.
-      return { shares: entered, total: entered * price, priceAfter: price, estWin: null };
+      // The same cost function the engine uses, so the sheet quotes what the
+      // fill will actually be worth: gross = C(q) − C(q with these shares
+      // returned. A linear shares × price is not the curve, and on a large exit
+      // it overstates the proceeds — which is the wrong direction to be wrong
+      // in on a screen somebody is about to act on.
+      const q = market.outcomes.map((row) => Number.parseFloat(row.shares));
+      const index = market.outcomes.findIndex((row) => row.id === outcome.id);
+      if (index === -1) return null;
+
+      const held = q[index] ?? 0;
+      if (entered > held) return null;
+
+      const after = [...q];
+      after[index] = held - entered;
+
+      const gross = costOf(q, liquidity) - costOf(after, liquidity);
+      if (!Number.isFinite(gross) || gross <= 0) return null;
+
+      // §2.3: the early-exit fee is withheld from the seller, never taken from
+      // the pot. Quoted here so the number on the button is the number that
+      // lands in the wallet.
+      const feeRate = config?.exitFeeRate ?? 0;
+      const fee = gross * feeRate;
+
+      return {
+        shares: entered,
+        total: gross - fee,
+        gross,
+        fee,
+        priceAfter: price,
+        estWin: null,
+      };
     }
 
     // The engine's closed form, run here only so the sheet can show the figures
@@ -97,8 +129,8 @@ export function TradeSheet({
     const outstandingAfter = outstanding + shares;
     const estWin = outstandingAfter > 0 ? (potAfter * shares) / outstandingAfter : 0;
 
-    return { shares, total: entered, priceAfter, estWin };
-  }, [amount, price, side, market.pot, market.liquidity, outcome]);
+    return { shares, total: entered, gross: entered, fee: 0, priceAfter, estWin };
+  }, [amount, price, side, market.pot, market.liquidity, market.outcomes, outcome, config]);
 
   const closed = market.state !== 'active';
 
@@ -264,7 +296,16 @@ export function TradeSheet({
                 </>
               )}
               {preview !== null && side === 'sell' && (
-                <Row label="You receive" value={exactMoney(preview.total)} emphasis />
+                <>
+                  <Row label="Proceeds" value={exactMoney(preview.gross)} />
+                  <Row
+                    label={`Early-exit fee${
+                      config === null ? '' : ` (${(config.exitFeeRate * 100).toFixed(0)}%)`
+                    }`}
+                    value={`−${exactMoney(preview.fee)}`}
+                  />
+                  <Row label="You receive" value={exactMoney(preview.total)} emphasis />
+                </>
               )}
             </dl>
 
@@ -338,4 +379,18 @@ function Row({
       <dd className={`font-mono tabular-nums ${emphasis ? 'text-money' : ''}`}>{value}</dd>
     </div>
   );
+}
+
+/**
+ * The LMSR cost function, C(q) = L·ln(Σ e^(qᵢ/L)).
+ *
+ * Shifted by the maximum before exponentiating: without that, a market with a
+ * large outstanding position overflows to Infinity in a float and the sheet
+ * quotes NaN at exactly the size where the quote matters most.
+ */
+function costOf(q: readonly number[], liquidity: number): number {
+  const scaled = q.map((value) => value / liquidity);
+  const peak = Math.max(...scaled);
+  const sum = scaled.reduce((total, value) => total + Math.exp(value - peak), 0);
+  return liquidity * (peak + Math.log(sum));
 }
