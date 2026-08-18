@@ -35,7 +35,13 @@
       "esbuild",
       "prisma",
       "sharp"
-    ]
+    ],
+    "//overrides": "Transitive advisories the dependency-audit gate refuses. Each is a vulnerable version pulled in by a package we do want (next, prisma), so the fix is a floor here rather than dropping the parent. Reviewed on every bump: if the parent ships a patched range itself, the override should go.",
+    "overrides": {
+      "postcss": ">=8.5.18",
+      "sharp": ">=0.35.0",
+      "deepmerge-ts": ">=8.0.0"
+    }
   },
   "//scale-trigger": "kafkajs — architecture §12 scale trigger ONLY. Deliberately NOT installed in Phase 0. Add to apps/api dependencies when the events table / trade fan-out exceeds what Redis Streams can carry, and not before.",
   "devDependencies": {
