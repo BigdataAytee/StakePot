@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
+import { resetAuthBudget } from './redis';
+
 /**
  * The whole product, in order, in the browser a user gets — and a screenshot of
  * every step in `docs/walkthrough/`.
@@ -68,25 +70,12 @@ execSync(
 test.describe.configure({ mode: 'serial' });
 
 test.describe('the walkthrough', () => {
-  /**
-   * Clear this machine's auth rate-limit budget before each project's run.
-   *
-   * §11's limiter counts signups per IP, and the suite signs up fresh accounts
-   * — which is precisely the shape it exists to refuse. Per *project*, not once
-   * per file: running desktop and phone in one job doubles the signups from a
-   * single address, and CI failed exactly that way once the phone viewport was
-   * added. Resetting is not disabling the control — step 11 below trips it
-   * deliberately and asserts the refusal, so it is proven on every run.
-   */
-  test.beforeAll(() => {
-    try {
-      execSync('redis-cli --scan --pattern "rl:auth:*" | xargs -r redis-cli del', {
-        stdio: 'ignore',
-      });
-    } catch {
-      // No redis-cli here: the run is then subject to the real budget, which is
-      // the honest failure mode.
-    }
+  // §11's limiter counts signups and logins per IP, and this suite does both
+  // by the dozen from one address. Reset per project: two projects in one job
+  // share the address, and the second would otherwise meet a budget the first
+  // had spent — which is how CI first went red on the phone viewport.
+  test.beforeAll(async () => {
+    await resetAuthBudget();
   });
 
   test('1 · the front door explains itself to a stranger', async ({ page }, testInfo) => {
@@ -365,7 +354,14 @@ test.describe('the walkthrough', () => {
     await capture(page, 'leaderboard-after-settlement', testInfo);
   });
 
-  test('11 · the auth rate limit refuses a burst, in words a person can act on', async () => {
+  test('11 · the auth rate limit refuses a burst, in words a person can act on', async ({
+    request,
+  }, info) => {
+    // Once, not once per viewport: this asserts an API control, which has no
+    // opinion about screen size — and the burst deliberately spends the whole
+    // per-IP budget, so running it twice would starve the other project.
+    test.skip(info.project.name !== 'desktop', 'API-level control; viewport-independent');
+
     // §11: "Rate limiting per user/IP". Fired straight at the API because this
     // is about the control, not the screen — and asserted on the message as
     // well as the status, since a limiter that says "Error 429" to somebody who
@@ -373,17 +369,13 @@ test.describe('the walkthrough', () => {
     let refusal: { status: number; message: string } | null = null;
 
     for (let attempt = 0; attempt < 40 && refusal === null; attempt += 1) {
-      const response = await fetch(`${API}/auth/login`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          contact: `burst${attempt}@example.com`,
-          password: 'wrong-password',
-        }),
+      const response = await request.post(`${API}/auth/login`, {
+        data: { contact: `burst${attempt}@example.com`, password: 'wrong-password' },
+        failOnStatusCode: false,
       });
-      if (response.status === 429) {
+      if (response.status() === 429) {
         const body = (await response.json()) as { message: string };
-        refusal = { status: response.status, message: body.message };
+        refusal = { status: response.status(), message: body.message };
       }
     }
 

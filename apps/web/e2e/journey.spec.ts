@@ -2,6 +2,8 @@ import { execSync } from 'node:child_process';
 
 import { expect, test } from '@playwright/test';
 
+import { resetAuthBudget } from './redis';
+
 /**
  * §5.1 step 14's end-to-end user journeys, in the browser the users get.
  *
@@ -43,23 +45,9 @@ async function api<T>(path: string, body: unknown, token?: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-test.beforeAll(() => {
-  /*
-   * Clear this machine's auth rate-limit budget first.
-   *
-   * These journeys sign up fresh accounts, which is the shape §11's limiter
-   * refuses. Per project rather than per file: desktop and phone in one job
-   * double the signups from one address, and CI failed exactly that way when
-   * the phone viewport was added. The limiter is asserted in
-   * walkthrough.spec.ts, so this resets a budget rather than disabling a check.
-   */
-  try {
-    execSync('redis-cli --scan --pattern "rl:auth:*" | xargs -r redis-cli del', {
-      stdio: 'ignore',
-    });
-  } catch {
-    // No redis-cli here: the run is then subject to the real budget.
-  }
+test.beforeAll(async () => {
+  // Per project — see e2e/redis.ts.
+  await resetAuthBudget();
 
   marketId = `e2e-market-${stamp}`;
   yesOutcomeId = `e2e-yes-${stamp}`;

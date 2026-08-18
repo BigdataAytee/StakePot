@@ -11,7 +11,7 @@
     "test:props": "vitest run --passWithNoTests props",
     "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src --max-warnings=0",
+    "lint": "eslint src e2e --max-warnings=0",
     "migrate": "node -e \"console.log('no database in apps/web \u2014 run pnpm --filter @stakeam/api migrate')\""
   },
   "dependencies": {
