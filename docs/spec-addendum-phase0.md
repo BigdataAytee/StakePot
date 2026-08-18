@@ -59,6 +59,25 @@ Left unedited, per `scripts/README.md`: the sims are the reference, not
 something to bring into line with the TypeScript. The divergence is pinned in
 `packages/engine/src/__tests__/pricing-sim.test.ts` so it stays visible.
 
+## Storage quantum (step 2)
+
+`pot === C(q) − C(q0)` is exact in the engine's arithmetic. It is not exact once
+the market lives in a database, and that is not a bug in either place: share
+counts come out of `ln` and `exp`, so no finite column scale holds them exactly,
+and the pot is money that has to quantise to a payable amount. Something has to
+absorb the difference.
+
+`MarketState.quantum` names it. Zero for a market held in memory, where the
+identities are exact; `1e-18` for one loaded from `Decimal(38,18)` columns. The
+invariant then bounds a round trip through storage instead of tripping on it,
+while staying sixteen orders of magnitude below one kobo.
+
+Two things are kept exact rather than tolerated, because they can be:
+`potTotal` moves by the same database-side increment as `stakedTotal`, and
+`positions.shares` by the same increment as `outcomes.sharesOutstanding` — two
+exact Postgres additions of one value always agree, where the same sum computed
+in JavaScript and written back would not.
+
 ## Still open
 
 **The §2.3 liquidity tuning rule understates price impact by 1/p.** Unchanged in

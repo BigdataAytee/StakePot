@@ -269,8 +269,20 @@ model Outcome {
   id                String  @id @default(cuid())
   marketId          String
   label             String
+  /// Position in the engine's share vector. Explicit rather than inferred from
+  /// insertion order: this number indexes into q[], and getting it wrong would
+  /// silently price one outcome as another.
+  ordinal           Int
   sharesOutstanding Decimal @default(0) @db.Decimal(38, 18)
   priceCurrent      Decimal @default(0) @db.Decimal(38, 18)
+  /// Money staked on this outcome, net of early exits. Σ across a market's
+  /// outcomes equals `markets.potTotal`.
+  ///
+  /// Not in §3, and needed since v2 §2.3 moved the fee basis to the losing pool
+  /// — the cost curve keeps one pot, so what was staked per outcome has to be
+  /// carried alongside it. A cache of the trades table, like `potTotal` and
+  /// `sharesOutstanding` already are.
+  stakedTotal       Decimal @default(0) @db.Decimal(38, 18)
   /// The catch-all bucket on a multi-outcome ticket.
   isOther           Boolean @default(false)
 
@@ -282,6 +294,7 @@ model Outcome {
   resolutionsFinal    Resolution[] @relation("FinalOutcome")
   priceHistory PriceHistory[]
 
+  @@unique([marketId, ordinal])
   @@index([marketId])
   @@map("outcomes")
 }

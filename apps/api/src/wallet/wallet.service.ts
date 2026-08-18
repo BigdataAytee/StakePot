@@ -1,6 +1,6 @@
+import { Decimal } from '@stakeam/engine';
 import { Injectable } from '@nestjs/common';
 import type { Currency, LedgerType } from '@prisma/client';
-import { Decimal } from 'decimal.js';
 
 import { LedgerService, type Tx } from '../ledger/ledger.service';
 import { escrow, issue, release } from '../ledger/posting';

@@ -8,6 +8,7 @@ import { PlatformConfigService } from '../platform-config/platform-config.servic
 import type { PrismaService } from '../prisma/prisma.service';
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { WalletService } from '../wallet/wallet.service';
+import { resetDatabase } from '../testing/reset';
 import { LedgerService } from './ledger.service';
 import { UnbalancedTransactionError, escrow } from './posting';
 
@@ -78,12 +79,7 @@ describe.skipIf(!TEST_DATABASE_URL)('ledger (integration)', () => {
 
   /** Wipe everything except the seeded house accounts and config. */
   beforeEach(async () => {
-    await prisma.$executeRawUnsafe('ALTER TABLE ledger DISABLE TRIGGER ledger_append_only');
-    await prisma.$executeRawUnsafe('DELETE FROM ledger');
-    await prisma.$executeRawUnsafe('ALTER TABLE ledger ENABLE TRIGGER ledger_append_only');
-    await prisma.wallet.updateMany({ data: { available: 0, escrowed: 0 } });
-    await prisma.user.deleteMany({ where: { status: { not: 'system' } } });
-    await prisma.market.deleteMany();
+    await resetDatabase(prisma);
     marketId = await createTestMarket(prisma);
   });
 
@@ -298,12 +294,7 @@ describe.skipIf(!TEST_DATABASE_URL)('reconciliation (integration)', () => {
   });
 
   beforeEach(async () => {
-    await prisma.$executeRawUnsafe('ALTER TABLE ledger DISABLE TRIGGER ledger_append_only');
-    await prisma.$executeRawUnsafe('DELETE FROM ledger');
-    await prisma.$executeRawUnsafe('ALTER TABLE ledger ENABLE TRIGGER ledger_append_only');
-    await prisma.wallet.updateMany({ data: { available: 0, escrowed: 0 } });
-    await prisma.user.deleteMany({ where: { status: { not: 'system' } } });
-    await prisma.reconciliationRun.deleteMany();
+    await resetDatabase(prisma);
     await prisma.platformConfig.updateMany({
       where: { key: 'withdrawals_frozen' },
       data: { valueJson: false },

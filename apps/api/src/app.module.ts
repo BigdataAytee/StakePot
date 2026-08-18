@@ -8,6 +8,7 @@ import { MetricsController } from './observability/metrics.controller';
 import { PlatformConfigModule } from './platform-config/platform-config.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
+import { TradeModule } from './trade/trade.module';
 import { WalletModule } from './wallet/wallet.module';
 
 @Module({
@@ -19,6 +20,7 @@ import { WalletModule } from './wallet/wallet.module';
     WalletModule,
     AuthModule,
     ReconciliationModule,
+    TradeModule,
   ],
   controllers: [HealthController, MetricsController],
 })

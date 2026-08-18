@@ -1,4 +1,4 @@
-import { Decimal } from 'decimal.js';
+import { Decimal } from '@stakeam/engine';
 import type { Currency, FundClass, LedgerType } from '@prisma/client';
 
 /**

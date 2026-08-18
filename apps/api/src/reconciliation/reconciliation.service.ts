@@ -1,7 +1,7 @@
+import { Decimal } from '@stakeam/engine';
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Currency } from '@prisma/client';
-import { Decimal } from 'decimal.js';
 
 import { logger } from '../logger';
 import { PlatformConfigService } from '../platform-config/platform-config.service';

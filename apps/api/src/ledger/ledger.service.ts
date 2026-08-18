@@ -1,7 +1,7 @@
+import { Decimal } from '@stakeam/engine';
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Currency, FundClass } from '@prisma/client';
-import { Decimal } from 'decimal.js';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { assertBalanced, netFor, type Posting } from './posting';

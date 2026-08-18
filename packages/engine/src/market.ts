@@ -55,17 +55,33 @@ export interface MarketState {
   readonly frozen: boolean;
   /** Early-exit fee withheld from a seller's refund. 1% by default (§2.3). */
   readonly exitFeeRate: Decimal;
+  /**
+   * The smallest amount the system this state came from can represent.
+   *
+   * Zero for a market held purely in memory, where the identities are exact.
+   * A persisted market is different: share counts come out of `ln` and `exp`
+   * and are irrational, so no finite column scale stores them exactly, and the
+   * pot is money that has to quantise to a payable amount. Something must
+   * absorb that, and stating the quantum makes it a declared property of the
+   * storage rather than a fudge factor inside the assertion.
+   *
+   * A Decimal(38,18) column sets this to 1e-18 — sixteen orders of magnitude
+   * below one kobo, so a real discrepancy still trips the invariant.
+   */
+  readonly quantum: Decimal;
 }
 
 export interface OpenMarketParams {
   /** Number of outcomes, or the initial share vector via `initialShares`. */
   readonly outcomes?: number;
-  /** Liquidity constant L. Rule of thumb: L ≈ 25 × typical stake. */
+  /** Liquidity constant L. See docs: ~50× the typical stake for ~1-point moves. */
   readonly liquidity: Numeric;
   /** Shares outstanding at open. Defaults to all zeros. */
   readonly initialShares?: readonly Numeric[];
   /** Early-exit fee rate in [0, 0.02]. Defaults to 1% — the fee is on by default. */
   readonly exitFeeRate?: Numeric;
+  /** Storage quantum; see `MarketState.quantum`. Defaults to 0 (exact). */
+  readonly quantum?: Numeric;
 }
 
 export interface TradeResult {
@@ -128,7 +144,14 @@ function stateTolerance(state: MarketState): Decimal {
     const magnitude = qi.abs();
     if (magnitude.gt(scale)) scale = magnitude;
   }
-  return scale.times(INVARIANT_RELATIVE_TOLERANCE);
+  const arithmetic = scale.times(INVARIANT_RELATIVE_TOLERANCE);
+
+  // Rounding q by one quantum moves C(q) by at most Σ p_i · quantum = quantum,
+  // and the stored pot carries a quantum of its own. One per outcome plus one
+  // for the pot bounds a round trip through storage.
+  const storage = state.quantum.times(state.q.length + 1);
+
+  return Decimal.max(arithmetic, storage);
 }
 
 /**
@@ -226,6 +249,7 @@ export function openMarket(params: OpenMarketParams): MarketState {
     staked: Object.freeze(q0.map(() => ZERO)),
     frozen: false,
     exitFeeRate,
+    quantum: params.quantum === undefined ? ZERO : toDecimal(params.quantum),
   };
 }
 

@@ -1,8 +1,8 @@
+import { Decimal } from '@stakeam/engine';
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { User } from '@prisma/client';
 import * as argon2 from 'argon2';
-import { Decimal } from 'decimal.js';
 import { randomUUID } from 'node:crypto';
 
 import { PlatformConfigService } from '../platform-config/platform-config.service';
