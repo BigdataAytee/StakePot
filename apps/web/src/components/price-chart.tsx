@@ -2,6 +2,7 @@
 
 import {
   AreaSeries,
+  LineSeries,
   createChart,
   createSeriesMarkers,
   type IChartApi,
@@ -9,51 +10,63 @@ import {
   type ISeriesMarkersPluginApi,
   type Time,
 } from 'lightweight-charts';
-import { useEffect, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
-import type { Annotation, PricePoint } from '@/lib/api';
-import { palette, semantic } from '@stakeam/tokens';
+import { outcomeColour, semantic, type SemanticRole } from '@stakeam/tokens';
+
+import type { Annotation, OutcomeView, PricePoint } from '@/lib/api';
+import { percent } from '@/lib/format';
 
 const TIMEFRAMES = ['1H', '6H', '1D', '1W', 'ALL'] as const;
 export type Timeframe = (typeof TIMEFRAMES)[number];
 
 /** The marks §7.2a pins on the chart, so the line doubles as the market's timeline. */
-const ANNOTATION_MARK: Record<Annotation['type'], { text: string; colour: string }> = {
-  open: { text: 'Open', colour: palette.muted },
-  activation: { text: 'Live', colour: palette.green },
-  big_trade: { text: 'Big trade', colour: palette.gold },
-  news: { text: 'News', colour: palette.ink },
-  freeze: { text: 'Frozen', colour: palette.muted },
-  resolution: { text: 'Result', colour: palette.greenDeep },
+const ANNOTATION_MARK: Record<Annotation['type'], string> = {
+  open: 'Open',
+  activation: 'Live',
+  big_trade: 'Big trade',
+  news: 'News',
+  freeze: 'Frozen',
+  resolution: 'Result',
 };
 
 /**
  * §7.2a — the hero.
  *
- * "Smooth area chart of probability over time (0–100%) for the selected
- * outcome... Event annotations pinned on the chart: market opened, activation
- * reached, large trades, admin news pins, freeze, resolution. The chart doubles
- * as the market's timeline — a newcomer reads the whole drama at a glance."
+ * "Binary markets: one line (YES). Multi-outcome: multi-line overlay with the
+ * outcome legend; tapping a candidate isolates their line."
  *
- * Which is why the annotations are not decoration: they are the answer to
- * "what moved it", the third of the three questions §7.3 says this display
- * exists to answer in one glance.
+ * Binary gets a filled area because there is one story and the fill carries it.
+ * A six-candidate election does not: six overlapping fills is mud, so multi
+ * draws lines and lets the legend do the naming. Isolating a candidate is how
+ * you read one line out of a crowded field, which is exactly the moment a
+ * multi-outcome chart stops being legible without it.
  */
 export function PriceChart({
   points,
+  outcomes,
   annotations,
   timeframe,
   onTimeframeChange,
 }: {
   points: PricePoint[];
+  outcomes: OutcomeView[];
   annotations: Annotation[];
   timeframe: Timeframe;
   onTimeframeChange: (tf: Timeframe) => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
-  const series = useRef<ISeriesApi<'Area'> | null>(null);
+  const seriesByOutcome = useRef(new Map<string, ISeriesApi<'Area'> | ISeriesApi<'Line'>>());
   const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const [isolated, setIsolated] = useState<string | null>(null);
+
+  const binary = outcomes.length === 2;
+  // Binary charts tell the story of the first outcome; the second is its mirror.
+  const plotted = useMemo(() => (binary ? outcomes.slice(0, 1) : outcomes), [binary, outcomes]);
+
+  const colourFor = (outcome: OutcomeView, theme: Record<SemanticRole, string>): string =>
+    binary ? theme.rise : outcomeColour(outcome.ordinal, outcome.isOther);
 
   useEffect(() => {
     const element = container.current;
@@ -71,10 +84,7 @@ export function PriceChart({
         fontFamily: 'var(--font-space-mono), monospace',
         fontSize: 12,
       },
-      grid: {
-        horzLines: { color: theme.border },
-        vertLines: { visible: false },
-      },
+      grid: { horzLines: { color: theme.border }, vertLines: { visible: false } },
       rightPriceScale: { borderVisible: false, scaleMargins: { top: 0.12, bottom: 0.08 } },
       timeScale: { borderVisible: false, timeVisible: true },
       crosshair: { horzLine: { labelVisible: false } },
@@ -82,58 +92,100 @@ export function PriceChart({
       handleScroll: false,
     });
 
-    const area = created.addSeries(AreaSeries, {
-      lineColor: theme.rise,
-      topColor: `${theme.rise}33`,
-      bottomColor: `${theme.rise}00`,
-      lineWidth: 2,
+    const priceFormat = {
+      type: 'custom' as const,
+      minMove: 0.1,
       // A market can spend all day inside a three-point band, where whole
       // percentages repeat down the axis and read as a rendering fault.
-      priceFormat: { type: 'custom', minMove: 0.1, formatter: (p: number) => `${p.toFixed(1)}%` },
-      lastValueVisible: false,
-      priceLineVisible: false,
-    });
+      formatter: (p: number) => `${p.toFixed(1)}%`,
+    };
+
+    const map = new Map<string, ISeriesApi<'Area'> | ISeriesApi<'Line'>>();
+    for (const outcome of plotted) {
+      const colour = colourFor(outcome, theme);
+      map.set(
+        outcome.id,
+        binary
+          ? created.addSeries(AreaSeries, {
+              lineColor: colour,
+              topColor: `${colour}33`,
+              bottomColor: `${colour}00`,
+              lineWidth: 2,
+              priceFormat,
+              lastValueVisible: false,
+              priceLineVisible: false,
+            })
+          : created.addSeries(LineSeries, {
+              color: colour,
+              lineWidth: 2,
+              priceFormat,
+              lastValueVisible: false,
+              priceLineVisible: false,
+            }),
+      );
+    }
 
     chart.current = created;
-    series.current = area;
-    markers.current = createSeriesMarkers(area, []);
+    seriesByOutcome.current = map;
+
+    const first = map.values().next().value;
+    markers.current = first === undefined ? null : createSeriesMarkers(first, []);
 
     return () => {
       created.remove();
       chart.current = null;
-      series.current = null;
+      seriesByOutcome.current = new Map();
       markers.current = null;
     };
-  }, []);
+    // Rebuilt when the market's outcome set changes — that is a different chart.
+  }, [plotted, binary]);
 
   useEffect(() => {
-    const area = series.current;
-    if (area === null) return;
+    const map = seriesByOutcome.current;
+    if (map.size === 0) return;
 
-    // lightweight-charts wants one point per timestamp, ascending.
-    const seen = new Set<number>();
-    const data = points
-      .map((p) => ({
-        time: Math.floor(new Date(p.ts).getTime() / 1000),
-        value: Number.parseFloat(p.price) * 100,
-      }))
-      .filter((p) => {
-        if (seen.has(p.time)) return false;
-        seen.add(p.time);
-        return true;
-      })
-      .sort((a, b) => a.time - b.time);
+    let earliest: number | null = null;
+    let latest: number | null = null;
 
-    area.setData(data as Parameters<typeof area.setData>[0]);
+    for (const outcome of plotted) {
+      const series = map.get(outcome.id);
+      if (series === undefined) continue;
 
-    if (data.length > 0) {
-      const first = data[0]!.time;
-      const last = data[data.length - 1]!.time;
+      const seen = new Set<number>();
+      const data = points
+        .filter((p) => p.outcomeId === outcome.id)
+        .map((p) => ({
+          time: Math.floor(new Date(p.ts).getTime() / 1000),
+          value: percent(p.price),
+        }))
+        .filter((p) => {
+          if (seen.has(p.time)) return false;
+          seen.add(p.time);
+          return true;
+        })
+        .sort((a, b) => a.time - b.time);
+
+      series.setData(data as Parameters<typeof series.setData>[0]);
+      series.applyOptions({
+        visible: isolated === null || isolated === outcome.id,
+      });
+
+      if (data.length > 0) {
+        earliest = earliest === null ? data[0]!.time : Math.min(earliest, data[0]!.time);
+        latest =
+          latest === null
+            ? data[data.length - 1]!.time
+            : Math.max(latest, data[data.length - 1]!.time);
+      }
+    }
+
+    if (earliest !== null && latest !== null) {
+      const times = points
+        .map((p) => Math.floor(new Date(p.ts).getTime() / 1000))
+        .sort((a, b) => a - b);
       // Snap each annotation to the nearest point on the line. An event rarely
       // lands exactly on a trade, and a chart whose job is "what moved it"
-      // (§7.3) must not silently drop the pin that explains a move. Events
-      // before the window belong to an earlier timeframe and are left out.
-      const times = data.map((point) => point.time);
+      // (§7.3) must not silently drop the pin that explains a move.
       const nearest = (target: number): number =>
         times.reduce(
           (best, t) => (Math.abs(t - target) < Math.abs(best - target) ? t : best),
@@ -145,44 +197,89 @@ export function PriceChart({
           .map((annotation) => ({
             annotation,
             time: Math.floor(new Date(annotation.ts).getTime() / 1000),
-            mark: ANNOTATION_MARK[annotation.type],
           }))
-          .filter(({ time }) => time >= first)
-          .map(({ annotation, time, mark }) => ({
-            time: nearest(Math.min(time, last)) as Time,
+          .filter(({ time }) => time >= earliest!)
+          .map(({ annotation, time }) => ({
+            time: nearest(Math.min(time, latest!)) as Time,
             position: 'aboveBar' as const,
-            color: mark.colour,
+            color: semantic.light.textMuted,
             shape: 'circle' as const,
-            // The open mark sits on the first point, where a centred label
-            // clips off the left edge — and where it says nothing the start of
-            // the line does not already say. The dot alone is enough.
-            text: annotation.type === 'open' ? '' : annotation.label || mark.text,
+            // The open mark sits on the first point, where a centred label clips
+            // off the left edge — and says nothing the start of the line does not.
+            text:
+              annotation.type === 'open'
+                ? ''
+                : annotation.label || ANNOTATION_MARK[annotation.type],
           }))
           .sort((a, b) => (a.time as number) - (b.time as number)),
       );
       chart.current?.timeScale().fitContent();
     }
-  }, [points, annotations]);
+  }, [points, annotations, plotted, isolated]);
 
   return (
     <div>
       <div ref={container} className="h-64 w-full sm:h-80" />
 
-      <div className="mt-3 flex gap-1" role="group" aria-label="Chart timeframe">
-        {TIMEFRAMES.map((tf) => (
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-1" role="group" aria-label="Chart timeframe">
+          {TIMEFRAMES.map((tf) => (
+            <button
+              key={tf}
+              type="button"
+              onClick={() => onTimeframeChange(tf)}
+              aria-pressed={tf === timeframe}
+              className={`rounded-sm px-2.5 py-1 font-mono text-xs transition-colors ${
+                tf === timeframe ? 'bg-surface-raised text-text' : 'text-text-muted hover:text-text'
+              }`}
+            >
+              {tf}
+            </button>
+          ))}
+        </div>
+
+        {!binary && (
           <button
-            key={tf}
             type="button"
-            onClick={() => onTimeframeChange(tf)}
-            aria-pressed={tf === timeframe}
-            className={`rounded-sm px-2.5 py-1 font-mono text-xs transition-colors ${
-              tf === timeframe ? 'bg-surface-raised text-text' : 'text-text-muted hover:text-text'
-            }`}
+            onClick={() => setIsolated(null)}
+            disabled={isolated === null}
+            className="font-mono text-xs text-text-muted underline-offset-2 hover:underline disabled:opacity-0"
           >
-            {tf}
+            Show all
           </button>
-        ))}
+        )}
       </div>
+
+      {/* The legend, which is also how you isolate a candidate. */}
+      {!binary && (
+        <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
+          {plotted.map((outcome) => {
+            const colour = outcomeColour(outcome.ordinal, outcome.isOther);
+            const dimmed = isolated !== null && isolated !== outcome.id;
+            return (
+              <li key={outcome.id}>
+                <button
+                  type="button"
+                  onClick={() => setIsolated(isolated === outcome.id ? null : outcome.id)}
+                  aria-pressed={isolated === outcome.id}
+                  className={`flex items-center gap-1.5 text-sm transition-opacity ${
+                    dimmed ? 'opacity-35' : ''
+                  }`}
+                >
+                  <span
+                    className="inline-block h-2 w-2 rounded-sm"
+                    style={{ backgroundColor: colour }}
+                  />
+                  <span>{outcome.label}</span>
+                  <span className="font-mono tabular-nums text-text-muted">
+                    {Math.round(percent(outcome.price))}%
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
 
       {points.length === 0 && (
         <p className="mt-3 text-sm text-text-muted">No trades yet. The first one draws the line.</p>

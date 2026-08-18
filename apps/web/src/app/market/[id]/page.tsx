@@ -15,8 +15,11 @@ export default async function MarketPage({ params }: { params: Promise<{ id: str
 
   try {
     const market = await api.market(id);
+    // Binary renders one line; a multi-outcome market needs every candidate's
+    // series in the first paint, or a shared link opens on a single line.
     const headline = market.outcomes[0];
-    const history = headline === undefined ? [] : await api.history(id, headline.id, '1D');
+    const only = market.outcomes.length === 2 ? headline?.id : undefined;
+    const history = headline === undefined ? [] : await api.history(id, only, '1D');
     return <TicketView initial={market} initialHistory={history} />;
   } catch {
     notFound();

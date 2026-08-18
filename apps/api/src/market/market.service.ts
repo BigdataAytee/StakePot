@@ -17,7 +17,18 @@ export interface CreateMarketInput {
   readonly voidDate: Date;
   /** Liquidity constant L. §2.3: ~50× the typical stake for ~1-point moves. */
   readonly liquidityParam: string;
+  /**
+   * The complete outcome list. §2.5 requires community markets to declare one,
+   * plus an "Any other" catch-all — a candidate list that cannot express the
+   * result is how a market ends up in dispute.
+   */
   readonly outcomeLabels: readonly string[];
+  /**
+   * Label of the catch-all bucket, appended last. Nothing stops a caller from
+   * naming it something else, but it is always the final ordinal so the field
+   * reads in rank order with the bucket at the bottom.
+   */
+  readonly otherLabel?: string;
   readonly creatorId?: string;
 }
 
@@ -35,6 +46,14 @@ export class MarketService {
   async create(input: CreateMarketInput): Promise<Market & { outcomes: Outcome[] }> {
     if (input.outcomeLabels.length < 2) {
       throw new Error('a market needs at least two outcomes');
+    }
+    const labels = [
+      ...input.outcomeLabels.map((label) => ({ label, isOther: false })),
+      ...(input.otherLabel === undefined ? [] : [{ label: input.otherLabel, isOther: true }]),
+    ];
+    const duplicate = labels.find((l, i) => labels.findIndex((o) => o.label === l.label) !== i);
+    if (duplicate !== undefined) {
+      throw new Error(`outcome "${duplicate.label}" is listed twice`);
     }
     if (input.voidDate <= input.eventDate) {
       throw new Error('void date must fall after the event date');
@@ -59,11 +78,12 @@ export class MarketService {
         ...(input.creatorId === undefined ? {} : { creatorId: input.creatorId }),
         state: input.shelf === 'official' ? 'active' : 'draft',
         outcomes: {
-          create: input.outcomeLabels.map((label, ordinal) => ({
-            label,
+          create: labels.map((outcome, ordinal) => ({
+            label: outcome.label,
             ordinal,
+            isOther: outcome.isOther,
             // Opening prices are uniform; the first trade moves them.
-            priceCurrent: new Prisma.Decimal(1).div(input.outcomeLabels.length),
+            priceCurrent: new Prisma.Decimal(1).div(labels.length),
           })),
         },
         annotations: {

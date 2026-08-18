@@ -8,6 +8,8 @@ export interface OutcomeView {
   staked: string;
   /** Shares outstanding — the denominator in the §2.3 payout estimate. */
   shares: string;
+  /** The "Any other" catch-all bucket (§2.5). Always ranks last. */
+  isOther: boolean;
 }
 
 export interface MarketSummary {
@@ -67,6 +69,9 @@ export const api = {
   markets: (shelf?: string) =>
     get<MarketSummary[]>(`/markets${shelf === undefined ? '' : `?shelf=${shelf}`}`),
   market: (id: string) => get<MarketDetail>(`/markets/${id}`),
-  history: (id: string, outcomeId: string, tf: string) =>
-    get<PricePoint[]>(`/markets/${id}/history?outcomeId=${outcomeId}&tf=${tf}`),
+  /** Omit `outcomeId` to get every outcome's series — the multi-line overlay. */
+  history: (id: string, outcomeId: string | undefined, tf: string) =>
+    get<PricePoint[]>(
+      `/markets/${id}/history?tf=${tf}${outcomeId === undefined ? '' : `&outcomeId=${outcomeId}`}`,
+    ),
 };

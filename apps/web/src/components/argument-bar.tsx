@@ -2,12 +2,16 @@
 
 import { motion } from 'framer-motion';
 
+import { outcomeColour } from '@stakeam/tokens';
+
 import { percent } from '@/lib/format';
 
 export interface BarSegment {
   id: string;
   label: string;
   price: string;
+  ordinal: number;
+  isOther: boolean;
 }
 
 /**
@@ -23,21 +27,34 @@ export interface BarSegment {
 export function ArgumentBar({
   segments,
   size = 'full',
+  showLabels = true,
 }: {
   segments: BarSegment[];
   size?: 'full' | 'mini';
+  /**
+   * Off when something above already names and prices the outcomes — on a
+   * multi-outcome ticket the chart legend does, and repeating it forty pixels
+   * later is noise, not reinforcement.
+   */
+  showLabels?: boolean;
 }) {
   const binary = segments.length === 2;
   const height = size === 'full' ? 'h-3' : 'h-1.5';
   const ease = [0.2, 0.8, 0.2, 1] as const;
 
-  // Multi-outcome shades step down from green through muted so the leader still
-  // reads instantly without inventing colours the palette does not have.
+  // One shared ramp for the bar, the chart legend and the outcome rows, so a
+  // candidate is the same colour everywhere on the page. Binary markets keep
+  // the semantic rise/fall pair, which flips with the theme.
   const colourFor = (index: number): string => {
-    if (binary) return index === 0 ? 'bg-rise' : 'bg-fall';
-    const ramp = ['bg-rise', 'bg-rise-deep', 'bg-money', 'bg-fall', 'bg-text-muted'];
-    return ramp[index % ramp.length] ?? 'bg-text-muted';
+    const segment = segments[index];
+    return segment === undefined
+      ? outcomeColour(index)
+      : outcomeColour(segment.ordinal, segment.isOther);
   };
+  const classFor = (index: number): string => (binary ? (index === 0 ? 'bg-rise' : 'bg-fall') : '');
+  // Binary markets take their colour from the theme-aware rise/fall tokens; the
+  // ramp is only for markets the semantic pair cannot describe.
+  const styleFor = (index: number) => (binary ? {} : { backgroundColor: colourFor(index) });
 
   return (
     <div>
@@ -51,7 +68,8 @@ export function ArgumentBar({
         {segments.map((segment, index) => (
           <motion.div
             key={segment.id}
-            className={colourFor(index)}
+            className={classFor(index)}
+            style={styleFor(index)}
             initial={false}
             animate={{ width: `${percent(segment.price)}%` }}
             transition={{ duration: 0.25, ease }}
@@ -59,11 +77,14 @@ export function ArgumentBar({
         ))}
       </div>
 
-      {size === 'full' && (
+      {size === 'full' && showLabels && (
         <div className="mt-2 flex justify-between text-sm">
           {segments.map((segment, index) => (
             <span key={segment.id} className="flex items-center gap-1.5">
-              <span className={`inline-block h-2 w-2 rounded-sm ${colourFor(index)}`} />
+              <span
+                className={`inline-block h-2 w-2 rounded-sm ${classFor(index)}`}
+                style={styleFor(index)}
+              />
               <span className="text-text-muted">{segment.label}</span>
               <span className="font-mono tabular-nums">{Math.round(percent(segment.price))}%</span>
             </span>

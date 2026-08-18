@@ -354,6 +354,51 @@ describe.skipIf(!TEST_DATABASE_URL)('binary official market, end to end', () => 
     expect(check.status).toBe('clean');
   });
 
+  it('releases a hedged trader once, not once per position', async () => {
+    // The minimal shape of a bug that four-way markets exposed: escrow was
+    // released per position while the amount was read per holder, so anyone on
+    // both sides was released twice. Legal to hedge, and every other test here
+    // has one trader on one outcome, which is exactly why it hid.
+    const market = await makeMarket();
+    const [yes, no] = [market.outcomes[0]!, market.outcomes[1]!];
+    const hedger = await makeTrader('hedger@example.ng');
+
+    const onYes = await trades.buy({
+      marketId: market.id,
+      outcomeId: yes.id,
+      userId: hedger,
+      amount: '1000',
+      requestId: 'h1',
+    });
+    await trades.buy({
+      marketId: market.id,
+      outcomeId: no.id,
+      userId: hedger,
+      amount: '600',
+      requestId: 'h2',
+    });
+
+    const before = await wallet.balanceOf(hedger);
+    expect(before.escrowed.eq(1600)).toBe(true);
+
+    const result = await resolution.resolve({
+      marketId: market.id,
+      winningOutcomeId: yes.id,
+      resolvedBy: 'sys_platform',
+      evidenceUrl: 'https://example.ng/evidence',
+    });
+
+    // Sole holder of the winner: everything but the fee comes back.
+    expect(result.losingPool.eq(600)).toBe(true);
+    const paid = result.payouts.reduce((acc, p) => acc.plus(p.payout), new Decimal(0));
+    expect(paid.plus(result.fee).minus(1600).abs().lt('1e-9')).toBe(true);
+    expect(new Decimal(onYes.shares.toString()).gt(0)).toBe(true);
+
+    const after = await wallet.balanceOf(hedger);
+    expect(after.escrowed.abs().lt('1e-9')).toBe(true);
+    expect(after.available.minus(before.available).minus(paid).abs().lt('1e-9')).toBe(true);
+  });
+
   it('refuses to resolve the same market twice', async () => {
     const market = await makeMarket();
     const yes = market.outcomes[0]!;
@@ -374,5 +419,193 @@ describe.skipIf(!TEST_DATABASE_URL)('binary official market, end to end', () => 
     };
     await resolution.resolve(args);
     await expect(resolution.resolve(args)).rejects.toThrow(/already resolved/);
+  });
+  describe('multi-outcome markets', () => {
+    async function makeElection() {
+      return markets.create({
+        shelf: 'official',
+        question: 'Who wins the governorship?',
+        sourceName: 'INEC declared result',
+        sourceUrl: 'https://inecnigeria.org/',
+        criteria: {
+          Adeyemi: 'Declared winner.',
+          Bello: 'Declared winner.',
+          Chukwu: 'Declared winner.',
+        },
+        edgeCases: { rerun: 'Void, full refund.' },
+        eventDate: new Date(Date.now() + 86_400_000),
+        voidDate: new Date(Date.now() + 172_800_000),
+        liquidityParam: '100000',
+        outcomeLabels: ['Adeyemi', 'Bello', 'Chukwu'],
+        otherLabel: 'Any other',
+      });
+    }
+
+    it('opens with the catch-all last and every outcome priced evenly', async () => {
+      const market = await makeElection();
+
+      expect(market.outcomes).toHaveLength(4);
+      expect(market.outcomes.map((o) => o.ordinal)).toEqual([0, 1, 2, 3]);
+
+      const other = market.outcomes[3]!;
+      expect(other.label).toBe('Any other');
+      expect(other.isOther).toBe(true);
+      expect(market.outcomes.filter((o) => o.isOther)).toHaveLength(1);
+
+      for (const outcome of market.outcomes) {
+        expect(new Decimal(outcome.priceCurrent.toString()).minus('0.25').abs().lt('1e-9')).toBe(
+          true,
+        );
+      }
+    });
+
+    it('rejects a duplicated outcome label', async () => {
+      await expect(
+        markets.create({
+          shelf: 'official',
+          question: 'Duplicate outcomes?',
+          sourceName: 'x',
+          sourceUrl: 'https://example.ng/',
+          criteria: {},
+          edgeCases: {},
+          eventDate: new Date(Date.now() + 86_400_000),
+          voidDate: new Date(Date.now() + 172_800_000),
+          liquidityParam: '1000',
+          outcomeLabels: ['Adeyemi', 'Adeyemi'],
+        }),
+      ).rejects.toThrow(/listed twice/);
+    });
+
+    it('keeps prices summing to 1 across four outcomes as they trade', async () => {
+      const market = await makeElection();
+      const voter = await makeTrader('voter1@example.ng');
+
+      for (const [index, amount] of [
+        [0, '2000'],
+        [2, '900'],
+        [1, '1400'],
+        [3, '300'],
+      ] as const) {
+        await trades.buy({
+          marketId: market.id,
+          outcomeId: market.outcomes[index]!.id,
+          userId: voter,
+          amount,
+          requestId: `multi-${index}`,
+        });
+      }
+
+      const after = await prisma.market.findUniqueOrThrow({
+        where: { id: market.id },
+        include: { outcomes: { orderBy: { ordinal: 'asc' } } },
+      });
+
+      const sum = after.outcomes.reduce(
+        (acc, o) => acc.plus(new Decimal(o.priceCurrent.toString())),
+        new Decimal(0),
+      );
+      expect(sum.minus(1).abs().lt('1e-9')).toBe(true);
+
+      // The most-backed candidate leads; the catch-all, least backed, trails.
+      const byOrdinal = after.outcomes;
+      expect(
+        new Decimal(byOrdinal[0]!.priceCurrent.toString()).gt(
+          new Decimal(byOrdinal[3]!.priceCurrent.toString()),
+        ),
+      ).toBe(true);
+
+      // Σ staked === pot, which is what makes the losing pool well defined.
+      const staked = after.outcomes.reduce(
+        (acc, o) => acc.plus(new Decimal(o.stakedTotal.toString())),
+        new Decimal(0),
+      );
+      expect(staked.minus(new Decimal(after.potTotal.toString())).abs().lt('1e-9')).toBe(true);
+    });
+
+    it('settles a four-way race: fee on everything staked off the winner', async () => {
+      const market = await makeElection();
+      const [adeyemi, bello, chukwu, other] = market.outcomes as [
+        (typeof market.outcomes)[number],
+        (typeof market.outcomes)[number],
+        (typeof market.outcomes)[number],
+        (typeof market.outcomes)[number],
+      ];
+
+      const ada = await makeTrader('ada-multi@example.ng');
+      const bola = await makeTrader('bola-multi@example.ng');
+      const chidi = await makeTrader('chidi-multi@example.ng');
+
+      await trades.buy({
+        marketId: market.id,
+        outcomeId: adeyemi.id,
+        userId: ada,
+        amount: '3000',
+        requestId: 'm1',
+      });
+      await trades.buy({
+        marketId: market.id,
+        outcomeId: adeyemi.id,
+        userId: bola,
+        amount: '1000',
+        requestId: 'm2',
+      });
+      await trades.buy({
+        marketId: market.id,
+        outcomeId: bello.id,
+        userId: chidi,
+        amount: '2000',
+        requestId: 'm3',
+      });
+      await trades.buy({
+        marketId: market.id,
+        outcomeId: chukwu.id,
+        userId: chidi,
+        amount: '1500',
+        requestId: 'm4',
+      });
+      await trades.buy({
+        marketId: market.id,
+        outcomeId: other.id,
+        userId: bola,
+        amount: '500',
+        requestId: 'm5',
+      });
+
+      const potBefore = new Decimal(
+        (await prisma.market.findUniqueOrThrow({ where: { id: market.id } })).potTotal.toString(),
+      );
+      expect(potBefore.eq(8000)).toBe(true);
+
+      const before = await Promise.all([ada, bola, chidi].map((id) => wallet.balanceOf(id)));
+
+      await markets.freeze(market.id, 'Polls closed');
+      const result = await resolution.resolve({
+        marketId: market.id,
+        winningOutcomeId: adeyemi.id,
+        resolvedBy: 'sys_platform',
+        evidenceUrl: 'https://inecnigeria.org/result',
+      });
+
+      // Losing pool is every naira staked on the three non-winning outcomes.
+      expect(result.losingPool.eq(4000)).toBe(true);
+      expect(result.fee.minus(120).abs().lt('1e-9')).toBe(true);
+
+      const paid = result.payouts.reduce((acc, p) => acc.plus(p.payout), new Decimal(0));
+      expect(paid.plus(result.fee).minus(potBefore).abs().lt('1e-9')).toBe(true);
+
+      const after = await Promise.all([ada, bola, chidi].map((id) => wallet.balanceOf(id)));
+
+      // Ada backed only the winner and gains; Chidi backed only losers and is
+      // out everything he staked; Bola split and lands in between.
+      expect(after[0]!.available.gt(before[0]!.available)).toBe(true);
+      expect(after[2]!.available.eq(before[2]!.available)).toBe(true);
+
+      for (const balance of after) {
+        expect(balance.escrowed.abs().lt('1e-9')).toBe(true);
+      }
+
+      const check = await reconciliation.run('SPC', new Date());
+      expect(check.status).toBe('clean');
+    });
   });
 });

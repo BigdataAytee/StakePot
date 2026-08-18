@@ -55,8 +55,11 @@ export function TicketView({
   useEffect(() => {
     if (headline === undefined) return;
     let cancelled = false;
+    // Binary asks for the headline series only; a multi-outcome market needs
+    // every candidate's line, so the outcome filter is dropped.
+    const only = initial.outcomes.length === 2 ? headline.id : undefined;
     void api
-      .history(initial.id, headline.id, timeframe)
+      .history(initial.id, only, timeframe)
       .then((points) => {
         if (!cancelled) setHistory(points);
       })
@@ -73,6 +76,8 @@ export function TicketView({
         id: o.id,
         label: o.label,
         price: prices[o.id] ?? o.price,
+        ordinal: o.ordinal,
+        isOther: o.isOther,
       })),
     [initial.outcomes, prices],
   );
@@ -109,6 +114,7 @@ export function TicketView({
       {/* (a) the hero */}
       <PriceChart
         points={history}
+        outcomes={initial.outcomes}
         annotations={initial.annotations}
         timeframe={timeframe}
         onTimeframeChange={setTimeframe}
@@ -116,7 +122,9 @@ export function TicketView({
 
       {/* (b) the argument bar */}
       <div className="mt-5">
-        <ArgumentBar segments={segments} />
+        {/* Multi-outcome tickets get their names and prices from the chart
+            legend directly above, so the bar is left as pure shape. */}
+        <ArgumentBar segments={segments} showLabels={initial.outcomes.length === 2} />
       </div>
 
       {/* (c) money strip */}

@@ -99,12 +99,21 @@ export class ResolutionService {
       const postings: Posting[] = [];
 
       // Everyone's stake leaves escrow; winners' payouts arrive in available.
-      const allPositions = await tx.position.findMany({ where: { marketId: input.marketId } });
-      for (const position of allPositions) {
-        const staked = await this.escrowedFor(tx, position.userId, input.marketId);
+      //
+      // Once per *holder*, not once per position: escrowedFor returns what the
+      // user has escrowed in the whole market, so anyone holding two outcomes
+      // would otherwise be released twice. Every binary market hides this —
+      // there, one trader is one position.
+      const holders = await tx.position.findMany({
+        where: { marketId: input.marketId },
+        distinct: ['userId'],
+        select: { userId: true },
+      });
+      for (const holder of holders) {
+        const staked = await this.escrowedFor(tx, holder.userId, input.marketId);
         if (staked.isZero()) continue;
         postings.push({
-          userId: position.userId,
+          userId: holder.userId,
           marketId: input.marketId,
           type: 'payout',
           fundClass: 'user_escrow',

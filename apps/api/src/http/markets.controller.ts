@@ -147,6 +147,7 @@ export class MarketsController {
       priceCurrent: { toString(): string };
       stakedTotal: { toString(): string };
       sharesOutstanding: { toString(): string };
+      isOther: boolean;
     }[];
   }) {
     return {
@@ -173,6 +174,7 @@ export class MarketsController {
         price: o.priceCurrent.toString(),
         staked: o.stakedTotal.toString(),
         shares: o.sharesOutstanding.toString(),
+        isOther: o.isOther,
       })),
     };
   }

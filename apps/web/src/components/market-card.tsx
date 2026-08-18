@@ -50,7 +50,13 @@ export function MarketCard({ market }: { market: MarketSummary }) {
       <div className="mt-3">
         <ArgumentBar
           size="mini"
-          segments={market.outcomes.map((o) => ({ id: o.id, label: o.label, price: o.price }))}
+          segments={market.outcomes.map((o) => ({
+            id: o.id,
+            label: o.label,
+            price: o.price,
+            ordinal: o.ordinal,
+            isOther: o.isOther,
+          }))}
         />
       </div>
 

@@ -157,6 +157,45 @@ export const spcoin = {
   fullPx: 48,
 } as const;
 
+/**
+ * Outcome series colours, for markets with more than two sides.
+ *
+ * Ordered by rank, so the leader is always `green` and the runner-up `red` —
+ * the same reading a binary market's argument bar gives, extended rather than
+ * replaced. The chart legend, the stacked bar and the outcome rows all take
+ * their colour from here, so one candidate is one colour everywhere on screen.
+ *
+ * Gold is absent on purpose. §7.4 reserves it for money — pots, fees, payouts —
+ * and a candidate rendered in gold would quietly break the one rule the palette
+ * has. The extra steps are tints of the existing greens and reds instead, which
+ * keeps a six-candidate election inside the Naija Green identity.
+ */
+export const outcomeSeries = [
+  palette.green,
+  palette.red,
+  // Ordered so adjacent ranks alternate hue family rather than shade. Ranks 1
+  // and 3 are the pair a reader compares most, and two greens a shade apart is
+  // not a comparison anyone can make on a line chart.
+  '#2FA35F',
+  '#E4574A',
+  palette.greenDeep,
+  '#8C2018',
+  '#1B5E3A',
+  '#F08A80',
+] as const;
+
+/** The catch-all bucket reads as neutral: it is not a candidate. */
+export const otherOutcomeColour = palette.muted;
+
+/**
+ * The colour for one outcome, everywhere it appears — chart line, legend swatch,
+ * stacked bar segment, outcome row.
+ */
+export function outcomeColour(ordinal: number, isOther = false): string {
+  if (isOther) return otherOutcomeColour;
+  return outcomeSeries[ordinal % outcomeSeries.length] ?? outcomeSeries[0];
+}
+
 /** Motion tokens. */
 export const motion = {
   /** Count-up on a price tick, with a green/red tint over the same window. */
