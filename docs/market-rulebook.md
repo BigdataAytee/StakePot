@@ -54,8 +54,9 @@ The platform may remove any market at its discretion; removed markets are voided
 Coordinated trading to distort prices, trading on inside knowledge, creating markets about events you can influence, and false resolution proposals are prohibited. Penalties: void of positions, forfeiture of creator bonds, account suspension or ban.
 
 ### 10. Fees
-- **Official markets:** [1.5]% fee per trade.
-- **Community markets:** [3]% of the losing pool at payout — [2]% to the platform, [1]% to the market creator.
+- **Official markets:** [3]% of the losing pool at resolution. No per-trade fees on buying.
+- **Community markets:** [7]% of the losing pool at payout — [4]% to the market creator, [3]% to the platform.
+- **Early-exit fee:** [1]% of sale proceeds is deducted when a position is sold before resolution (buying is always free; holding to resolution incurs no exit fee).
 - Fees are displayed before any trade or stake is confirmed. No fees on voided markets.
 
 ---
@@ -123,7 +124,7 @@ At creation, the creator stakes a **Symmetric Seed** of at least [20,000] points
 
 *(For multi-outcome community pools under Path A: the market activates on the **total pot threshold** ([total ≥ 40,000] points from [≥ 20] distinct users) with **at least [2] outcomes funded** — tail outcomes may be lightly funded, with the "Any other" option absorbing residual interest. A strict per-outcome minimum is not required, as it unfairly voids well-balanced multi-outcome markets.)*
 
-**Seed payout example (Path B):** Creator seeds 20,000 YES + 20,000 NO. Other users stake 30,000 more YES and 25,000 more NO. Final pools: YES 50,000, NO 45,000. YES wins. Losing pool 45,000 − [3]% fee (1,350) = 43,650 shared pro-rata among YES stakers. The creator held 20,000 of 50,000 YES (40%) → receives 20,000 + 17,460 = 37,460, having staked 40,000 total. Net cost: 2,540 — plus he earns the 1% creator fee (450) on the losing pool, so his true cost of instant launch was ~2,090 points.
+**Seed payout example (Path B):** Creator seeds 20,000 YES + 20,000 NO. Other users stake 30,000 more YES and 25,000 more NO. Final pools: YES 50,000, NO 45,000. YES wins. Losing pool 45,000 − [7]% fee (3,150) = 41,850 shared pro-rata among YES stakers. The creator held 20,000 of 50,000 YES (40%) → receives 20,000 + 16,740 = 36,740, having staked 40,000 total. Net cost: 3,260 — but he earns the 4% creator fee (1,800) on the losing pool, so his true cost of instant launch was ~1,460 points.
 
 ### 3. Sponsor Syndicates (group-seeded activation)
 A creator choosing Path B may open a **Seeding Round** instead of funding the Symmetric Seed alone.
@@ -132,14 +133,14 @@ A creator choosing Path B may open a **Seeding Round** instead of funding the Sy
 - **Activation:** When total contributions reach the Symmetric Seed minimum ([20,000] points per side), the market opens for staking immediately.
 - **Failure to fill:** If the Seeding Round ends below the minimum, the market voids and all contributions are refunded in full.
 - **Syndicate size:** Maximum [20] sponsors per market.
-- **Fee split:** The [1]% creator fee becomes the **syndicate fee**. Default split: pro-rata to each sponsor's share of the total seed. Alternatively, the creator may set a custom split at creation (e.g., [40]% to the creator as organiser, remainder pro-rata among co-sponsors). The split is displayed on the market page before any sponsor joins and is locked once the Seeding Round opens.
+- **Fee split:** The [4]% creator fee becomes the **syndicate fee**. Default split: pro-rata to each sponsor's share of the total seed. Alternatively, the creator may set a custom split at creation (e.g., [40]% to the creator as organiser, remainder pro-rata among co-sponsors). The split is displayed on the market page before any sponsor joins and is locked once the Seeding Round opens.
 - **Seed payout:** Each sponsor's seed behaves exactly as in Path B — the winning-side portion returns with its pro-rata share of the losing pool(s); the losing-side portion is lost into the pool. Each sponsor's maximum loss is capped at their own contribution.
 - **Governance:** Only the creator proposes resolution and posts the Conduct Bond. Sponsors have no resolution or dispute powers beyond those of ordinary participants. Sponsors may also stake directionally in the market as ordinary users; those stakes are separate from and unrelated to their seed.
 
 ### 4. Staking and payout
 - Stakes are accepted only during the Funding Window. After activation, no new stakes and no early exit — positions are held to resolution.
-- At resolution, the losing pool(s), minus the [3]% fee, are distributed to winning stakers **in proportion to their stakes**.
-- Example: YES pool 50,000, NO pool 30,000. YES wins. Fee: 3% of 30,000 = 900 (600 platform, 300 creator). Remaining 29,100 is shared among YES stakers pro-rata — a user who staked 5,000 of the 50,000 YES pool (10%) receives their 5,000 back plus 2,910.
+- At resolution, the losing pool(s), minus the [7]% fee, are distributed to winning stakers **in proportion to their stakes**.
+- Example: YES pool 50,000, NO pool 30,000. YES wins. Fee: 7% of 30,000 = 2,100 (1,200 creator, 900 platform). Remaining 27,900 is shared among YES stakers pro-rata — a user who staked 5,000 of the 50,000 YES pool (10%) receives their 5,000 back plus 2,790.
 
 ### 5. Creator duties and bond
 - The creator must post the Proposed Resolution within [48] hours of the event concluding, with reference to the Resolution Source.

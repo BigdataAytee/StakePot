@@ -1,11 +1,11 @@
 # Phase 0 — spec reconciliation
 
-**Superseded.** `platform-architecture.md` and `market-rulebook.md` are now in
-this directory and are the source of truth. Phase 0 was built from an interim
-addendum before they arrived; this file records what that produced, what changed
-when the real documents landed, and what is still open.
+**Superseded.** `platform-architecture.md` and `market-rulebook.md` are the
+source of truth and are in this directory. Phase 0 was built from an interim
+addendum before they arrived; this file records what changed when the real
+documents landed, what the v2 revision moved, and what is still open.
 
-## What the full docs changed
+## What the first full docs changed
 
 Four items. Everything else in the addendum matched §2.3, §3 and §7.4 exactly —
 including every engine formula, which needed no change.
@@ -21,41 +21,59 @@ The `ledger` table also keeps its `fundClass` column, which §3 does not list. T
 addendum specified it and §2.10's fund tagging depends on it, so it stays — the
 addendum is a superset here, not a contradiction.
 
-## Open questions for whoever owns the spec
+## What the v2 specs changed
 
-**1. The §2.3 liquidity tuning rule understates price impact by 1/p.**
+The second kit answered both fee questions outright and moved the numbers.
 
-§2.3 gives the impact of a stake as `m·p(1−p)/L` and works it as "₦2,000 stakes
-→ L=50,000 gives ~1-point moves". But `p(1−p)/L` is `dp/dq` — sensitivity per
-_share_. Money `m` buys about `m/p` shares, so the money-denominated impact is
-`m(1−p)/L`, which is **twice** the quoted figure at even odds.
+| Area            | Before                                                   | Now (v2)                                                                         |
+| --------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| Fee basis       | pot (§2.3) vs losing pool (Rulebook §10) — contradictory | **The losing pool**, in both docs                                                |
+| Official fee    | 1.5% per trade _or_ ~2% at resolution                    | **3% of the losing pool at resolution. No per-trade fees on buying.**            |
+| Community fee   | 3% (2 platform / 1 creator)                              | **7% (4 creator / 3 platform)**                                                  |
+| Early-exit fee  | optional 0–0.5%, default **off**                         | **1% of sale proceeds, ON by default**, config 0–2%, credited to `platform_fees` |
+| Creator L3 perk | fee bump 1% → 1.25%                                      | fee bump 4% → 4.5%                                                               |
 
-The engine agrees with the corrected form: the doc's own worked example moves the
-price **1.96 points, not 1**. Locked in as a test in
+Three consequences for the code, all landed:
+
+1. **`resolve()` charges the losing pool.** `MarketState` now tracks `staked[]`
+   — money in per outcome, net of exits — because the cost curve does not
+   segregate money by outcome. `losingPool = pot − staked[w]`. A new invariant,
+   `Σstaked === pot`, is asserted on every operation and covered by the property
+   suite; without it the losing pool would not be a well-defined quantity.
+2. **The early-exit fee is on by default at 1%**, ceiling raised to 2%. The
+   Phase 0 decision to withhold it from the seller rather than take it from the
+   pot is exactly what v2 specifies ("credited to `platform_fees`").
+3. **`splitResolutionFee()`** divides a fee into creator and platform legs, with
+   the platform leg computed as the remainder so the two always sum to the fee
+   exactly. Dividing twice is how money goes missing a kobo at a time.
+
+### `pricing_sim.py` is now behind the spec
+
+The reference simulation computes `fee = pot * fee_rate`, which was correct when
+it was written and is not any more. Its headline claim — platform cost of
+exactly zero — is about _conservation_ and still holds, because `distributable =
+pot − fee` whatever the fee is charged on. Only the split between fee and
+payouts moved.
+
+Left unedited, per `scripts/README.md`: the sims are the reference, not
+something to bring into line with the TypeScript. The divergence is pinned in
 `packages/engine/src/__tests__/pricing-sim.test.ts` so it stays visible.
 
-Nothing about the engine is wrong — but a market tuned by the stated rule will
-swing about double what it was sized for. For ~1-point moves at even odds, `L`
-wants to be ≈ **50× the typical stake**, not 25×.
+## Still open
 
-**2. Fee base: pot or losing pool?**
+**The §2.3 liquidity tuning rule understates price impact by 1/p.** Unchanged in
+v2. §2.3 gives the impact of a stake as `m·p(1−p)/L` and works it as "₦2,000
+stakes → L=50,000 gives ~1-point moves". But `p(1−p)/L` is `dp/dq` —
+sensitivity per _share_. Money `m` buys about `m/p` shares, so the
+money-denominated impact is `m(1−p)/L`, **twice** the quoted figure at even
+odds. The engine agrees with the corrected form: the doc's own worked example
+moves the price **1.96 points, not 1**. For ~1-point moves at even odds, `L`
+wants to be ≈ **50× the typical stake**, not 25×. Locked in as a test.
 
-§2.3 says "pot − fee ... [3]%", i.e. the fee is a share of the whole pot, and
-that is what `resolve(state, w, feeRate, holdings)` implements. Rulebook §10 says
-community markets take "[3]% **of the losing pool** at payout". Those are
-different numbers whenever the winning side holds more than nothing, and they
-change what every winner receives. Worth settling before fees go live.
-
-Rulebook §10 also prices official markets as "[1.5]% **per trade**", where §2.3
-describes official fees as ~2% taken at resolution. Per-trade fees are not in the
-engine today — `TradeResult.exitFee` is the only per-trade deduction, and it
-exists for the §2.3 exit fee.
-
-**3. Fee split is a ledger concern, not an engine one.**
-
-§2.3 splits the 3% into 2% platform / 1% creator-or-syndicate. `resolve()`
-returns one `fee` figure; the split into `fee_platform` and `fee_creator` ledger
-entries belongs to whatever books the resolution. Both `LedgerType` values exist.
+**Can `staked[i]` go negative?** Not observed across the property runs, and it
+would take holders of one outcome collectively extracting more than was ever
+staked on it. It is not _proven_ impossible, so `losingPool` is computed rather
+than assumed non-negative, and the suite asserts `fee ≤ pot` directly.
 
 ## Implementation decisions taken where the spec left a gap
 

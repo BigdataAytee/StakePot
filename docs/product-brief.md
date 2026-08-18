@@ -10,7 +10,7 @@ StakePot is a prediction market built for Nigeria. People trade on the outcomes 
 
 **The platform never bets.** StakePot runs a hybrid market engine (LMSR-curve pricing with pot-share payouts): every stake goes into an escrowed pot, live prices move with every trade, and winners are paid *only* from that pot. Payouts can never exceed what was collected — a mathematical identity, verified by simulation, not a policy. The platform earns a small fee on resolved markets and nothing from anyone losing. No house. No house edge. No conflict of interest.
 
-**Anyone can open a market.** Alongside the official shelf (naira/dollar, inflation, Super Eagles, elections, one trending slot), any user can create a community ticket through a guided wizard — an AI co-pilot turns "who go win the Surulere LGA chairmanship" into a clean, dated, sourced market, warns if the question is too one-sided to attract both sides, and previews what the creator earns. Markets activate when both sides fund up (or instantly via a creator's symmetric seed, or a sponsor syndicate that shares the rewards). Creators earn 1% of losing pools and climb a ladder: New → Verified → Pro.
+**Anyone can open a market.** Alongside the official shelf (naira/dollar, inflation, Super Eagles, elections, one trending slot), any user can create a community ticket through a guided wizard — an AI co-pilot turns "who go win the Surulere LGA chairmanship" into a clean, dated, sourced market, warns if the question is too one-sided to attract both sides, and previews what the creator earns. Markets activate when both sides fund up (or instantly via a creator's symmetric seed, or a sponsor syndicate that shares the rewards). Creators earn 4% of losing pools and climb a ladder: New → Verified → Pro.
 
 **Every ticket tells its story.** Tap any market and the first thing you see is its chart — the crowd's probability over time, annotated with everything that moved it: activation, big trades, news pins, freeze, resolution. Under it, the live argument bar, the pot, your position with real-time P&L, and the take thread — where every comment carries the commenter's position badge, and being right becomes a permanent, screenshot-able receipt.
 
@@ -21,8 +21,8 @@ StakePot is a prediction market built for Nigeria. People trade on the outcomes 
 ## How the money works
 
 - Users win by being right, or by selling early at a better price.
-- Creators earn 1% of losing pools on their markets, plus status.
-- The platform earns ~2% of resolved-market losing pools — whichever outcome wins.
+- Creators earn 4% of losing pools on their markets, plus status.
+- The platform earns 3% of resolved-market losing pools (official and its share of community markets) plus a 1% early-exit fee — whichever outcome wins. Money movement is pass-through: deposits at processor cost (1% capped ₦300 — we add nothing), withdrawals ₦100 flat; the platform bears no payment costs.
 - Every stake is escrowed from the moment it's placed; voided markets refund in full; an append-only ledger, daily reconciliation, fund tagging, and four-eyes approvals mean no one — including staff — can move user money silently.
 
 ## Current phase

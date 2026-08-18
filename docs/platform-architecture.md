@@ -72,12 +72,12 @@ The single trading engine for official and community markets. Combines LMSR-styl
   - **Buying:** a user spending money `m` on outcome `i` receives shares `Δ = L·ln((e^(m/L) − 1 + p_i)/p_i)` — closed form, O(1), no iteration. `m` goes into the pot; `q_i += Δ`.
   - **Early exit:** selling `Δ` shares refunds `r = C(q) − C(q − Δe_i)` where `C(q) = L·ln Σ_j e^(q_j/L)`, paid from the pot.
   - **Solvency is automatic, not enforced:** because every buy and sell moves along the same cost curve, the pot always equals `C(q_current) − C(q_open) ≥ 0`. No refund can ever exceed the pot — a mathematical identity, not a cap check. (The runtime still asserts it as a §9-invariant tripwire.)
-  - **Resolution:** pot − fee distributed per share among the winning outcome's holders. Displayed payout figures are estimates (final value = pot/q_win at close) and are labelled as such.
+  - **Resolution:** pot − fee distributed per share among the winning outcome's holders. Fee basis: the losing pool — official markets [3]%; community markets [7]% ([4]% creator / [3]% platform). Displayed payout figures are estimates (final value = pot/q_win at close) and are labelled as such.
   - **Tuning `L`:** a stake of size `m` moves the price by ≈ `m·p(1−p)/L`. Rule of thumb: `L ≈ 25× the typical stake` gives ~1-point moves per typical trade (e.g., ₦2,000 stakes → L=50,000); size `L` to [50–100%] of expected market volume. Small L = lively/jumpy (fine for small community markets); large L = smooth/deep (flagship markets). `L` is fixed for a market's lifetime (changing it mid-market breaks the pot identity).
   - **Trading freeze at event start:** markets freeze when the underlying event begins (kickoff, polls close) — standard practice, and it prevents near-certain-outcome exit drains on other holders.
-  - **Optional exit fee [0–0.5%]** (config): a perfect buy-then-sell round trip otherwise refunds exactly what was paid; a small exit fee adds friction against spam/manipulation churn if needed.
+  - **Early-exit fee [1]% of sale proceeds — ON by default** (config 0–2%): deducted only when selling before resolution; buying is always free and holding to resolution incurs no exit fee. The deduction is credited to `platform_fees`. This is the platform's spread-equivalent — visible, stated, and charged only on early exits.
   - **Simulation results (5 / 50 / 500 traders, 2,000-trade stress runs):** platform cost exactly ₦0.00 in every scenario (payouts + fee = pot to the kobo); pot never negative including full-whale-exit stress; tuned-L markets tracked injected sentiment within ~2 points with sub-1-point average moves at scale, while a fixed small L produced 8-point average swings — confirming the per-market L sizing rule above. Simulation script to be kept in the repo as a regression test.
-- **Resolution payout:** remaining pot − fee ([3]%: [2]% platform / [1]% creator-or-syndicate on community; [~2]% platform on official) is distributed **per share** among the winning outcome's holders.
+- **Resolution payout:** remaining pot − fee (community [7]%: [4]% creator-or-syndicate / [3]% platform; official [3]% platform) is distributed **per share** among the winning outcome's holders.
 - **Displayed payout estimates** are clearly labelled as estimates (final per-share value depends on the pot at close).
 - Every trade executes atomically in one DB transaction: read pot state → price via formula → fee → ledger entries → new pot state → price snapshot → `price_changed` event.
 - Price snapshots per trade + per minute → price history charts. Redis caches current prices; the Realtime Gateway pushes live updates (the moving-percentage Polymarket experience).
@@ -203,7 +203,7 @@ The creator side assumes most creators are ordinary people with a hot question, 
 |---|---|---|
 | 1 New | signup (Tier 1) | Template/wizard creation only, human review on all, standard bond, max [2] live markets |
 | 2 Verified | [5] clean resolutions | Badge, reduced bond, auto-approval on template-standard markets, max [10] live |
-| 3 Pro | sustained volume + clean record | Featured placement, custom syndicate splits, fee bump ([1%→1.25%]), early access to new market types, share of a monthly top-creator bonus pool |
+| 3 Pro | sustained volume + clean record | Featured placement, custom syndicate splits, fee bump ([4%→4.5%]), early access to new market types, share of a monthly top-creator bonus pool |
 - **Public creator profiles:** live markets, resolution accuracy, total volume hosted, followers. **Follow system:** followers are notified when a creator opens a market — creators become distribution channels with audiences.
 
 **d) Post-launch tools (volume = creator earnings, so help them grow it)**
@@ -365,6 +365,8 @@ approvals        id, action_type, payload_json, requested_by, approver_1?, appro
                  state ('pending'|'approved'|'rejected'), created_at
 admin_audit      id, staff_id, action, target_ref, before_json, after_json, ip, ts   [append-only]
 reconciliation_runs  id, run_date, ledger_total, wallet_total, bank_total?, status, diff, cleared_by?
+platform_config  key, value_json, effective_at, version, state ('active'|'pending'|'superseded')
+config_versions  id, key, old_value, new_value, reason, proposed_by, approved_by, proposed_at, activated_at?
 support_tickets  id, user_id, market_id?, category, state, sla_due, assigned_to?, created_at
 rg_settings      user_id, deposit_limit?, stake_limit?, loss_limit?, cooloff_until?,
                  self_excluded, updated_at
@@ -461,6 +463,17 @@ Markets in `pending_resolution`: proposed outcome, evidence link, the market's w
 - **Approvals inbox:** pending four-eyes actions (large withdrawals, manual adjustments via reversing entries, bond forfeitures, post-activation voids) with first/second approver flow.
 - Proof-of-reserves export; regulator report exports (licensed phase).
 
+### 6.4b Platform Config Console (editable settings — maximum-security zone)
+Every tunable value in this document lives here as an editable setting — never in code. Editable parameters include: resolution fees (official %, community % and creator/platform split), early-exit fee %, deposit pass-through rate/min/cap, withdrawal flat fee, minimum deposit/withdrawal, activation thresholds (points + backers), funding/seeding window lengths, syndicate caps, conduct bond size, per-market default `liquidity_param` guidance, Tier limits and starter balance, RG default limits, dispute-window length, and the `kyc_required_at` switch.
+
+**Serious authentication — no single person can change platform economics:**
+1. **Step-up re-auth:** opening the console requires a fresh TOTP 2FA challenge (§2.11) regardless of session age; the session elevation expires after [10] minutes.
+2. **Four-eyes, mandatory:** every change is a proposal into the approvals workflow (§2.10) — a second, different admin must re-authenticate with their own 2FA and approve. The proposer can never self-approve. Money-affecting configs (all fees, caps, limits) additionally require the approver to hold the Finance or Admin role.
+3. **Effective-date delay:** approved changes take effect after a visible delay (default [24]h, config) and **never retroactively** — markets already open resolve under the values in force when they opened (mirrors Rulebook Part 4).
+4. **Versioned + immutable history:** every value change writes a `config_versions` row (old value, new value, proposer, approver, timestamps, reason text — reason is mandatory) and the `admin_audit` log; one-click rollback creates a new proposal, never an edit of history.
+5. **Change notifications:** all admins are notified on every proposal and every activation; user-facing fee changes trigger an in-app notice per the Rulebook's amendment-notice rule.
+6. **Rate limit:** max [3] config changes per parameter per [30] days without super-admin override — economics should move deliberately, not twitchily.
+
 ### 6.5 Users & Trust/Safety
 User search: tier, balances, positions, history, device fingerprints, linked-account flags. Actions: freeze, ban, tier review — balance changes only via the approvals workflow (no direct edit exists). Abuse queue: wash-trading flags, stake-flood alerts, multi-account clusters, each with evidence + freeze/clear. **Community moderation queue (§2.15e):** flagged comments, tipster-pattern auto-flags, squad-name screening. RG view: self-exclusions, limits, RG requests (§2.12).
 
@@ -476,7 +489,22 @@ Weekly prize runs (approve airtime payouts), **weekly Top Calls curation**, shar
 ### 6.9 System room (engineering)
 Queue/worker status, deploy & canary controls, alert history, backup/restore drill logs, status-page incident posting.
 
-### 6.10 Role → screen matrix
+### 6.10 Admin Frontend Design (built for speed of operation, not decoration)
+The cockpit is a **desktop-first** web app (same Next.js codebase, `/admin` routes, same tokens as §7.4 but in a denser, calmer register — ink-green dark theme by default, gold strictly for money figures, red strictly for alarms). Its design goal is operational efficiency: an operator resolves a market, clears a reconciliation exception, or approves a config change in seconds, with zero ambiguity.
+
+- **Layout:** persistent left rail (the nine screens, alarm badges on each), top bar with global status strip (reconciliation ✓/✗ · queue lag · open disputes · pending approvals), main content area. Nothing more than two clicks deep.
+- **Command palette (Ctrl/Cmd-K):** jump to any user, market, ticket, transaction, or setting by typing — the fastest path to everything; power operators never touch the mouse. Full keyboard shortcuts on high-frequency actions (approve, next item, open evidence).
+- **Live tiles, not static reports:** dashboard numbers stream over the same WebSocket as user prices — an operator watches trade latency or a funding meter move in real time.
+- **Table ergonomics everywhere:** dense virtualized tables (smooth at 100k rows), sticky headers, per-column filters, saved views ("disputes > 24h", "withdrawals awaiting 2nd eye"), bulk select with bulk actions where safe (never on money), CSV export on every table.
+- **Work-queue pattern for the four inboxes** (resolution centre, disputes, approvals, community review): items presented one-at-a-time with full context on a single screen — the market's rules, the evidence, the AI score, the history — decision buttons fixed bottom-right, auto-advance to the next item. Clearing a queue should feel like a rhythm.
+- **Approvals UX:** every four-eyes item shows *what changes, old → new, who proposed, their written reason* in a diff-style card; the approve button triggers the step-up 2FA inline (§6.4b) without leaving the screen.
+- **Inline audit visibility:** every entity page (user, market, config key) carries a chronological "history" side panel fed from admin_audit and config_versions — the trail is ambient, not buried in a separate log viewer.
+- **Alarm discipline:** exactly three severities — red (money invariant / reconciliation / queue stall: pages on-call, banner across every admin screen), amber (SLA breach, abuse flag), neutral (informational). No decorative notifications; an admin who sees red knows it's real.
+- **Safe-guarded destructive actions:** void, ban, forfeit, freeze all require typed confirmation of the entity name (GitHub-style) plus the four-eyes flow where mandated — muscle-memory clicks cannot destroy anything.
+- **Mobile fallback (read + approve only):** a phone layout exposing the status strip, the four inboxes, and approve/deny with 2FA — so a second approver can unblock a withdrawal from anywhere; creation and editing remain desktop-only by design.
+- **Performance budget:** every admin screen interactive < 1s on a mid-range laptop; queues paginate server-side; charts downsample. An admin tool that lags gets worked around, and workarounds are where money incidents start.
+
+### 6.11 Role → screen matrix
 
 | Role | Sees / does |
 |---|---|

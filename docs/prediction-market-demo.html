@@ -216,14 +216,14 @@ function m1sell(){
 }
 function m1resolve(){
   if(m1done)return;m1done=true;
-  const fee=M1.pot*0.02, dist=M1.pot-fee;
+  const fee=M1.pot*0.03, dist=M1.pot-fee;
   const yourPay=M1.q[0]>0?dist*(m1shares[0]/M1.q[0]):0;
   totalOut+=dist+fee;
   const r=document.getElementById('m1rcpt');r.style.display='block';
   r.textContent=
 `RESOLVED YES · CBN rate above ₦1,500
 Pot collected ......... ${fmt2(M1.pot)}
-Platform fee (2%) ..... ${fmt2(fee)}
+Platform fee (3%) ..... ${fmt2(fee)}
 Paid to YES holders ... ${fmt2(dist)}
   └ your YES shares ... ${fmt2(yourPay)}
 Pot remaining ......... ₦0.00
@@ -258,14 +258,14 @@ function m2buy(i){
 }
 function m2resolve(){
   if(m2done)return;m2done=true;
-  const fee=M2.pot*0.02,dist=M2.pot-fee;
+  const fee=M2.pot*0.03,dist=M2.pot-fee;
   const yourPay=M2.q[0]>0?dist*(m2shares[0]/M2.q[0]):0;
   totalOut+=dist+fee;
   const r=document.getElementById('m2rcpt');r.style.display='block';
   r.textContent=
 `RESOLVED · INEC declares Adaeze
 Pot collected ......... ${fmt2(M2.pot)}
-Platform fee (2%) ..... ${fmt2(fee)}
+Platform fee (3%) ..... ${fmt2(fee)}
 Paid to Adaeze holders  ${fmt2(dist)}
   └ your shares ....... ${fmt2(yourPay)}
 All other outcomes .... ₦0 (their stakes funded the winners)
@@ -301,16 +301,16 @@ function m3stake(side){
 }
 function m3resolve(){
   if(m3.done||!m3.live)return;m3.done=true;
-  const losing=m3.no,fee=losing*0.03,plat=losing*0.02,creator=losing*0.01,dist=losing-fee;
+  const losing=m3.no,fee=losing*0.07,plat=losing*0.03,creator=losing*0.04,dist=losing-fee;
   const myShare=m3.myYes/m3.yes, myWin=dist*myShare;
   totalOut+=m3.yes+dist+fee;
   const r=document.getElementById('m3rcpt');r.style.display='block';
   r.textContent=
 `RESOLVED YES · Ministry bulletin confirms
 Losing pool (NO) ...... ${fmt2(losing)}
-Fee 3% ................ ${fmt2(fee)}
-  ├ platform 2% ....... ${fmt2(plat)}
-  └ creator @EmekaObi . ${fmt2(creator)}
+Fee 7% ................ ${fmt2(fee)}
+  ├ platform 3% ....... ${fmt2(plat)}
+  └ creator @EmekaObi (4%) ${fmt2(creator)}
 Shared by YES side .... ${fmt2(dist)}
   └ your YES stakes ... stake back + ${fmt2(myWin)}
 PLATFORM COST ......... ₦0.00  ✔`;
