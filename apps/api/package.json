@@ -11,7 +11,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node --enable-source-maps dist/main.js",
     "test": "vitest run --passWithNoTests",
-    "test:props": "vitest run --dir src src/ledger/posting.test.ts",
+    "test:props": "vitest run src/ledger/posting.test.ts",
     "typecheck": "pnpm run prisma:generate && tsc -p tsconfig.json --noEmit",
     "lint": "eslint src --max-warnings=0",
     "migrate": "prisma migrate deploy",

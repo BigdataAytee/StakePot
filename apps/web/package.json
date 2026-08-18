@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start --port 3000",
     "test": "vitest run --passWithNoTests",
-    "test:props": "vitest run --dir src --passWithNoTests props",
+    "test:props": "vitest run --passWithNoTests props",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src --max-warnings=0",
     "migrate": "node -e \"console.log('no database in apps/web — run pnpm --filter @stakeam/api migrate')\""
