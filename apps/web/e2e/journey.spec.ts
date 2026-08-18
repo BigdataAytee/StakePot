@@ -19,21 +19,6 @@ const API = process.env['API_URL'] ?? 'http://localhost:3001';
 const DB =
   process.env['TEST_DATABASE_URL'] ?? 'postgresql://stakeam:stakeam@localhost:5432/stakeam_test';
 
-/**
- * Clear this machine's auth rate-limit budget before the run.
- *
- * These journeys sign up fresh accounts, which is exactly the shape §11's
- * limiter exists to refuse — so repeated local runs start 429ing on signup.
- * CI gets a fresh Redis per job and never notices; a developer re-running the
- * suite would otherwise see a product failure that is really a working control.
- * The limiter itself is asserted in walkthrough.spec.ts.
- */
-try {
-  execSync('redis-cli --scan --pattern "rl:auth:*" | xargs -r redis-cli del', { stdio: 'ignore' });
-} catch {
-  // No redis-cli here: the run is then subject to the real budget.
-}
-
 const stamp = Date.now();
 let marketId: string;
 let yesOutcomeId: string;
@@ -59,6 +44,23 @@ async function api<T>(path: string, body: unknown, token?: string): Promise<T> {
 }
 
 test.beforeAll(() => {
+  /*
+   * Clear this machine's auth rate-limit budget first.
+   *
+   * These journeys sign up fresh accounts, which is the shape §11's limiter
+   * refuses. Per project rather than per file: desktop and phone in one job
+   * double the signups from one address, and CI failed exactly that way when
+   * the phone viewport was added. The limiter is asserted in
+   * walkthrough.spec.ts, so this resets a budget rather than disabling a check.
+   */
+  try {
+    execSync('redis-cli --scan --pattern "rl:auth:*" | xargs -r redis-cli del', {
+      stdio: 'ignore',
+    });
+  } catch {
+    // No redis-cli here: the run is then subject to the real budget.
+  }
+
   marketId = `e2e-market-${stamp}`;
   yesOutcomeId = `e2e-yes-${stamp}`;
   const noId = `e2e-no-${stamp}`;

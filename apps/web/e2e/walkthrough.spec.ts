@@ -64,26 +64,31 @@ execSync(
   `psql "${DB}" -q -f ${join(process.cwd(), '..', '..', 'scripts', 'dev', 'seed-walkthrough.sql')}`,
 );
 
-/**
- * Clear this machine's auth rate-limit budget before the run.
- *
- * §11's limiter counts signups and logins per IP, and a walkthrough that signs
- * up a fresh account on every run looks exactly like the abuse it is built to
- * stop — so repeated runs start 429ing. Resetting the budget is not disabling
- * the control: the last step below deliberately trips it and asserts the
- * refusal, so the limiter is proven on every run rather than merely tolerated.
- */
-try {
-  execSync('redis-cli --scan --pattern "rl:auth:*" | xargs -r redis-cli del', { stdio: 'ignore' });
-} catch {
-  // No redis-cli on this machine: the run is then subject to the real budget,
-  // which is the honest failure mode.
-}
-
 // One story in order, so the run shares a browser and a session.
 test.describe.configure({ mode: 'serial' });
 
 test.describe('the walkthrough', () => {
+  /**
+   * Clear this machine's auth rate-limit budget before each project's run.
+   *
+   * §11's limiter counts signups per IP, and the suite signs up fresh accounts
+   * — which is precisely the shape it exists to refuse. Per *project*, not once
+   * per file: running desktop and phone in one job doubles the signups from a
+   * single address, and CI failed exactly that way once the phone viewport was
+   * added. Resetting is not disabling the control — step 11 below trips it
+   * deliberately and asserts the refusal, so it is proven on every run.
+   */
+  test.beforeAll(() => {
+    try {
+      execSync('redis-cli --scan --pattern "rl:auth:*" | xargs -r redis-cli del', {
+        stdio: 'ignore',
+      });
+    } catch {
+      // No redis-cli here: the run is then subject to the real budget, which is
+      // the honest failure mode.
+    }
+  });
+
   test('1 · the front door explains itself to a stranger', async ({ page }, testInfo) => {
     await page.goto('/');
     await expect(page.getByRole('heading', { name: /arguments get settled/i })).toBeVisible();
