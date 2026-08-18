@@ -221,6 +221,58 @@ Packages installed for this step, all from §5.1's step-9 line: `web-push`,
 `otplib`, `qrcode`, `nodemailer`. The Termii client from step 1 gained a
 `send()` alongside `sendOtp()` rather than a second SMS client.
 
+## The question engine (step 10)
+
+**The model proposes; the code decides.** Everything §2.9 calls a rule — the
+Rulebook blocklist, the structural checklist, the balance band, duplicate
+detection, catalogue discipline, rank — is implemented in `market-template.ts`
+and `draft-ranking.ts` and runs without a network call. The model sits behind a
+`QuestionModel` interface with three methods (assess, propose, restructure), so
+the platform's judgement is testable without an API key and cannot change when
+the model or vendor does. A rule that lives only in a system prompt is a
+preference.
+
+**Refusals are stored, not dropped.** A proposal that fails a gate is filed as a
+`rejected` draft with its reasons, and the queue can show them. A queue that
+shows only what the engine liked tells an operator nothing about how it is
+behaving, and §2.9's feedback loop is meant to be watched.
+
+**Balance is scored, not just gated.** §2.9 rule 3 is a band (reject outside
+35–65%, or a multi-outcome leader above 60%); the rank is engagement ×
+balance quality, multiplied rather than averaged, because a one-sided market on
+a huge topic still earns nothing. The backtest in §2.9 is what justifies the
+weighting: balance is worth +24% fee per market.
+
+**Duplicate detection is deliberately dumb.** Term overlap against live
+questions, with the threshold in config. §2.9 asks the model for this too, but a
+duplicate splits one argument across two markets — a liquidity problem worth
+catching deterministically rather than by asking a model twice.
+
+**The shelf plan is a budget.** Rule 8's six slots mean the engine drafts only
+for the places the shelf has free; with six live markets a generation cycle asks
+for nothing at all.
+
+**Official markets open on a platform seed, and in points mode the seed is
+issued.** §2.4 says "the platform seeds them and they open active", so the house
+posts the same symmetric grant a creator does — equal money on every outcome,
+no price moved, no side taken. In points mode that money is minted the way
+starter balances are, and it shows on the proof-of-reserves line like any other
+issuance. **When NGN activates (§9) this must be funded from platform money
+instead**: a house seed backed by nothing is exactly what §2.10's fund tagging
+exists to prevent. Flagged rather than assumed.
+
+**The feedback loop measures money, not prices.** §2.9 asks for
+`initial_pool_split` and `final_pool_split`; those are recorded from what the
+crowd actually staked, because a market can look balanced on the chart while
+90% of its money sat on one side — and it is the money that decides whether the
+question earned anything. Near-balanced, high-volume, undisputed markets come
+back as few-shot exemplars; anything that settled beyond 75/25 comes back as a
+threshold to retune.
+
+**The co-pilot files nothing.** §2.14a's restructure step runs while somebody is
+still typing, so it returns a template and an estimate and writes no row — a
+draft per keystroke would be noise in the review queue.
+
 ## Still open
 
 **The §2.3 liquidity tuning rule understates price impact by 1/p.** Unchanged in

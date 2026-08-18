@@ -21,6 +21,12 @@ import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { FundingWindowWorker } from '../community/funding-window.worker';
 import { Roles, RolesGuard, STAFF_ROLES } from '../auth/roles.guard';
 import { LedgerService } from '../ledger/ledger.service';
+import { AdminAuditService } from '../audit/admin-audit.service';
+import {
+  QuestionEngineService,
+  QuestionEngineUnavailableError,
+} from '../community/question-engine.service';
+import { OfficialMarketError, OfficialMarketService } from '../market/official-market.service';
 import { SupportError, SupportService } from '../support/support.service';
 import { TotpError } from '../auth/totp.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -39,6 +45,16 @@ export class DecideApprovalDto {
 export class ApproveDto {
   /** §6.4b: the approve button triggers the step-up 2FA inline. */
   @IsOptional() @IsString() totpCode?: string;
+}
+
+export class OpenDraftDto {
+  /** Liquidity constant L (§2.3). ~50× the typical stake for ~1-point moves. */
+  @IsOptional() @IsString() liquidityParam?: string;
+  @IsOptional() @IsString() seedPerOutcome?: string;
+}
+
+export class RejectDraftDto {
+  @IsString() @MinLength(5) reason!: string;
 }
 
 export class StaffReplyDto {
@@ -91,6 +107,9 @@ export class AdminController {
     private readonly ledger: LedgerService,
     private readonly windows: FundingWindowWorker,
     private readonly support: SupportService,
+    private readonly engine: QuestionEngineService,
+    private readonly official: OfficialMarketService,
+    private readonly audit: AdminAuditService,
   ) {}
 
   private actor(request: RequestWithUser): Actor {
@@ -475,6 +494,86 @@ export class AdminController {
     return { id: dispute.id, state: dispute.state };
   }
 
+  // ------------------------------------------------------- drafts queue (§6.2)
+
+  /**
+   * §6.2's ranked drafts: what the engine suggests, and what it refused.
+   *
+   * Refusals are included on request rather than hidden — a queue that shows
+   * only what the engine liked tells an operator nothing about how it is
+   * behaving, and §2.9's feedback loop is meant to be watched.
+   */
+  @Get('drafts')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async drafts(@Query('includeRejected') includeRejected?: string) {
+    return this.engine.queue({ includeRejected: includeRejected === 'true' });
+  }
+
+  /**
+   * Ask the engine for a fresh cycle of suggestions (§2.9 rule 8: replacements,
+   * not additions — it only drafts for slots the shelf has free).
+   */
+  @Post('drafts/generate')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('admin')
+  async generateDrafts(@Req() request: RequestWithUser) {
+    const actor = this.actor(request);
+    const drafted = await this.run(() => this.engine.generate());
+    await this.audit.record({
+      staffId: actor.userId,
+      action: 'draft.generate',
+      targetRef: 'shelf:official',
+      after: {
+        drafted: drafted.length,
+        accepted: drafted.filter((d) => d.state === 'suggested').length,
+      },
+      ip: actor.ip,
+    });
+    return drafted;
+  }
+
+  /** The one-click open: the rules run again, then the platform seeds it. */
+  @Post('drafts/:id/open')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('admin')
+  async openDraft(
+    @Req() request: RequestWithUser,
+    @Param('id') draftId: string,
+    @Body() body: OpenDraftDto,
+  ) {
+    const actor = this.actor(request);
+    return this.run(() =>
+      this.official.openFromDraft({
+        draftId,
+        staffId: actor.userId,
+        ip: actor.ip,
+        ...(body.liquidityParam === undefined ? {} : { liquidityParam: body.liquidityParam }),
+        ...(body.seedPerOutcome === undefined ? {} : { seedPerOutcome: body.seedPerOutcome }),
+      }),
+    );
+  }
+
+  @Post('drafts/:id/reject')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async rejectDraft(
+    @Req() request: RequestWithUser,
+    @Param('id') draftId: string,
+    @Body() body: RejectDraftDto,
+  ) {
+    const actor = this.actor(request);
+    await this.run(() =>
+      this.official.rejectDraft({
+        draftId,
+        staffId: actor.userId,
+        reason: body.reason,
+        ip: actor.ip,
+      }),
+    );
+    return { state: 'rejected' };
+  }
+
   // -------------------------------------------------------- support desk (§6.7)
 
   /**
@@ -557,7 +656,9 @@ export class AdminController {
         error instanceof ApprovalError ||
         error instanceof ResolutionFlowError ||
         error instanceof SupportError ||
-        error instanceof TotpError
+        error instanceof TotpError ||
+        error instanceof OfficialMarketError ||
+        error instanceof QuestionEngineUnavailableError
       ) {
         throw new BadRequestException(error.message);
       }

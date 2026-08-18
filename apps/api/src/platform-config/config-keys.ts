@@ -58,10 +58,16 @@ export const CONFIG_SCHEMAS = {
   /** §6.4b: approved config changes take effect after a visible delay. */
   config_change_delay_hours: z.number().int().nonnegative(),
 
-  // AI question engine (§2.9 rule 3)
+  // AI question engine (§2.9)
   ai_balance_low: z.number().min(0).max(1),
   ai_balance_high: z.number().min(0).max(1),
   ai_balance_multi_max: z.number().min(0).max(1),
+  /** Term overlap at which a draft counts as restating a live market. */
+  ai_duplicate_threshold: z.number().min(0).max(1),
+  /** §2.9 rule 8's shelf plan: how many official markets run at once. */
+  official_shelf_slots: z.number().int().positive(),
+  /** What the platform puts into each pool when it opens an official market. */
+  official_seed_per_outcome_spc: z.number().positive(),
 
   // Support desk and responsible gambling (§2.12, §6.7)
   /** Hours until a ticket is late, per category. */

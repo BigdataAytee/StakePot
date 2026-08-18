@@ -8,6 +8,7 @@ import { AdminAuditService } from '../audit/admin-audit.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { AuthService } from '../auth/auth.service';
 import { TotpService } from '../auth/totp.service';
+import { QuestionEngineService } from '../community/question-engine.service';
 import { generateSync } from 'otplib';
 import { CommunityService } from '../community/community.service';
 import { SeedService } from '../community/seed.service';
@@ -91,6 +92,9 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       new ResolutionService(prisma, ledger, config),
       audit,
       notifications,
+      // No API key in tests: the engine's model seam is null, and the parts that
+      // matter here — §2.9's outcome log — do not need one.
+      new QuestionEngineService(prisma, config, null),
     );
     approvals = new ApprovalsService(prisma, ledger, voids, config, audit, new TotpService(prisma));
   });

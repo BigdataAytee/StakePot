@@ -8,6 +8,7 @@ import { toEngineState } from '../market/market-state';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
+import { SYSTEM_PLATFORM_ACCOUNT } from '../ledger/posting';
 import { MarketVoidService } from './void.service';
 
 export class SeedError extends Error {
@@ -100,6 +101,63 @@ export class SeedService {
       const fundingClosesAt = new Date(Date.now() + windowHours * 3_600_000);
       await this.activate(tx, market.id, fundingClosesAt, 'Seeded — trading is open');
       return { ...applied, fundingClosesAt };
+    });
+  }
+
+  /**
+   * The platform's own seed on an official market (§2.4).
+   *
+   * "Official markets skip funding: platform seeds them and they open active."
+   * The house puts equal money on every outcome — the same symmetric grant a
+   * creator posts, so it moves no price and takes no side — and the market opens
+   * for trading immediately, with no funding window and no participation floor.
+   *
+   * In points mode the seed is issued rather than taken from fees: SPC is a
+   * currency the platform mints anyway (starter balances, bonuses), and the
+   * issuance shows up on the proof-of-reserves line like every other. When NGN
+   * activates (§9) this must be funded from platform money instead — a house
+   * seed backed by nothing is exactly what the fund-tagging rules exist to
+   * prevent.
+   */
+  async seedOfficial(params: { marketId: string; perOutcome?: string }): Promise<SeedApplied> {
+    const perOutcome = new Decimal(
+      params.perOutcome ?? (await this.config.get('official_seed_per_outcome_spc')),
+    );
+    if (perOutcome.lte(0)) throw new SeedError('an official seed must be greater than zero');
+
+    return this.prisma.$transaction(async (tx) => {
+      const market = await this.lockSeedable(tx, params.marketId, ['draft'], 'official');
+      const total = perOutcome.times(market.outcomes.length);
+
+      await this.wallet.issue({
+        userId: SYSTEM_PLATFORM_ACCOUNT,
+        amount: total,
+        type: 'seed',
+        ref: `official-seed:${market.id}`,
+        tx,
+      });
+      await this.wallet.escrow({
+        userId: SYSTEM_PLATFORM_ACCOUNT,
+        marketId: market.id,
+        amount: total,
+        type: 'seed',
+        ref: `official-seed:${market.id}`,
+        tx,
+      });
+
+      const applied = await this.applySeed(tx, market, [
+        { userId: SYSTEM_PLATFORM_ACCOUNT, amount: total },
+      ]);
+
+      await tx.market.update({
+        where: { id: market.id },
+        data: { state: 'active', activationPath: 'seeded' },
+      });
+      await tx.marketAnnotation.create({
+        data: { marketId: market.id, type: 'activation', label: 'Open for trading' },
+      });
+
+      return applied;
     });
   }
 
@@ -510,6 +568,7 @@ export class SeedService {
     tx: Tx,
     marketId: string,
     allowed: readonly string[] = ['draft', 'funding', 'seeding'],
+    shelf: 'community' | 'official' = 'community',
   ): Promise<MarketWithOutcomes> {
     await tx.$queryRaw`SELECT id FROM markets WHERE id = ${marketId} FOR UPDATE`;
     const market = await this.loadMarket(tx, marketId);
@@ -517,8 +576,8 @@ export class SeedService {
     if (!allowed.includes(market.state)) {
       throw new SeedError(`market is ${market.state} — it cannot be seeded`);
     }
-    if (market.shelf !== 'community') {
-      throw new SeedError('only community markets are seeded — official markets open active');
+    if (market.shelf !== shelf) {
+      throw new SeedError(`this path seeds ${shelf} markets, and that one is ${market.shelf}`);
     }
     const traded = await tx.trade.count({ where: { marketId, side: { not: 'seed' } } });
     if (traded > 0) {

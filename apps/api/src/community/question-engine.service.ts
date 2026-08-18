@@ -1,97 +1,99 @@
-import Anthropic from '@anthropic-ai/sdk';
-import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { Injectable } from '@nestjs/common';
-import { z } from 'zod';
+import { Inject, Injectable } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import type { MarketDraft } from '@prisma/client';
 
-import { env } from '../config/env';
 import { logger } from '../logger';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { QuestionEngineUnavailableError } from './anthropic-question-model';
+import {
+  CATALOGUE_SLOTS,
+  CATALOGUE_SLOT_NAMES,
+  draftScore,
+  duplicateOf,
+  isCatalogueSlot,
+  withinBalanceBand,
+  type CatalogueSlot,
+} from './draft-ranking';
 import {
   isBalanced,
   screenTemplate,
   type MarketTemplate,
   type TemplateProblem,
 } from './market-template';
+import { templateOf, type Assessment, type Proposal, type QuestionModel } from './question-model';
 
-/** §2.9's assessment of one submission. Structured because free text is not a decision. */
-const AssessmentSchema = z.object({
-  balanceEstimates: z
-    .array(z.number())
-    .describe('Probability for each outcome, in the order given. Must sum to 1.'),
-  engagementScore: z
-    .number()
-    .describe(
-      '0-1. How much a Nigerian audience would care: naira, football, elections, BBNaija, fuel.',
-    ),
-  influenceable: z
-    .boolean()
-    .describe('True if a participant or the creator could affect the outcome.'),
-  sourceSettles: z
-    .boolean()
-    .describe('True if the named source alone can settle every listed outcome.'),
-  duplicateOfLiveMarket: z.boolean(),
-  concerns: z.array(z.string()).describe('Short, specific problems a reviewer should see.'),
-  verdict: z.enum(['looks_good', 'needs_review', 'reject']),
-  reason: z.string().describe('One sentence, addressed to the creator. Plain, not apologetic.'),
-});
+export { QuestionEngineUnavailableError };
+export type { Assessment };
 
-export type Assessment = z.infer<typeof AssessmentSchema>;
+/**
+ * The model seam, as an injection token.
+ *
+ * A token rather than a concrete class so the rules can be exercised with a
+ * stand-in — and so "no API key" is a value the container provides (null)
+ * rather than a branch buried in a constructor.
+ */
+export const QUESTION_MODEL = Symbol('stakeam:question-model');
 
-export class QuestionEngineUnavailableError extends Error {
-  constructor() {
-    super('ANTHROPIC_API_KEY is not configured — the question engine cannot screen submissions');
-    this.name = 'QuestionEngineUnavailableError';
-  }
+export interface GeneratedDraft {
+  readonly draftId: string;
+  readonly slot: CatalogueSlot;
+  readonly state: 'suggested' | 'rejected';
+  readonly score: number;
+  readonly question: string;
+  readonly refusals: readonly string[];
+}
+
+export interface CopilotResult {
+  readonly template: MarketTemplate;
+  readonly estimates: readonly number[];
+  readonly balanced: boolean;
+  readonly engagement: number;
+  readonly rationale: string;
+  readonly problems: readonly TemplateProblem[];
 }
 
 /**
- * §2.9's system prompt, condensed to what governs a *screen*. The generation
- * rules that draft official questions live with the generate path.
- */
-const SCREENING_SYSTEM = `You screen prediction-market submissions for StakeAm, a Nigerian prediction market.
-
-Your prime directive is genuine disagreement: a good market is one the audience splits close to 50/50 on. An obvious answer produces a dead market and negligible fees, so treat a lopsided estimate as a real problem, not a quibble.
-
-Judge each submission on:
-1. Balance — estimate the probability of each outcome honestly, in the order given. Do not flatter the submission.
-2. Structure — a definite conclusion by a stated date, outcomes that are complete, and exactly one named official source that can settle every one of them.
-3. Influence — reject anything a participant or the creator could affect, or would have inside knowledge of.
-4. Engagement — Nigerian mass interest: the naira and cost of living, football, elections, BBNaija and entertainment, fuel.
-5. Duplication — whether this restates a market already trading.
-
-You advise; a human decides. Never approve anything about death, injury, illness, crime, violence, security incidents, private individuals, or an outcome with no checkable source — mark those 'reject'.
-
-Write the reason for the creator, in plain Nigerian English. Be specific about what to change. Do not apologise.`;
-
-/**
- * §2.9 — the AI market question engine, screening mode.
+ * §2.9 — the AI market question engine.
  *
  * "It **suggests; humans approve** — no market ever goes live without staff
- * sign-off." Nothing here writes a market; it writes a scored row into
- * `market_drafts` for the review queue.
+ * sign-off." Nothing in this service opens a market. It writes scored rows into
+ * `market_drafts`, and a person opens them from the queue.
  *
- * The deterministic screen in `market-template.ts` runs *first* and can reject
- * on its own. That ordering is the point: the Rulebook's prohibitions are not
- * delegated to a model, and a submission that fails them never reaches one.
+ * The division of labour is deliberate and is the whole design: the model
+ * proposes and estimates; every *decision* — the Rulebook blocklist, the
+ * structural checklist, the balance band, duplicates, catalogue discipline,
+ * rank — is made by code in `market-template.ts` and `draft-ranking.ts`, which
+ * run without a network call and are tested without an API key. A rule that
+ * lives only in a system prompt is a preference.
+ *
+ * Refusals are stored, not dropped. A queue that shows only what the engine
+ * liked tells you nothing about what it is doing.
  */
 @Injectable()
 export class QuestionEngineService {
-  private readonly client: Anthropic | null;
+  private readonly model: QuestionModel | null;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: PlatformConfigService,
+    @Inject(QUESTION_MODEL) model: QuestionModel | null,
   ) {
-    this.client = env.ANTHROPIC_API_KEY === undefined ? null : new Anthropic();
+    this.model = model;
   }
+
+  private ask(): QuestionModel {
+    if (this.model === null) throw new QuestionEngineUnavailableError();
+    return this.model;
+  }
+
+  // ------------------------------------------------------------ screening mode
 
   /**
    * Screen a submission and file it for review.
    *
-   * Returns the draft row. A first-time creator always routes to human review
-   * regardless of verdict (§2.9), which is the anti-farming gate rather than a
-   * quality one.
+   * A first-time creator always routes to human review regardless of verdict
+   * (§2.9) — that is the anti-farming gate rather than a quality one.
    */
   async screen(params: {
     template: MarketTemplate;
@@ -111,69 +113,394 @@ export class QuestionEngineService {
 
     // Rulebook §8 and the structural rules are decided here, not by the model.
     if (problems.length > 0) {
-      const draft = await this.fileDraft(params, problems, null, 'rejected');
+      const draft = await this.fileCommunityDraft(params, problems, null, 'rejected');
       return { draftId: draft.id, state: 'rejected', problems, assessment: null };
     }
 
-    const assessment = await this.assess(params.template);
-    const bounds = {
-      binaryLow: await this.config.get('ai_balance_low'),
-      binaryHigh: await this.config.get('ai_balance_high'),
-      multiMax: await this.config.get('ai_balance_multi_max'),
-    };
-
-    const balanced = isBalanced(assessment.balanceEstimates, bounds);
+    const assessment = await this.ask().assess(params.template);
+    const balanced = isBalanced(assessment.balanceEstimates, await this.bounds());
     const state =
       assessment.verdict === 'reject' || assessment.influenceable || !assessment.sourceSettles
         ? 'rejected'
         : 'suggested';
 
-    const draft = await this.fileDraft(params, problems, { ...assessment, balanced }, state);
-
+    const draft = await this.fileCommunityDraft(
+      params,
+      problems,
+      { ...assessment, balanced },
+      state,
+    );
     return { draftId: draft.id, state, problems, assessment };
   }
 
-  /** Ask the model. Structured output only — §2.9 rule 1: free text is invalid. */
-  private async assess(template: MarketTemplate): Promise<Assessment> {
-    if (this.client === null) throw new QuestionEngineUnavailableError();
+  // ----------------------------------------------------------- generation mode
 
-    const outcomes = template.outcomes
-      .map((o, i) => `${i + 1}. ${o.label} — settles when: ${o.criteria}`)
-      .join('\n');
+  /**
+   * Draft replacements for the official shelf (§2.9 rules 1–8).
+   *
+   * One proposal per free slot: rule 8 asks for "replacements per cycle, not
+   * additions", so a slot already carrying a live market is not asked about.
+   * Everything that comes back is gated before it is filed, and a proposal that
+   * fails is filed as a refusal with its reasons rather than discarded.
+   */
+  async generate(
+    params: { now?: Date; slots?: readonly CatalogueSlot[] } = {},
+  ): Promise<GeneratedDraft[]> {
+    const now = params.now ?? new Date();
+    const model = this.ask();
 
-    const response = await this.client.messages.parse({
-      model: 'claude-opus-5',
-      max_tokens: 16000,
-      // Balance and influence are judgement calls on real-world facts, not
-      // pattern matching — worth letting the model actually think about.
-      thinking: { type: 'adaptive' },
-      system: SCREENING_SYSTEM,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            `Question: ${template.question}`,
-            `Outcomes:\n${outcomes}`,
-            template.otherLabel === undefined ? '' : `Catch-all bucket: ${template.otherLabel}`,
-            `Official source: ${template.sourceName} (${template.sourceUrl})`,
-            `Event date: ${template.eventDate}`,
-            `Void date: ${template.voidDate}`,
-            `Edge cases: ${JSON.stringify(template.edgeCases)}`,
-          ]
-            .filter((line) => line.length > 0)
-            .join('\n\n'),
-        },
-      ],
-      output_config: { format: zodOutputFormat(AssessmentSchema) },
+    const live = await this.prisma.market.findMany({
+      where: {
+        shelf: 'official',
+        state: { in: ['active', 'frozen', 'pending_resolution', 'dispute_window'] },
+      },
+      select: { id: true, question: true },
+    });
+    const pending = await this.prisma.marketDraft.findMany({
+      where: { source: 'ai', state: 'suggested' },
+      select: { templateJson: true },
     });
 
-    if (response.parsed_output === null) {
-      throw new Error('question engine returned no parsable assessment');
+    const avoid = [
+      ...live.map((market) => market.question),
+      ...pending.map((draft) => (draft.templateJson as { question?: string }).question ?? ''),
+    ].filter((question) => question.length > 0);
+
+    const slots = params.slots ?? (await this.freeSlots(live.length));
+    const results: GeneratedDraft[] = [];
+
+    // §2.9's loop: the engine's own hits become examples, and the series that
+    // ran lopsided come back as thresholds to retune rather than repeat.
+    const [exemplars, retune] = await Promise.all([this.exemplars(), this.lopsided()]);
+
+    for (const slot of slots) {
+      let proposal: Proposal;
+      try {
+        proposal = await model.propose({
+          slot,
+          brief: CATALOGUE_SLOTS[slot].brief,
+          avoid,
+          exemplars,
+          retune,
+          now,
+        });
+      } catch (error) {
+        logger.error(
+          { slot, error: error instanceof Error ? error.message : String(error) },
+          'question engine could not draft for this slot',
+        );
+        continue;
+      }
+
+      results.push(await this.fileProposal({ proposal, slot, live, now }));
+      avoid.push(proposal.question);
     }
-    return response.parsed_output;
+
+    return results;
   }
 
-  private async fileDraft(
+  /**
+   * Gate one proposal and file it, accepted or refused.
+   *
+   * The order matters: the Rulebook's own prohibitions run first, then the
+   * structural checklist, then balance, then duplication. A proposal about a
+   * banned topic is not "unbalanced" — it is out, and the reason it is out
+   * should say so.
+   */
+  private async fileProposal(input: {
+    proposal: Proposal;
+    slot: CatalogueSlot;
+    live: readonly { id: string; question: string }[];
+    now: Date;
+  }): Promise<GeneratedDraft> {
+    const { proposal, slot, live, now } = input;
+    const template = templateOf(proposal);
+    const refusals: string[] = [];
+
+    const problems = screenTemplate(template, { now });
+    refusals.push(...problems.map((problem) => problem.message));
+
+    if (!isCatalogueSlot(proposal.slot)) {
+      refusals.push(`"${proposal.slot}" is not a slot on the shelf plan`);
+    }
+
+    const bounds = await this.bounds();
+    if (!withinBalanceBand(proposal.balanceEstimates, bounds)) {
+      refusals.push(
+        `the engine's own estimate is outside the band — ` +
+          `${proposal.balanceEstimates.map((value) => Math.round(value * 100)).join('/')}`,
+      );
+    }
+
+    const threshold = await this.config.get('ai_duplicate_threshold');
+    const duplicate = duplicateOf(proposal.question, live, threshold);
+    if (duplicate !== null) {
+      refusals.push(`restates a live market: "${duplicate.question}"`);
+    }
+
+    const score = draftScore({
+      engagement: proposal.engagementScore,
+      estimates: proposal.balanceEstimates,
+    });
+    const state = refusals.length === 0 ? 'suggested' : 'rejected';
+
+    const draft = await this.prisma.marketDraft.create({
+      data: {
+        source: 'ai',
+        templateJson: JSON.parse(JSON.stringify(template)) as object,
+        balanceEstimate: Math.max(...proposal.balanceEstimates, 0),
+        engagementScore: proposal.engagementScore,
+        blocklistFlags: {
+          slot,
+          score,
+          rationale: proposal.rationale,
+          estimates: proposal.balanceEstimates,
+          refusals,
+          problems: problems.map((problem) => ({ code: problem.code, message: problem.message })),
+          duplicateOf: duplicate?.id ?? null,
+        } as Prisma.InputJsonValue,
+        state,
+      },
+    });
+
+    return {
+      draftId: draft.id,
+      slot,
+      state,
+      score,
+      question: proposal.question,
+      refusals,
+    };
+  }
+
+  // ------------------------------------------------------------- co-pilot mode
+
+  /**
+   * §2.14a step 2: "AI restructure (live)".
+   *
+   * Turns what a creator typed into the full template and hands back the balance
+   * estimate the wizard's meter shows. It files nothing — this is the creator
+   * still typing, and a draft row per keystroke would be noise in the queue.
+   */
+  async copilot(params: { text: string; now?: Date }): Promise<CopilotResult> {
+    const now = params.now ?? new Date();
+    if (params.text.trim().length < 10) {
+      throw new Error('say a bit more about what you want people to call');
+    }
+
+    const proposal = await this.ask().restructure({ text: params.text.trim(), now });
+    const template = templateOf(proposal);
+
+    return {
+      template,
+      estimates: proposal.balanceEstimates,
+      balanced: isBalanced(proposal.balanceEstimates, await this.bounds()),
+      engagement: proposal.engagementScore,
+      rationale: proposal.rationale,
+      problems: screenTemplate(template, { now }),
+    };
+  }
+
+  /** Re-check an edited template: the meter has to move while they type. */
+  async checkBalance(params: {
+    template: MarketTemplate;
+    now?: Date;
+  }): Promise<Omit<CopilotResult, 'template'>> {
+    const now = params.now ?? new Date();
+    const problems = screenTemplate(params.template, { now });
+    const assessment = await this.ask().assess(params.template);
+
+    return {
+      estimates: assessment.balanceEstimates,
+      balanced: isBalanced(assessment.balanceEstimates, await this.bounds()),
+      engagement: assessment.engagementScore,
+      rationale: assessment.reason,
+      problems,
+    };
+  }
+
+  // -------------------------------------------------------- the feedback loop
+
+  /**
+   * §2.9's feedback loop, written when a market settles.
+   *
+   * "After each market resolves, log `initial_pool_split`, `final_pool_split`,
+   * `volume`, `dispute_count` against the question's features. Questions that
+   * ran lopsided (>[75/25]) are flagged... High-volume, low-dispute,
+   * near-balanced questions become few-shot exemplars."
+   *
+   * The splits are money, not prices: what the crowd actually put where. A
+   * market can look balanced on the chart and still have taken 90% of its money
+   * on one side, and it is the money that decides whether the question earned
+   * anything.
+   */
+  async recordOutcome(marketId: string): Promise<void> {
+    const market = await this.prisma.market.findUnique({
+      where: { id: marketId },
+      include: { outcomes: true },
+    });
+    if (market === null || market.outcomes.length === 0) return;
+
+    const staked = market.outcomes.map((outcome) => Number(outcome.stakedTotal));
+    const pot = staked.reduce((sum, value) => sum + value, 0);
+    const finalSplit = pot > 0 ? Math.max(...staked) / pot : 0;
+
+    const [volume, disputeCount] = await Promise.all([
+      this.prisma.trade.aggregate({
+        where: { marketId, side: { not: 'seed' } },
+        _sum: { cost: true },
+      }),
+      this.prisma.dispute.count({ where: { marketId } }),
+    ]);
+
+    await this.prisma.marketOutcomeLog.upsert({
+      where: { marketId },
+      create: {
+        marketId,
+        // Every market opens flat, by construction: a seed moves no price and
+        // official markets open on their seed.
+        initialSplit: new Prisma.Decimal(1 / market.outcomes.length),
+        finalSplit: new Prisma.Decimal(finalSplit),
+        volume: new Prisma.Decimal(volume._sum.cost?.toString() ?? '0'),
+        disputeCount,
+      },
+      update: {
+        finalSplit: new Prisma.Decimal(finalSplit),
+        volume: new Prisma.Decimal(volume._sum.cost?.toString() ?? '0'),
+        disputeCount,
+      },
+    });
+  }
+
+  /**
+   * The engine's own hits, for the next generation cycle's few-shot examples.
+   *
+   * Near-balanced, high-volume, undisputed — in that order of importance,
+   * because §2.9's directive is disagreement and the backtest is what says
+   * disagreement is worth money.
+   */
+  async exemplars(limit = 5) {
+    const logs = await this.prisma.marketOutcomeLog.findMany({
+      include: { market: { select: { question: true, shelf: true } } },
+      take: 100,
+    });
+
+    return logs
+      .filter((log) => Number(log.finalSplit) <= 0.65 && log.disputeCount === 0)
+      .sort((a, b) => Number(b.volume) - Number(a.volume))
+      .slice(0, limit)
+      .map((log) => ({
+        question: log.market.question,
+        finalSplit: Number(log.finalSplit),
+        volume: log.volume.toString(),
+      }));
+  }
+
+  /**
+   * Series that ran lopsided (>75/25) and want their threshold retuned.
+   *
+   * Handed to the next cycle as things to avoid restating in the same shape —
+   * §2.9's "the engine is instructed to retune that series' threshold".
+   */
+  async lopsided(limit = 5) {
+    const logs = await this.prisma.marketOutcomeLog.findMany({
+      include: { market: { select: { question: true } } },
+      take: 100,
+    });
+
+    return logs
+      .filter((log) => Number(log.finalSplit) > 0.75)
+      .sort((a, b) => Number(b.finalSplit) - Number(a.finalSplit))
+      .slice(0, limit)
+      .map((log) => ({ question: log.market.question, finalSplit: Number(log.finalSplit) }));
+  }
+
+  // ------------------------------------------------------------------ the queue
+
+  /** §6.2's ranked drafts queue. Refusals last, and only when asked for. */
+  async queue(params: { includeRejected?: boolean; limit?: number } = {}) {
+    const drafts = await this.prisma.marketDraft.findMany({
+      where: {
+        state: params.includeRejected === true ? { in: ['suggested', 'rejected'] } : 'suggested',
+      },
+      orderBy: { createdAt: 'desc' },
+      take: params.limit ?? 50,
+    });
+
+    return drafts
+      .map((draft) => this.describeDraft(draft))
+      .sort((a, b) => {
+        if (a.state !== b.state) return a.state === 'suggested' ? -1 : 1;
+        return b.score - a.score;
+      });
+  }
+
+  private describeDraft(draft: MarketDraft) {
+    const flags = (draft.blocklistFlags ?? {}) as {
+      slot?: string;
+      score?: number;
+      rationale?: string;
+      estimates?: number[];
+      refusals?: string[];
+      reason?: string;
+      concerns?: string[];
+      firstMarket?: boolean;
+      creatorId?: string;
+    };
+    const template = draft.templateJson as unknown as MarketTemplate;
+
+    return {
+      id: draft.id,
+      source: draft.source,
+      state: draft.state,
+      slot: flags.slot ?? null,
+      score:
+        flags.score ??
+        draftScore({
+          engagement: Number(draft.engagementScore),
+          estimates: flags.estimates ?? [Number(draft.balanceEstimate)],
+        }),
+      question: template.question,
+      outcomes: template.outcomes.map((outcome) => outcome.label),
+      sourceName: template.sourceName,
+      sourceUrl: template.sourceUrl,
+      eventDate: template.eventDate,
+      voidDate: template.voidDate,
+      estimates: flags.estimates ?? [],
+      engagement: Number(draft.engagementScore),
+      rationale: flags.rationale ?? flags.reason ?? '',
+      refusals: flags.refusals ?? flags.concerns ?? [],
+      creatorId: flags.creatorId ?? null,
+      firstMarket: flags.firstMarket ?? false,
+      createdAt: draft.createdAt.toISOString(),
+      template,
+    };
+  }
+
+  // ---------------------------------------------------------------- internals
+
+  private async bounds() {
+    return {
+      binaryLow: await this.config.get('ai_balance_low'),
+      binaryHigh: await this.config.get('ai_balance_high'),
+      multiMax: await this.config.get('ai_balance_multi_max'),
+    };
+  }
+
+  /**
+   * Which slots to draft for.
+   *
+   * The shelf plan is a budget, not a target: if six markets are already live,
+   * this asks for nothing. Rule 8 wants replacements offered per cycle, so the
+   * slots are handed out in order and only up to the number of free places.
+   */
+  private async freeSlots(liveCount: number): Promise<CatalogueSlot[]> {
+    const size = await this.config.get('official_shelf_slots');
+    const free = Math.max(0, size - liveCount);
+    return CATALOGUE_SLOT_NAMES.slice(0, free);
+  }
+
+  private async fileCommunityDraft(
     params: {
       template: MarketTemplate;
       creatorId: string;
@@ -201,19 +528,20 @@ export class QuestionEngineService {
         balanceEstimate: assessment === null ? 0 : Math.max(...assessment.balanceEstimates),
         engagementScore: assessment?.engagementScore ?? 0,
         blocklistFlags: {
-          problems: problems.map((p) => ({ code: p.code, message: p.message })),
+          problems: problems.map((problem) => ({ code: problem.code, message: problem.message })),
           concerns: assessment?.concerns ?? [],
+          estimates: assessment?.balanceEstimates ?? [],
           balanced: assessment?.balanced ?? false,
           influenceable: assessment?.influenceable ?? false,
           duplicate: assessment?.duplicateOfLiveMarket ?? false,
-          reason: assessment?.reason ?? problems.map((p) => p.message).join(' '),
+          reason: assessment?.reason ?? problems.map((problem) => problem.message).join(' '),
           firstMarket: params.isFirstMarket,
           // Approval happens later and needs to know whose market this is, and
           // which activation path the creator picked (§2.4 — "the creator
           // chooses at creation", so it cannot be decided by the reviewer).
           creatorId: params.creatorId,
           activationPath: params.activationPath ?? 'organic',
-        },
+        } as Prisma.InputJsonValue,
         state: finalState,
       },
     });

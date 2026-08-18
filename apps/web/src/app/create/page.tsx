@@ -42,10 +42,37 @@ const schema = z.object({
 
 type FormValues = z.infer<typeof schema>;
 
+interface CopilotResponse {
+  template: {
+    question: string;
+    outcomes: { label: string; criteria: string }[];
+    otherLabel?: string;
+    sourceName: string;
+    sourceUrl: string;
+    eventDate: string;
+    voidDate: string;
+  };
+  estimates: number[];
+  balanced: boolean;
+  engagement: number;
+  rationale: string;
+  problems: { code: string; message: string }[];
+}
+
+/** `2026-08-21T10:13:00.000Z` → `2026-08-21T10:13`, what a datetime-local wants. */
+function forInput(iso: string): string {
+  const parsed = new Date(iso);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 16);
+}
+
 export default function CreatePage() {
   const [template, setTemplate] = useState<TicketTemplate | null>(null);
   const [submitted, setSubmitted] = useState<{ state: string; reason?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [idea, setIdea] = useState('');
+  const [thinking, setThinking] = useState(false);
+  const [estimate, setEstimate] = useState<number | null>(null);
+  const [rationale, setRationale] = useState<string | null>(null);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -64,6 +91,91 @@ export default function CreatePage() {
   });
 
   const outcomes = useFieldArray({ control: form.control, name: 'outcomes' });
+
+  /**
+   * §2.14a step 2: "AI restructure (live)".
+   *
+   * The creator types the question the way they would say it; the co-pilot
+   * fills the whole template and hands back its own balance estimate, which is
+   * what the meter below shows. Everything it writes stays editable — it is a
+   * co-pilot, and the market is still theirs.
+   */
+  async function askCopilot(): Promise<void> {
+    const token = window.localStorage.getItem('stakeam.token');
+    if (token === null) {
+      setError('Sign in to use the co-pilot.');
+      return;
+    }
+
+    setThinking(true);
+    setError(null);
+    try {
+      const response = await fetch(`${API_URL}/community/copilot`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({ text: idea }),
+      });
+      const body = (await response.json()) as CopilotResponse & { message?: string };
+      if (!response.ok)
+        throw new Error(body.message ?? `The co-pilot could not help (${response.status})`);
+
+      form.reset({
+        question: body.template.question,
+        outcomes: body.template.outcomes,
+        ...(body.template.otherLabel === undefined ? {} : { otherLabel: body.template.otherLabel }),
+        sourceName: body.template.sourceName,
+        sourceUrl: body.template.sourceUrl,
+        eventDate: forInput(body.template.eventDate),
+        voidDate: forInput(body.template.voidDate),
+        activationPath: form.getValues('activationPath'),
+      });
+      setEstimate(Math.max(...body.estimates));
+      setRationale(body.rationale);
+      setTemplate(null);
+    } catch (caught) {
+      setError((caught as Error).message);
+    } finally {
+      setThinking(false);
+    }
+  }
+
+  /** Re-check the balance after the creator has edited what the co-pilot wrote. */
+  async function checkBalance(): Promise<void> {
+    const token = window.localStorage.getItem('stakeam.token');
+    if (token === null) {
+      setError('Sign in to check the balance.');
+      return;
+    }
+
+    setThinking(true);
+    setError(null);
+    try {
+      const values = form.getValues();
+      const response = await fetch(`${API_URL}/community/balance-check`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          question: values.question,
+          outcomes: values.outcomes,
+          ...(values.otherLabel === undefined ? {} : { otherLabel: values.otherLabel }),
+          sourceName: values.sourceName,
+          sourceUrl: values.sourceUrl,
+          eventDate: new Date(values.eventDate).toISOString(),
+          voidDate: new Date(values.voidDate).toISOString(),
+        }),
+      });
+      const body = (await response.json()) as CopilotResponse & { message?: string };
+      if (!response.ok)
+        throw new Error(body.message ?? `Could not check that (${response.status})`);
+
+      setEstimate(Math.max(...body.estimates));
+      setRationale(body.rationale);
+    } catch (caught) {
+      setError((caught as Error).message);
+    } finally {
+      setThinking(false);
+    }
+  }
 
   function applyTemplate(picked: TicketTemplate): void {
     setTemplate(picked);
@@ -134,6 +246,29 @@ export default function CreatePage() {
         </p>
       </header>
 
+      <section className="mb-8 rounded-md border border-border p-4">
+        <h2 className="text-sm font-semibold">Say it how you would say it</h2>
+        <p className="mt-1 text-sm text-text-muted">
+          Type your question the way you would ask a friend. The co-pilot turns it into a proper
+          ticket — outcomes, source, dates — and you edit whatever it gets wrong.
+        </p>
+        <textarea
+          value={idea}
+          onChange={(event) => setIdea(event.target.value)}
+          rows={2}
+          placeholder="who go win the Surulere LGA chairmanship"
+          className="mt-3 w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-rise"
+        />
+        <button
+          type="button"
+          disabled={thinking || idea.trim().length < 10}
+          onClick={() => void askCopilot()}
+          className="mt-2 rounded-md bg-rise px-4 py-2.5 font-bold text-paper transition-transform active:scale-press disabled:opacity-40"
+        >
+          {thinking ? 'Thinking…' : 'Draft it for me'}
+        </button>
+      </section>
+
       <section className="mb-8">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-text-muted">
           Start from a template
@@ -168,7 +303,20 @@ export default function CreatePage() {
           />
         </Field>
 
-        <BalanceMeter estimate={null} low={0.35} high={0.65} />
+        <div>
+          <BalanceMeter estimate={estimate} low={0.35} high={0.65} />
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              disabled={thinking}
+              onClick={() => void checkBalance()}
+              className="rounded-sm border border-border px-3 py-1.5 text-sm disabled:opacity-40"
+            >
+              {thinking ? 'Checking…' : 'Check the balance'}
+            </button>
+            {rationale !== null && <p className="text-sm text-text-muted">{rationale}</p>}
+          </div>
+        </div>
 
         <section>
           <div className="flex items-center justify-between">

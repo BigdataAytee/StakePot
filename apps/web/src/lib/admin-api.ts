@@ -123,6 +123,36 @@ export interface SupportQueueTicket {
   messages: { id: string; authorId: string; body: string; staffOnly: boolean; createdAt: string }[];
 }
 
+export interface DraftRow {
+  id: string;
+  source: 'ai' | 'community';
+  state: 'suggested' | 'approved' | 'rejected';
+  slot: string | null;
+  score: number;
+  question: string;
+  outcomes: string[];
+  sourceName: string;
+  sourceUrl: string;
+  eventDate: string;
+  voidDate: string;
+  estimates: number[];
+  engagement: number;
+  rationale: string;
+  refusals: string[];
+  creatorId: string | null;
+  firstMarket: boolean;
+  createdAt: string;
+  template: {
+    question: string;
+    outcomes: { label: string; criteria: string }[];
+    otherLabel?: string;
+    sourceName: string;
+    sourceUrl: string;
+    eventDate: string;
+    voidDate: string;
+  };
+}
+
 export interface TotpStatus {
   enrolled: boolean;
   confirmedAt: string | null;
@@ -190,6 +220,20 @@ export const admin = {
     return request<LedgerRow[]>(`/admin/ledger${suffix === '' ? '' : `?${suffix}`}`);
   },
   reconciliation: () => request<ReconciliationRow[]>('/admin/reconciliation'),
+  drafts: (includeRejected = false) =>
+    request<DraftRow[]>(`/admin/drafts${includeRejected ? '?includeRejected=true' : ''}`),
+  generateDrafts: () =>
+    request<{ draftId: string; state: string; score: number; question: string }[]>(
+      '/admin/drafts/generate',
+      { method: 'POST' },
+    ),
+  openDraft: (id: string) =>
+    request<{ marketId: string; seeded: string }>(`/admin/drafts/${id}/open`, { method: 'POST' }),
+  rejectDraft: (id: string, reason: string) =>
+    request<{ state: string }>(`/admin/drafts/${id}/reject`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
   supportQueue: () => request<SupportQueueTicket[]>('/admin/support'),
   supportReply: (id: string, body: string, staffOnly = false) =>
     request<{ state: string }>(`/admin/support/${id}/reply`, {

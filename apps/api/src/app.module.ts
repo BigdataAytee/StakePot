@@ -7,6 +7,7 @@ import { AuthModule } from './auth/auth.module';
 import { CommunityModule } from './community/community.module';
 import { HealthController } from './health/health.controller';
 import { LedgerModule } from './ledger/ledger.module';
+import { MarketModule } from './market/market.module';
 import { MetricsController } from './observability/metrics.controller';
 import { PlatformConfigModule } from './platform-config/platform-config.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -39,6 +40,7 @@ import { WalletModule } from './wallet/wallet.module';
     SupportModule,
     StatusModule,
     CommunityModule,
+    MarketModule,
     RealtimeModule,
     HttpModule,
   ],

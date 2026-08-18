@@ -9,6 +9,7 @@ import { JwtGuard } from '../auth/jwt.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { env } from '../config/env';
 import { LedgerModule } from '../ledger/ledger.module';
+import { MarketModule } from '../market/market.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { RgModule } from '../rg/rg.module';
 import { StatusModule } from '../status/status.module';
@@ -31,6 +32,7 @@ import { TradesController } from './trades.controller';
     AuthModule,
     CommunityModule,
     LedgerModule,
+    MarketModule,
     NotificationsModule,
     ResolutionModule,
     RgModule,

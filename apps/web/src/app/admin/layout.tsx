@@ -1,6 +1,14 @@
 'use client';
 
-import { AlertTriangle, Gavel, LayoutDashboard, LifeBuoy, ShieldCheck, Wallet } from 'lucide-react';
+import {
+  AlertTriangle,
+  Gavel,
+  LayoutDashboard,
+  LifeBuoy,
+  ShieldCheck,
+  Sparkles,
+  Wallet,
+} from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -21,6 +29,7 @@ import { admin, type DashboardView } from '@/lib/admin-api';
  */
 const SCREENS = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/admin/drafts', label: 'Drafts', icon: Sparkles },
   { href: '/admin/resolution', label: 'Resolution', icon: Gavel },
   { href: '/admin/approvals', label: 'Approvals', icon: ShieldCheck },
   { href: '/admin/money', label: 'Money room', icon: Wallet },

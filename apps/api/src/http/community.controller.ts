@@ -67,6 +67,21 @@ export class ContributeDto {
   @IsNumberString() amount!: string;
 }
 
+export class CopilotDto {
+  /** What the creator typed, in their own words (§2.14a step 1). */
+  @IsString() @MinLength(10) text!: string;
+}
+
+export class BalanceCheckDto {
+  @IsString() @MinLength(15) question!: string;
+  @IsArray() @ValidateNested({ each: true }) @Type(() => OutcomeDto) outcomes!: OutcomeDto[];
+  @IsOptional() @IsString() otherLabel?: string;
+  @IsString() @MinLength(1) sourceName!: string;
+  @IsString() sourceUrl!: string;
+  @IsISO8601() eventDate!: string;
+  @IsISO8601() voidDate!: string;
+}
+
 export class ProposeResultDto {
   @IsString() outcomeId!: string;
   @IsString() evidenceUrl!: string;
@@ -160,6 +175,62 @@ export class CommunityController {
       state: 'suggested',
       draftId: screened.draftId,
       reason: 'A reviewer checks every new market before it opens.',
+    };
+  }
+
+  /**
+   * §2.14a step 2: the co-pilot turns what a creator typed into a full template.
+   *
+   * Nothing is filed — this is somebody still thinking, and a draft row per
+   * keystroke would be noise in the review queue. The balance estimate comes
+   * back with it, which is what the wizard's meter shows.
+   */
+  @Post('copilot')
+  @UseGuards(JwtGuard)
+  async copilot(@Req() request: RequestWithUser, @Body() body: CopilotDto) {
+    if (request.user === undefined) throw new BadRequestException('no authenticated user');
+
+    const result = await this.engineCall(() => this.engine.copilot({ text: body.text }));
+    return {
+      template: result.template,
+      estimates: result.estimates,
+      balanced: result.balanced,
+      engagement: result.engagement,
+      rationale: result.rationale,
+      problems: result.problems.map((problem) => ({
+        code: problem.code,
+        message: problem.message,
+      })),
+    };
+  }
+
+  /** Re-check a template the creator has edited — the meter has to keep moving. */
+  @Post('balance-check')
+  @UseGuards(JwtGuard)
+  async balanceCheck(@Req() request: RequestWithUser, @Body() body: BalanceCheckDto) {
+    if (request.user === undefined) throw new BadRequestException('no authenticated user');
+
+    const template = {
+      question: body.question,
+      outcomes: body.outcomes,
+      ...(body.otherLabel === undefined ? {} : { otherLabel: body.otherLabel }),
+      sourceName: body.sourceName,
+      sourceUrl: body.sourceUrl,
+      eventDate: body.eventDate,
+      voidDate: body.voidDate,
+      edgeCases: {},
+    };
+
+    const result = await this.engineCall(() => this.engine.checkBalance({ template }));
+    return {
+      estimates: result.estimates,
+      balanced: result.balanced,
+      engagement: result.engagement,
+      rationale: result.rationale,
+      problems: result.problems.map((problem) => ({
+        code: problem.code,
+        message: problem.message,
+      })),
     };
   }
 
@@ -454,6 +525,25 @@ export class CommunityController {
       }),
     );
     return { id: dispute.id, state: dispute.state };
+  }
+
+  /**
+   * Without a key the engine cannot run, and §2.9 is explicit that nothing goes
+   * live unscreened — so every co-pilot path fails closed with a sentence a
+   * creator can act on rather than a stack trace.
+   */
+  private async engineCall<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      if (error instanceof QuestionEngineUnavailableError) {
+        throw new BadRequestException(
+          'The market co-pilot is unavailable right now. You can still fill the form yourself.',
+        );
+      }
+      if (error instanceof Error) throw new BadRequestException(error.message);
+      throw error;
+    }
   }
 
   /**

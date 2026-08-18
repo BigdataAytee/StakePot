@@ -7,24 +7,25 @@ import { SupportModule } from '../support/support.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { CommunityService } from './community.service';
 import { FundingWindowWorker } from './funding-window.worker';
-import { QuestionEngineService } from './question-engine.service';
+import { CommunityQuestionModule } from './question-engine.module';
 import { SeedService } from './seed.service';
 import { MarketVoidService } from './void.service';
 
 @Module({
-  imports: [LedgerModule, NotificationsModule, ResolutionModule, SupportModule, WalletModule],
-  providers: [
-    CommunityService,
-    FundingWindowWorker,
-    MarketVoidService,
-    QuestionEngineService,
-    SeedService,
+  imports: [
+    CommunityQuestionModule,
+    LedgerModule,
+    NotificationsModule,
+    ResolutionModule,
+    SupportModule,
+    WalletModule,
   ],
+  providers: [CommunityService, FundingWindowWorker, MarketVoidService, SeedService],
   exports: [
+    CommunityQuestionModule,
     CommunityService,
     FundingWindowWorker,
     MarketVoidService,
-    QuestionEngineService,
     SeedService,
   ],
 })

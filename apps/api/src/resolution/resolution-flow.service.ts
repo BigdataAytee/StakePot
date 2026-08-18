@@ -5,6 +5,7 @@ import { AdminAuditService } from '../audit/admin-audit.service';
 import { STAFF_ROLES } from '../auth/roles.guard';
 import { type Tx } from '../ledger/ledger.service';
 import { NotificationsService } from '../notifications/notifications.service';
+import { QuestionEngineService } from '../community/question-engine.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResolutionService, type ResolveOutcome } from '../trade/resolution.service';
@@ -49,6 +50,7 @@ export class ResolutionFlowService {
     private readonly payouts: ResolutionService,
     private readonly audit: AdminAuditService,
     private readonly notifications: NotificationsService,
+    private readonly engine: QuestionEngineService,
   ) {}
 
   /**
@@ -322,6 +324,10 @@ export class ResolutionFlowService {
       where: { id: market.id },
       data: { disputeClosesAt: null },
     });
+
+    // §2.9's feedback loop: what the crowd actually did with this question, kept
+    // against it so the next cycle can learn from its own hits and misses.
+    await this.engine.recordOutcome(market.id);
 
     // Everyone who was paid, and everyone who argued, hears about it — after the
     // money has moved, because that is when it is true (§2.12).
