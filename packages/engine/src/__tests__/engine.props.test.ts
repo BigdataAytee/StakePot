@@ -1,6 +1,16 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { Decimal, type MarketState, buy, cost, openMarket, prices, resolve, sell } from '../index';
+import {
+  Decimal,
+  type MarketState,
+  buy,
+  cost,
+  openMarket,
+  prices,
+  resolve,
+  sell,
+  stakedIdentityResidual,
+} from '../index';
 
 /** The tolerance the spec asks these properties to hold to. */
 const TOLERANCE = new Decimal('1e-9');
@@ -143,6 +153,10 @@ function run(scenario: Scenario): { state: MarketState; book: Book } {
       current.pot.gte(TOLERANCE.negated()),
       `pot went negative: ${current.pot.toString()}`,
     ).toBe(true);
+
+    // Every naira in the pot is staked on some outcome — this is what makes the
+    // losing pool, and therefore the resolution fee, a well-defined quantity.
+    within(stakedIdentityResidual(current), ZERO, 'Σstaked must reconcile to the pot');
   };
 
   for (const op of scenario.ops) {
@@ -214,7 +228,7 @@ describe('engine invariants (property-based)', () => {
       fc.property(
         scenarioArb,
         fc.integer({ min: 0, max: 7 }),
-        fc.constantFrom('0', '0.01', '0.02', '0.05', '0.1'),
+        fc.constantFrom('0', '0.03', '0.07', '0.1'),
         (scenario, winnerSeed, feeRate) => {
           const { state, book } = run(scenario);
           const winner = winnerSeed % scenario.outcomes;
@@ -228,7 +242,16 @@ describe('engine invariants (property-based)', () => {
 
           within(paid.plus(result.fee), state.pot, 'payouts + fee must equal the pot');
           within(result.residual, ZERO, 'resolution residual');
-          within(result.fee, state.pot.times(feeRate), 'fee must be pot × feeRate');
+          within(
+            result.losingPool,
+            state.pot.minus(state.staked[winner] ?? ZERO),
+            'losing pool must be everything staked off the winning outcome',
+          );
+          within(result.fee, result.losingPool.times(feeRate), 'fee must be losingPool × feeRate');
+          expect(
+            result.fee.lte(state.pot.plus(TOLERANCE)),
+            `fee ${result.fee.toString()} exceeded the pot ${state.pot.toString()}`,
+          ).toBe(true);
           for (const payout of result.payouts) {
             expect(payout.payout.gte(0), `payout was negative: ${payout.payout.toString()}`).toBe(
               true,

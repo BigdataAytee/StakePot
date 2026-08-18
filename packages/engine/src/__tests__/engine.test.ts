@@ -13,6 +13,8 @@ import {
   prices,
   resolve,
   sell,
+  splitResolutionFee,
+  stakedIdentityResidual,
 } from '../index';
 
 const close = (actual: Decimal, expected: string | number, tolerance = '1e-9'): void => {
@@ -134,10 +136,22 @@ describe('sell', () => {
     close(potIdentityResidual(sold.state), 0, '1e-20');
   });
 
-  it('rejects an exit fee above the 0.5% ceiling', () => {
-    expect(() => openMarket({ outcomes: 2, liquidity: '1000', exitFeeRate: '0.006' })).toThrow(
+  it('rejects an exit fee above the 2% ceiling', () => {
+    expect(() => openMarket({ outcomes: 2, liquidity: '1000', exitFeeRate: '0.021' })).toThrow(
       EngineValidationError,
     );
+  });
+
+  it('charges the 1% early-exit fee by default — it is on, not opt-in', () => {
+    const market = openMarket({ outcomes: 2, liquidity: '1000' });
+    const bought = buy(market, 0, '500');
+    // Buying is always free.
+    expect(bought.exitFee.isZero()).toBe(true);
+    close(bought.net, '500', '1e-20');
+
+    const sold = sell(bought.state, 0, bought.shares);
+    close(sold.exitFee, '5', '1e-18');
+    close(sold.net, '495', '1e-18');
   });
 
   it('will not let shares outstanding fall below where the market opened', () => {
@@ -159,12 +173,14 @@ describe('resolution', () => {
     market = chidi.state;
 
     const potBefore = market.pot;
-    const result = resolve(freeze(market), 0, '0.02', [
+    // Ada and Bola backed outcome 0; only Chidi's ₦800 sits in the losing pool.
+    const result = resolve(freeze(market), 0, '0.07', [
       { holderId: 'ada', shares: ada.shares },
       { holderId: 'bola', shares: bola.shares },
     ]);
 
-    close(result.fee, potBefore.times('0.02').toString(), '1e-20');
+    close(result.losingPool, '800', '1e-18');
+    close(result.fee, new Decimal('800').times('0.07').toString(), '1e-18');
     close(result.residual, 0, '1e-9');
     const paid = sum(result.payouts.map((p) => p.payout));
     close(paid.plus(result.fee), potBefore.toString(), '1e-9');
@@ -222,5 +238,64 @@ describe('market creation', () => {
     const after = buy(market, 1, '400');
     close(after.state.pot, '400', '1e-20');
     close(potIdentityResidual(after.state), 0, '1e-20');
+  });
+});
+
+describe('staked totals', () => {
+  it('reconcile to the pot after buys and sells', () => {
+    let market = openMarket({ outcomes: 3, liquidity: '3000' });
+    market = buy(market, 0, '1200').state;
+    market = buy(market, 2, '450').state;
+    const third = buy(market, 1, '700');
+    market = third.state;
+
+    close(market.staked[0]!, '1200', '1e-18');
+    close(market.staked[1]!, '700', '1e-18');
+    close(market.staked[2]!, '450', '1e-18');
+    close(stakedIdentityResidual(market), 0, '1e-18');
+
+    const sold = sell(market, 1, third.shares.div(2));
+    close(stakedIdentityResidual(sold.state), 0, '1e-18');
+    // The gross refund left the pot, so it left outcome 1's stake as well.
+    close(sold.state.staked[1]!, new Decimal('700').minus(sold.gross).toString(), '1e-18');
+  });
+
+  it('a market with nothing on the losing side pays no fee at all', () => {
+    const only = buy(openMarket({ outcomes: 2, liquidity: '1000' }), 0, '900');
+    const result = resolve(only.state, 0, '0.07', [{ holderId: 'solo', shares: only.shares }]);
+
+    close(result.losingPool, 0, '1e-18');
+    close(result.fee, 0, '1e-18');
+    close(result.payouts[0]!.payout, '900', '1e-18');
+  });
+});
+
+describe('resolution fee split', () => {
+  it('divides the community fee 4/3 without losing a kobo', () => {
+    // §2.3: community 7% = 4% creator / 3% platform.
+    const split = splitResolutionFee('2100', { creatorBps: 400, platformBps: 300 });
+    close(split.creator, '1200', '1e-18');
+    close(split.platform, '900', '1e-18');
+    close(split.creator.plus(split.platform), '2100', '1e-25');
+  });
+
+  it('sends the whole official fee to the platform', () => {
+    const split = splitResolutionFee('1500', { creatorBps: 0, platformBps: 300 });
+    expect(split.creator.isZero()).toBe(true);
+    close(split.platform, '1500', '1e-18');
+  });
+
+  it('the legs always add back to the fee, even on amounts that do not divide', () => {
+    const split = splitResolutionFee('1000', { creatorBps: 400, platformBps: 300 });
+    close(split.creator.plus(split.platform), '1000', '1e-30');
+  });
+
+  it('rejects a nonsense split', () => {
+    expect(() => splitResolutionFee('100', { creatorBps: 0, platformBps: 0 })).toThrow(
+      EngineValidationError,
+    );
+    expect(() => splitResolutionFee('100', { creatorBps: -1, platformBps: 300 })).toThrow(
+      EngineValidationError,
+    );
   });
 });

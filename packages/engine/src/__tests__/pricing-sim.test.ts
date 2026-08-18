@@ -101,9 +101,17 @@ describe('pricing_sim.py parity — platform cost is exactly zero', () => {
     const result = resolve(state, 0, '0.03', holdings);
     const paid = sum(result.payouts.map((p) => p.payout));
 
-    // The simulation's headline: platform cost ₦0.00, to the kobo.
+    // The simulation's headline: platform cost ₦0.00, to the kobo. That claim
+    // is about conservation and holds whatever the fee is charged on.
     close(paid.plus(result.fee).minus(collected), '0');
-    close(result.fee, state.pot.times('0.03').toString());
+
+    // The fee basis is where the Python has fallen behind: pricing_sim.py still
+    // computes `fee = pot * fee_rate`, which was the spec when it was written.
+    // §2.3 now charges the losing pool. Conservation is unaffected; the split
+    // between fee and payouts is not.
+    close(result.losingPool, state.pot.minus(state.staked[0]!).toString(), '1e-18');
+    close(result.fee, result.losingPool.times('0.03').toString(), '1e-18');
+    expect(result.fee.lt(state.pot.times('0.03'))).toBe(true);
   });
 });
 

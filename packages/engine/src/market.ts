@@ -17,8 +17,17 @@ import {
  */
 const INVARIANT_RELATIVE_TOLERANCE = new Decimal('1e-30');
 
-/** Ceiling on the optional exit fee, per the spec: 0–0.5%. */
-export const MAX_EXIT_FEE_RATE = new Decimal('0.005');
+/**
+ * Bounds on the early-exit fee (§2.3): configurable 0–2%, on by default at 1%.
+ *
+ * These are validation rails, not tunables. The live values are rows in
+ * `platform_config` (§6.4b) — "every tunable value in this document lives here
+ * as an editable setting, never in code" — and reach the engine as arguments.
+ */
+export const MAX_EXIT_FEE_RATE = new Decimal('0.02');
+
+/** Bootstrap value for the `exit_fee_rate` config key. */
+export const DEFAULT_EXIT_FEE_RATE = new Decimal('0.01');
 
 /**
  * Immutable market state. Every engine operation returns a new state rather
@@ -34,9 +43,17 @@ export interface MarketState {
   readonly q: readonly Decimal[];
   /** Money in the pot. */
   readonly pot: Decimal;
+  /**
+   * Money staked per outcome, net of early exits. Sums to `pot` exactly.
+   *
+   * The cost curve does not segregate money by outcome — every naira lands in
+   * one pot — so the "losing pool" the fee is charged on has to be tracked
+   * alongside it rather than derived from `q`.
+   */
+  readonly staked: readonly Decimal[];
   /** Trading is closed (event started, or resolution under way). */
   readonly frozen: boolean;
-  /** Optional exit fee taken from a seller's refund. 0 by default. */
+  /** Early-exit fee withheld from a seller's refund. 1% by default (§2.3). */
   readonly exitFeeRate: Decimal;
 }
 
@@ -47,7 +64,7 @@ export interface OpenMarketParams {
   readonly liquidity: Numeric;
   /** Shares outstanding at open. Defaults to all zeros. */
   readonly initialShares?: readonly Numeric[];
-  /** Exit fee rate in [0, 0.005]. Defaults to 0. */
+  /** Early-exit fee rate in [0, 0.02]. Defaults to 1% — the fee is on by default. */
   readonly exitFeeRate?: Numeric;
 }
 
@@ -79,7 +96,9 @@ export interface Payout {
 
 export interface ResolutionResult {
   readonly winningOutcomeIndex: number;
-  /** Platform fee, taken off the top of the pot. */
+  /** Money staked on every outcome that did not win. The fee's basis. */
+  readonly losingPool: Decimal;
+  /** losingPool × feeRate, taken off the top of the pot. */
   readonly fee: Decimal;
   /** pot − fee, split across winning shares. */
   readonly distributable: Decimal;
@@ -121,14 +140,28 @@ export function potIdentityResidual(state: MarketState): Decimal {
   return state.pot.minus(current.minus(opened));
 }
 
+/** Σ staked − pot. Exactly zero: every naira in the pot was staked on something. */
+export function stakedIdentityResidual(state: MarketState): Decimal {
+  const total = state.staked.reduce((acc, amount) => acc.plus(amount), ZERO);
+  return total.minus(state.pot);
+}
+
 /**
- * Assert the two facts that make the pot trustworthy: it equals the cost the
- * market has travelled, and it is not negative.
+ * Assert the facts that make the pot trustworthy: it equals the cost the market
+ * has travelled, it is not negative, and it is fully accounted for across the
+ * outcomes money was staked on.
  *
  * This is a bug detector, not a rule being enforced — nothing here clamps or
  * repairs state. Every engine operation runs it before returning.
  */
 export function assertInvariants(state: MarketState): void {
+  const stakedResidual = stakedIdentityResidual(state);
+  if (stakedResidual.abs().gt(stateTolerance(state))) {
+    throw new EngineInvariantError(
+      `staked total does not reconcile to the pot: Σstaked − pot = ${stakedResidual.toString()}`,
+    );
+  }
+
   const residual = potIdentityResidual(state);
   const tolerance = stateTolerance(state);
   if (residual.abs().gt(tolerance)) {
@@ -177,7 +210,8 @@ export function openMarket(params: OpenMarketParams): MarketState {
     }
   }
 
-  const exitFeeRate = params.exitFeeRate === undefined ? ZERO : toDecimal(params.exitFeeRate);
+  const exitFeeRate =
+    params.exitFeeRate === undefined ? DEFAULT_EXIT_FEE_RATE : toDecimal(params.exitFeeRate);
   if (exitFeeRate.isNegative() || exitFeeRate.gt(MAX_EXIT_FEE_RATE)) {
     throw new EngineValidationError(
       `exitFeeRate must be within [0, ${MAX_EXIT_FEE_RATE.toString()}], received ${exitFeeRate.toString()}`,
@@ -189,6 +223,7 @@ export function openMarket(params: OpenMarketParams): MarketState {
     q0: Object.freeze([...q0]),
     q: Object.freeze([...q0]),
     pot: ZERO,
+    staked: Object.freeze(q0.map(() => ZERO)),
     frozen: false,
     exitFeeRate,
   };
@@ -231,7 +266,12 @@ export function buy(state: MarketState, outcomeIndex: number, spend: Numeric): T
   }
 
   const q = replaceAt(state.q, i, at(state.q, i).plus(shares));
-  const next: MarketState = { ...state, q: Object.freeze(q), pot: state.pot.plus(m) };
+  const next: MarketState = {
+    ...state,
+    q: Object.freeze(q),
+    pot: state.pot.plus(m),
+    staked: Object.freeze(replaceAt(state.staked, i, at(state.staked, i).plus(m))),
+  };
   assertInvariants(next);
 
   return {
@@ -277,7 +317,14 @@ export function sell(state: MarketState, outcomeIndex: number, shares: Numeric):
   }
 
   const exitFee = refund.times(state.exitFeeRate);
-  const next: MarketState = { ...state, q: Object.freeze(q), pot: state.pot.minus(refund) };
+  const next: MarketState = {
+    ...state,
+    q: Object.freeze(q),
+    pot: state.pot.minus(refund),
+    // The gross refund leaves the pot, so it leaves this outcome's stake too.
+    // The exit fee never entered the pot — it is withheld from the seller.
+    staked: Object.freeze(replaceAt(state.staked, i, at(state.staked, i).minus(refund))),
+  };
   assertInvariants(next);
 
   return {
@@ -308,8 +355,15 @@ export function estimatedPayoutPerShare(state: MarketState, outcomeIndex: number
 /**
  * RESOLVE — pay the winning outcome out of the pot.
  *
- *   fee = pot × feeRate;  distributable = pot − fee
+ *   losingPool = pot − staked[w]
+ *   fee = losingPool × feeRate;  distributable = pot − fee
  *   holder of s winning shares receives distributable × s / q[w]
+ *
+ * §2.3: "Fee basis: the losing pool — official markets [3]%; community markets
+ * [7]% ([4]% creator / [3]% platform)". The rulebook states it in pari-mutuel
+ * terms, where each outcome has its own pool. The cost curve has one pot, so
+ * the losing pool is read as everything staked on outcomes that did not win —
+ * which is what `staked` is tracked for.
  *
  * Conservation (Σpayouts + fee === pot) only holds when the supplied holdings
  * account for every outstanding winning share, so that is checked first — a
@@ -345,7 +399,8 @@ export function resolve(
     );
   }
 
-  const fee = state.pot.times(rate);
+  const losingPool = state.pot.minus(at(state.staked, w));
+  const fee = losingPool.times(rate);
   const distributable = state.pot.minus(fee);
 
   const payouts: Payout[] = holdings.map((holding) => {
@@ -365,6 +420,7 @@ export function resolve(
 
   return {
     winningOutcomeIndex: w,
+    losingPool,
     fee,
     distributable,
     payouts,
@@ -372,6 +428,49 @@ export function resolve(
     // The resolved market is inert: pot drained, trading frozen, and q0 rebased
     // onto q so the pot identity still reads true (0 === C(q) − C(q)) for any
     // caller that re-checks invariants on a terminal state.
-    state: { ...state, frozen: true, pot: ZERO, q0: state.q },
+    state: {
+      ...state,
+      frozen: true,
+      pot: ZERO,
+      q0: state.q,
+      staked: Object.freeze(state.staked.map(() => ZERO)),
+    },
   };
+}
+
+/** How a resolution fee is divided, in basis points. Config, not code (§6.4b). */
+export interface FeeSplitBps {
+  readonly creatorBps: number;
+  readonly platformBps: number;
+}
+
+export interface FeeSplit {
+  readonly creator: Decimal;
+  readonly platform: Decimal;
+}
+
+/**
+ * Divide a resolution fee into its creator and platform legs.
+ *
+ * §2.3 splits the community fee 4%/3% and takes the official fee entirely to
+ * the platform. Dividing twice and hoping the parts add up is how money goes
+ * missing a kobo at a time, so the platform leg is computed as the remainder —
+ * the two legs sum to `fee` exactly, by construction.
+ */
+export function splitResolutionFee(fee: Numeric, split: FeeSplitBps): FeeSplit {
+  const total = toDecimal(fee);
+  const { creatorBps, platformBps } = split;
+  const totalBps = creatorBps + platformBps;
+
+  if (!Number.isInteger(creatorBps) || !Number.isInteger(platformBps)) {
+    throw new EngineValidationError('fee split must be whole basis points');
+  }
+  if (creatorBps < 0 || platformBps < 0 || totalBps <= 0) {
+    throw new EngineValidationError(
+      `fee split must be non-negative and add to more than zero, received ${creatorBps}/${platformBps}`,
+    );
+  }
+
+  const creator = total.times(creatorBps).div(totalBps);
+  return { creator, platform: total.minus(creator) };
 }

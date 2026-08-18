@@ -12,6 +12,7 @@ export type { Numeric } from './decimal';
 export { at, cost, priceOf, prices, replaceAt } from './cost';
 
 export {
+  DEFAULT_EXIT_FEE_RATE,
   MAX_EXIT_FEE_RATE,
   assertInvariants,
   buy,
@@ -21,9 +22,13 @@ export {
   potIdentityResidual,
   resolve,
   sell,
+  splitResolutionFee,
+  stakedIdentityResidual,
   unfreeze,
 } from './market';
 export type {
+  FeeSplit,
+  FeeSplitBps,
   Holding,
   MarketState,
   OpenMarketParams,
