@@ -5,6 +5,7 @@ import { toDataURL } from 'qrcode';
 
 import { STAFF_ROLES } from './roles.guard';
 import { PrismaService } from '../prisma/prisma.service';
+import { isSealed, open, seal } from './secret-box';
 
 export class TotpError extends Error {
   constructor(message: string) {
@@ -46,7 +47,9 @@ export class TotpService {
     const label = user.email ?? user.phone ?? user.id;
     const otpauth = generateURI({ issuer: ISSUER, label, secret });
 
-    await this.prisma.user.update({ where: { id: userId }, data: { totpSecret: secret } });
+    // Encrypted at rest: a database leak should not hand over second factors
+    // along with the first (§2.11, security review gap 3).
+    await this.prisma.user.update({ where: { id: userId }, data: { totpSecret: seal(secret) } });
     return { secret, otpauth, qr: await toDataURL(otpauth) };
   }
 
@@ -55,13 +58,13 @@ export class TotpService {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (user?.totpSecret == null) throw new TotpError('start enrolment first');
     if (user.totpConfirmedAt !== null) throw new TotpError('2FA is already active');
-    if (!verifySync({ secret: user.totpSecret, token: code }).valid) {
+    if (!verifySync({ secret: open(user.totpSecret), token: code }).valid) {
       throw new TotpError('that code did not match');
     }
 
     await this.prisma.user.update({
       where: { id: userId },
-      data: { totpConfirmedAt: new Date() },
+      data: { totpConfirmedAt: new Date(), totpSecret: seal(open(user.totpSecret)) },
     });
   }
 
@@ -81,8 +84,32 @@ export class TotpService {
     if (params.code === undefined || params.code.trim().length === 0) {
       throw new TotpError('enter the code from your authenticator');
     }
-    if (!verifySync({ secret: user.totpSecret, token: params.code.trim() }).valid) {
+    if (!verifySync({ secret: open(user.totpSecret), token: params.code.trim() }).valid) {
       throw new TotpError('that code did not match');
+    }
+
+    await this.resealIfLegacy(params.userId, user.totpSecret);
+  }
+
+  /**
+   * Encrypt a secret that predates encryption, the next time it is proved.
+   *
+   * Rows written before `secret-box` existed hold plaintext. Rewriting them in
+   * a migration would need the key in the migration, and refusing to read them
+   * would lock out everyone already enrolled — so they are upgraded lazily,
+   * once their owner has just demonstrated the secret still works. Best-effort:
+   * a failure here must never turn a valid code into a rejected one.
+   */
+  private async resealIfLegacy(userId: string, stored: string): Promise<void> {
+    if (isSealed(stored)) return;
+    try {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { totpSecret: seal(stored) },
+      });
+    } catch {
+      // No key configured, or the write lost a race. The next successful
+      // challenge tries again.
     }
   }
 

@@ -5,6 +5,7 @@ import { AnalyticsService } from '../analytics/analytics.service';
 import { AuthService } from '../auth/auth.service';
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { OtpError, OtpService } from '../auth/otp.service';
+import { TokenRevocationService } from '../auth/token-revocation.service';
 import { RateLimit, RateLimitGuard } from '../hardening/rate-limit.guard';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -36,6 +37,7 @@ export class AuthController {
     private readonly notifications: NotificationsService,
     private readonly prisma: PrismaService,
     private readonly wallet: WalletService,
+    private readonly revocations: TokenRevocationService,
   ) {}
 
   @Post('signup')
@@ -66,6 +68,24 @@ export class AuthController {
     } catch (error) {
       throw new BadRequestException((error as Error).message);
     }
+  }
+
+  /**
+   * End this session now, rather than when the token happens to expire.
+   *
+   * Without this, "log out" only cleared the browser's copy — the token itself
+   * stayed valid for its full life, so a session ended on a shared or stolen
+   * device was not actually ended.
+   */
+  @Post('logout')
+  @UseGuards(JwtGuard)
+  async logout(@Req() request: RequestWithUser) {
+    const header = request.headers['authorization'];
+    if (typeof header === 'string' && header.startsWith('Bearer ')) {
+      const claims = decodeClaims(header.slice('Bearer '.length));
+      if (claims?.jti !== undefined) await this.revocations.revokeToken(claims.jti, claims.exp);
+    }
+    return { ended: true };
   }
 
   /**
@@ -195,4 +215,23 @@ function maskContact(contact: string): string {
   }
   if (contact.length <= 7) return contact;
   return `${contact.slice(0, 3)}…${contact.slice(-4)}`;
+}
+
+/**
+ * Read `jti` and `exp` from an already-verified token.
+ *
+ * The guard has verified the signature by the time this runs, so this is
+ * decoding rather than trusting: it only reads what to revoke and for how long.
+ */
+function decodeClaims(token: string): { jti?: string; exp?: number } | null {
+  const body = token.split('.')[1];
+  if (body === undefined) return null;
+  try {
+    return JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as {
+      jti?: string;
+      exp?: number;
+    };
+  } catch {
+    return null;
+  }
 }

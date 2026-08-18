@@ -2,7 +2,7 @@ import { execSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
 /**
  * The whole product, in order, in the browser a user gets — and a screenshot of
@@ -30,10 +30,18 @@ const email = `walk${stamp}@example.com`;
 const password = 'correct-horse-battery';
 
 let shot = 0;
-async function capture(page: Page, name: string): Promise<void> {
+
+/**
+ * Photograph the step, into a folder per viewport.
+ *
+ * Per project because the two runs would otherwise overwrite each other, and
+ * the phone screenshots are the ones that answer §5's "full market runs on a
+ * phone" — they are worth keeping beside the desktop set, not instead of it.
+ */
+async function capture(page: Page, name: string, info: TestInfo): Promise<void> {
   shot += 1;
   await page.screenshot({
-    path: join(SHOTS, `${String(shot).padStart(2, '0')}-${name}.png`),
+    path: join(SHOTS, info.project.name, `${String(shot).padStart(2, '0')}-${name}.png`),
     fullPage: true,
   });
 }
@@ -76,24 +84,26 @@ try {
 test.describe.configure({ mode: 'serial' });
 
 test.describe('the walkthrough', () => {
-  test('1 · the front door explains itself to a stranger', async ({ page }) => {
+  test('1 · the front door explains itself to a stranger', async ({ page }, testInfo) => {
     await page.goto('/');
     await expect(page.getByRole('heading', { name: /arguments get settled/i })).toBeVisible();
     // §7.6's live card: a real market at real prices, not a picture of one.
     await expect(page.getByText(/Live right now/i)).toBeVisible();
     await expect(page.getByRole('heading', { name: /How it works/i })).toBeVisible();
     await expect(page.getByRole('heading', { name: /trust the result/i })).toBeVisible();
-    await capture(page, 'landing');
+    await capture(page, 'landing', testInfo);
   });
 
-  test('2 · signup takes a contact, a password and an age attestation', async ({ page }) => {
+  test('2 · signup takes a contact, a password and an age attestation', async ({
+    page,
+  }, testInfo) => {
     await page.goto('/');
     await page.getByRole('link', { name: /Start with a free balance/i }).click();
     await expect(page).toHaveURL(/\/signup/);
 
     await page.getByLabel('Email or phone').fill(email);
     await page.getByLabel('Password').fill(password);
-    await capture(page, 'signup');
+    await capture(page, 'signup', testInfo);
 
     await page.getByRole('checkbox').check();
     await page.getByRole('button', { name: 'Create account' }).click();
@@ -101,10 +111,12 @@ test.describe('the walkthrough', () => {
     // Tier 0 lands on verification, which is where Tier 1 is explained.
     await expect(page).toHaveURL(/\/verify/, { timeout: 15_000 });
     await expect(page.getByRole('heading', { name: /Confirm your contact/i })).toBeVisible();
-    await capture(page, 'verify-prompt');
+    await capture(page, 'verify-prompt', testInfo);
   });
 
-  test('3 · the code verifies the contact and pays the Tier 1 bonus', async ({ page }) => {
+  test('3 · the code verifies the contact and pays the Tier 1 bonus', async ({
+    page,
+  }, testInfo) => {
     // Sign in as the account from step 2 and read the code the API actually
     // sent — out of the notification it wrote, not out of a test backdoor.
     const token = await signIn(page, email, password);
@@ -112,7 +124,7 @@ test.describe('the walkthrough', () => {
 
     const code = await waitForCode(email);
     await page.getByLabel('Six-digit code').fill(code);
-    await capture(page, 'verify-code');
+    await capture(page, 'verify-code', testInfo);
     await page.getByRole('button', { name: 'Verify' }).click();
 
     await expect(page).toHaveURL(/\/markets/, { timeout: 15_000 });
@@ -123,35 +135,37 @@ test.describe('the walkthrough', () => {
     expect(Number(me.available)).toBe(15_000);
     await expect(page.getByText('Balance').first()).toBeVisible();
     await expect(page.getByText('₦15k').first()).toBeVisible();
-    await capture(page, 'markets-signed-in');
+    await capture(page, 'markets-signed-in', testInfo);
   });
 
-  test('4 · both shelves are on the markets screen', async ({ page }) => {
+  test('4 · both shelves are on the markets screen', async ({ page }, testInfo) => {
     await signIn(page, email, password);
     await page.goto('/markets');
     await expect(page.getByRole('heading', { name: 'Official', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Community', exact: true })).toBeVisible();
     await expect(page.getByText(/naira close below/i)).toBeVisible();
     await expect(page.getByText(/BBNaija eviction/i)).toBeVisible();
-    await capture(page, 'shelves');
+    await capture(page, 'shelves', testInfo);
   });
 
-  test('5 · the ticket shows the chart, the argument bar and the money', async ({ page }) => {
+  test('5 · the ticket shows the chart, the argument bar and the money', async ({
+    page,
+  }, testInfo) => {
     await signIn(page, email, password);
     await page.goto('/market/wt-naira');
     await expect(page.getByRole('heading', { name: /naira close below/i })).toBeVisible();
     await expect(page.getByText('Pot')).toBeVisible();
     await expect(page.getByRole('button', { name: /Buy Yes/i })).toBeVisible();
-    await capture(page, 'ticket');
+    await capture(page, 'ticket', testInfo);
   });
 
-  test('6 · buying opens a position and moves the price', async ({ page }) => {
+  test('6 · buying opens a position and moves the price', async ({ page }, testInfo) => {
     const token = await signIn(page, email, password);
     await page.goto('/market/wt-naira');
 
     await page.getByRole('button', { name: /Buy Yes/i }).click();
     await page.locator('input[inputmode="decimal"]').fill('2000');
-    await capture(page, 'trade-sheet-buy');
+    await capture(page, 'trade-sheet-buy', testInfo);
     await page.getByRole('button', { name: 'Stake am' }).click();
 
     await expect
@@ -166,10 +180,10 @@ test.describe('the walkthrough', () => {
     await expect(page.getByRole('heading', { name: 'Your position' })).toBeVisible({
       timeout: 15_000,
     });
-    await capture(page, 'position-open');
+    await capture(page, 'position-open', testInfo);
   });
 
-  test('7 · selling early shows the exit fee before it is charged', async ({ page }) => {
+  test('7 · selling early shows the exit fee before it is charged', async ({ page }, testInfo) => {
     const token = await signIn(page, email, password);
     await page.goto('/market/wt-naira');
 
@@ -202,7 +216,7 @@ test.describe('the walkthrough', () => {
     expect(fee).toBeGreaterThan(0);
     expect(Math.abs(gross - fee - net)).toBeLessThan(0.02);
 
-    await capture(page, 'trade-sheet-sell-fee');
+    await capture(page, 'trade-sheet-sell-fee', testInfo);
 
     const before = await get<{ available: string }>('/auth/me', token);
     await page
@@ -214,10 +228,10 @@ test.describe('the walkthrough', () => {
         timeout: 20_000,
       })
       .not.toBe(before.available);
-    await capture(page, 'after-sell');
+    await capture(page, 'after-sell', testInfo);
   });
 
-  test('8 · the wallet history agrees with the ledger', async ({ page }) => {
+  test('8 · the wallet history agrees with the ledger', async ({ page }, testInfo) => {
     const token = await signIn(page, email, password);
     await page.goto('/wallet');
 
@@ -237,26 +251,26 @@ test.describe('the walkthrough', () => {
     const me = await get<{ available: string }>('/auth/me', token);
     // The history is the balance: every available-fund movement, nothing else.
     expect(Math.abs(sum - Number(me.available))).toBeLessThan(0.000001);
-    await capture(page, 'wallet-history');
+    await capture(page, 'wallet-history', testInfo);
   });
 
-  test('9 · the leaderboard explains itself', async ({ page }) => {
+  test('9 · the leaderboard explains itself', async ({ page }, testInfo) => {
     await signIn(page, email, password);
     await page.goto('/leaderboard');
     await expect(page.getByRole('heading', { name: 'Leaderboard' })).toBeVisible();
-    await capture(page, 'leaderboard');
+    await capture(page, 'leaderboard', testInfo);
   });
 
-  test('10 · the rules page is reachable and says how money moves', async ({ page }) => {
+  test('10 · the rules page is reachable and says how money moves', async ({ page }, testInfo) => {
     await page.goto('/rules');
     await expect(page.getByRole('heading', { name: 'The rules' })).toBeVisible();
     await expect(page.getByText(/held in escrow/i).first()).toBeVisible();
-    await capture(page, 'rules');
+    await capture(page, 'rules', testInfo);
   });
 
   test('12 · the creation wizard renders, and refuses honestly when review is down', async ({
     page,
-  }) => {
+  }, testInfo) => {
     await signIn(page, email, password);
     await page.goto('/create');
     await expect(page.getByRole('heading', { name: 'Talk your own' })).toBeVisible({
@@ -266,10 +280,12 @@ test.describe('the walkthrough', () => {
     // key in this environment — so the wizard is walked as far as it goes here,
     // and the create → fund → resolve arc for a *community* market is proven at
     // the API level in the integration suite until staging has a key.
-    await capture(page, 'create-wizard');
+    await capture(page, 'create-wizard', testInfo);
   });
 
-  test('13 · settling a market pays the winners and writes their receipt', async ({ page }) => {
+  test('13 · settling a market pays the winners and writes their receipt', async ({
+    page,
+  }, testInfo) => {
     // A market of this run's own, so the step is repeatable: settlement is a
     // one-way door, and re-running against an already-resolved market proves
     // nothing.
@@ -328,20 +344,20 @@ test.describe('the walkthrough', () => {
 
     await page.goto(`/market/${settleId}`);
     await expect(page.getByText(/settled/i).first()).toBeVisible({ timeout: 15_000 });
-    await capture(page, 'market-settled');
+    await capture(page, 'market-settled', testInfo);
 
     await page.goto('/wallet');
     await expect(page.getByText('Winnings').first()).toBeVisible();
-    await capture(page, 'wallet-after-settlement');
+    await capture(page, 'wallet-after-settlement', testInfo);
   });
 
-  test('14 · the leaderboard counts the settled market', async ({ page }) => {
+  test('14 · the leaderboard counts the settled market', async ({ page }, testInfo) => {
     await signIn(page, email, password);
     await page.goto('/leaderboard');
     // Boards are built from settled markets only, so one existing is the
     // precondition for the board meaning anything at all.
     await expect(page.getByRole('heading', { name: 'Leaderboard' })).toBeVisible();
-    await capture(page, 'leaderboard-after-settlement');
+    await capture(page, 'leaderboard-after-settlement', testInfo);
   });
 
   test('11 · the auth rate limit refuses a burst, in words a person can act on', async () => {

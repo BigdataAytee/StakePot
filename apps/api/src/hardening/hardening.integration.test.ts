@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AnalyticsService } from '../analytics/analytics.service';
 import { AdminAuditService } from '../audit/admin-audit.service';
+import { TokenRevocationService } from '../auth/token-revocation.service';
 import { AuthService } from '../auth/auth.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
@@ -69,7 +70,12 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
     );
     queue = new TradeQueueService(trades, prisma);
     await queue.onModuleInit();
-    abuse = new AbuseService(prisma, config, new AdminAuditService(prisma));
+    abuse = new AbuseService(
+      prisma,
+      config,
+      new AdminAuditService(prisma),
+      new TokenRevocationService(),
+    );
     audit = new LedgerAuditService(prisma, new StatusService(prisma));
   });
 

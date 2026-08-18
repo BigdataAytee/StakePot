@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { AbuseFlagKind } from '@prisma/client';
 
 import { AdminAuditService } from '../audit/admin-audit.service';
+import { TokenRevocationService } from '../auth/token-revocation.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { detect, type AbuseFlag, type AbuseRules } from './abuse';
@@ -29,6 +30,7 @@ export class AbuseService {
     private readonly prisma: PrismaService,
     private readonly config: PlatformConfigService,
     private readonly audit: AdminAuditService,
+    private readonly revocations: TokenRevocationService,
   ) {}
 
   async rules(): Promise<AbuseRules> {
@@ -211,6 +213,12 @@ export class AbuseService {
         },
       });
     });
+
+    // A freeze that leaves live sessions working is not a freeze. The account
+    // keeps its money either way (§2.7) — what ends is its ability to act.
+    if (status === 'frozen' && before.status !== 'frozen') {
+      await this.revocations.revokeUser(flag.userId);
+    }
 
     await this.audit.record({
       staffId: params.staffId,

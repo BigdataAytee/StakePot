@@ -39,6 +39,16 @@ const markets = new SharedArray('markets', () =>
   JSON.parse(open(__ENV.MARKETS_FILE || './markets.json')),
 );
 
+// A refusal is not a failure.
+//
+// k6 counts every non-2xx/3xx toward `http_req_failed`, which would make the
+// rate-limit 429s and the RG refusals this run deliberately provokes look like
+// the platform breaking. The threshold below is meant to catch 5xx — the
+// platform failing — so the expected-status range is widened to say exactly
+// that. Without this the run either fails on working controls or the threshold
+// has to be loosened until it stops meaning anything.
+http.setResponseCallback(http.expectedStatuses({ min: 200, max: 499 }));
+
 export const options = {
   scenarios: {
     // 10× peak on the write path: ~500 trades/minute, ramping like a kickoff.
@@ -69,13 +79,15 @@ export const options = {
     },
   },
   thresholds: {
-    // The money path may refuse (4xx is a valid answer under RG limits and
-    // rate limits) but must not fail.
+    // 5xx only — see the response callback above.
     'http_req_failed{scenario:traders}': ['rate<0.01'],
     'http_req_duration{scenario:traders}': ['p(95)<800', 'p(99)<2000'],
     // Reads stay fast *while* the write storm runs — the whole point of §11.
     'http_req_duration{scenario:watchers}': ['p(95)<300'],
     checks: ['rate>0.99'],
+    // Most trades must fill or queue, not merely fail politely. Below 1.0
+    // because rate-limit and RG refusals are legitimate answers under load.
+    'checks{check:trade was accepted}': ['rate>0.90'],
   },
 };
 
@@ -108,6 +120,11 @@ export function trade() {
     // 200 filled, 202 queued (§11's "order placed"), 4xx an honest refusal
     // (limits, RG, funds). A 5xx on the money path is the failure.
     'money path never 5xxs': (r) => r.status < 500,
+    // And the run has to actually trade. A fixture pointing at markets that no
+    // longer exist 404s every request, which satisfies "never 5xxs" while
+    // proving nothing — a whole run once looked green that way. The threshold
+    // below turns that into a failure.
+    'trade was accepted': (r) => r.status === 200 || r.status === 201 || r.status === 202,
   });
 }
 

@@ -6,6 +6,8 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 
+import { TokenRevocationService } from './token-revocation.service';
+
 export interface AuthenticatedUser {
   readonly userId: string;
   readonly role: string;
@@ -28,12 +30,19 @@ interface JwtPayload {
   sub: string;
   role: string;
   tier: number;
+  /** Token id, for single-session revocation. */
+  jti?: string;
+  /** Issued-at, for account-wide revocation cutoffs. */
+  iat?: number;
 }
 
 /** Bearer-token guard. Sessions are stateless JWTs (§2.1). */
 @Injectable()
 export class JwtGuard implements CanActivate {
-  constructor(private readonly jwt: JwtService) {}
+  constructor(
+    private readonly jwt: JwtService,
+    private readonly revocations: TokenRevocationService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<RequestWithUser>();
@@ -43,13 +52,21 @@ export class JwtGuard implements CanActivate {
       throw new UnauthorizedException('missing bearer token');
     }
 
+    let payload: JwtPayload;
     try {
-      const payload = await this.jwt.verifyAsync<JwtPayload>(header.slice('Bearer '.length));
-      request.user = { userId: payload.sub, role: payload.role, tier: payload.tier };
-      return true;
+      payload = await this.jwt.verifyAsync<JwtPayload>(header.slice('Bearer '.length));
     } catch {
       throw new UnauthorizedException('invalid or expired token');
     }
+
+    // A signature that verifies is not the same as a session that still counts:
+    // logging out, a freeze, or a password change all end sessions early.
+    if (await this.revocations.isRevoked(payload)) {
+      throw new UnauthorizedException('this session has ended — sign in again');
+    }
+
+    request.user = { userId: payload.sub, role: payload.role, tier: payload.tier };
+    return true;
   }
 }
 
@@ -64,7 +81,10 @@ export class JwtGuard implements CanActivate {
  */
 @Injectable()
 export class OptionalJwtGuard implements CanActivate {
-  constructor(private readonly jwt: JwtService) {}
+  constructor(
+    private readonly jwt: JwtService,
+    private readonly revocations: TokenRevocationService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<RequestWithUser>();
@@ -73,7 +93,11 @@ export class OptionalJwtGuard implements CanActivate {
 
     try {
       const payload = await this.jwt.verifyAsync<JwtPayload>(header.slice('Bearer '.length));
-      request.user = { userId: payload.sub, role: payload.role, tier: payload.tier };
+      // A revoked token is treated as no token, not as an error — same as an
+      // expired one, for the same reason.
+      if (!(await this.revocations.isRevoked(payload))) {
+        request.user = { userId: payload.sub, role: payload.role, tier: payload.tier };
+      }
     } catch {
       // Deliberately silent: an expired token on a public page should show the
       // page, not an error.

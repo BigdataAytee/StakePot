@@ -20,11 +20,11 @@ so it can be re-checked rather than trusted.
 
 ### Phase 0 — Engine property suite green · CI passes · docker compose up works
 
-| Item                        | Status      | Owner  | Evidence / what remains                                                                                                            |
-| --------------------------- | ----------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Engine property suite green | **Done**    | Claude | 44 engine tests, fast-check over 2–8 outcomes and five magnitude bands; `pnpm test:props`                                          |
-| CI passes                   | **Done**    | Claude | Four green jobs on `main`: verify, e2e journeys, images build, dependency audit                                                    |
-| `docker compose up` works   | **Pending** | You    | Both images build in CI, but the composed stack has never been brought up here — no daemon. Needs one run on a machine with Docker |
+| Item                        | Status      | Owner  | Evidence / what remains                                                                                                                                                  |
+| --------------------------- | ----------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Engine property suite green | **Done**    | Claude | 44 engine tests, fast-check over 2–8 outcomes and five magnitude bands; `pnpm test:props`                                                                                |
+| CI passes                   | **Done**    | Claude | Four green jobs on `main`: verify, e2e journeys, images build, dependency audit                                                                                          |
+| `docker compose up` works   | **Pending** | You    | Both images build in CI. There is no Docker daemon in this container, so the composed stack cannot be brought up here at all — it needs one run on a machine with Docker |
 
 ### Phase 1 — Reconciliation clean · corruption test freezes withdrawals · ledger immutable at DB level
 
@@ -36,11 +36,11 @@ so it can be re-checked rather than trusted.
 
 ### Phase 2 — Full market runs on a phone · duplicate trades execute once · receipt shows ₦0.00 platform cost
 
-| Item                              | Status      | Owner  | Evidence / what remains                                                                                                                                      |
-| --------------------------------- | ----------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Full market runs on a phone       | **Partial** | Claude | The journey runs end to end in Chromium at desktop width (`docs/walkthrough/`). Layouts are mobile-first but no run on a real handset or narrow viewport yet |
-| Duplicate trades execute once     | **Done**    | Claude | Request-id unique constraint plus a queue-level pre-check; pinned by the hardening integration suite                                                         |
-| Receipt shows ₦0.00 platform cost | **Done**    | Claude | Conservation asserted by property tests; stored ledger balances to exactly zero since the step-13 quantisation change                                        |
+| Item                              | Status   | Owner  | Evidence / what remains                                                                                                                                                                                           |
+| --------------------------------- | -------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Full market runs on a phone       | **Done** | Claude | The walkthrough runs on a 393×851 phone viewport as well as desktop — 36 specs green, screenshots in `docs/walkthrough/phone/`, no horizontal overflow on any page. A real handset is still worth one manual pass |
+| Duplicate trades execute once     | **Done** | Claude | Request-id unique constraint plus a queue-level pre-check; pinned by the hardening integration suite                                                                                                              |
+| Receipt shows ₦0.00 platform cost | **Done** | Claude | Conservation asserted by property tests; stored ledger balances to exactly zero since the step-13 quantisation change                                                                                             |
 
 ### Phase 3 — Outsider creates→funds→resolves a ticket · all void paths refund exactly · AI never self-publishes
 
@@ -60,12 +60,12 @@ so it can be re-checked rather than trusted.
 
 ### Phase 5 — 10× load test holds · share/challenge loop works · abuse flags surface
 
-| Item                                     | Status      | Owner  | Evidence / what remains                                                                                                                                                                      |
-| ---------------------------------------- | ----------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 10× load test holds                      | **Pending** | You    | Profile written (`scripts/load/peak.js`), documented (`docs/loadtest.md`), **never executed** — k6 is a system install absent here and in CI. Must run against staging before any real event |
-| Share / challenge loop works             | **Done**    | Claude | Challenge link lands a signed-out visitor on the argument with the challenger's position; e2e journey in CI                                                                                  |
-| Abuse flags surface                      | **Done**    | Claude | Five accounts on one device fingerprint → five `multi_account` flags in the Trust & Safety queue, each with evidence a reviewer can check                                                    |
-| Rate limits on auth/trade/create/comment | **Done**    | Claude | All four classes decorated and live; a burst returns 429 with a human message; asserted on every walkthrough run                                                                             |
+| Item                                     | Status                   | Owner  | Evidence / what remains                                                                                                                                                                                                |
+| ---------------------------------------- | ------------------------ | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 10× load test holds                      | **Done (dev container)** | Claude | Run and passing: 3,534 trades, 100% accepted, p95 64ms, ledger clean and pot identity exactly zero afterwards. Found and fixed two real defects — see `docs/loadtest.md`. Still owed a **staging** run, which is yours |
+| Share / challenge loop works             | **Done**                 | Claude | Challenge link lands a signed-out visitor on the argument with the challenger's position; e2e journey in CI                                                                                                            |
+| Abuse flags surface                      | **Done**                 | Claude | Five accounts on one device fingerprint → five `multi_account` flags in the Trust & Safety queue, each with evidence a reviewer can check                                                                              |
+| Rate limits on auth/trade/create/comment | **Done**                 | Claude | All four classes decorated and live; a burst returns 429 with a human message; asserted on every walkthrough run                                                                                                       |
 
 ---
 

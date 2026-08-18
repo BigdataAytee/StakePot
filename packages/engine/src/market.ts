@@ -67,6 +67,15 @@ export interface MarketState {
    *
    * A Decimal(38,18) column sets this to 1e-18 — sixteen orders of magnitude
    * below one kobo, so a real discrepancy still trips the invariant.
+   *
+   * **The quantum bounds one round trip, not a market's life.** Each write
+   * truncates q and moves C(q) by up to one quantum, in a consistent
+   * direction, once per trade — so the drift accumulates. Shares are
+   * therefore stored far finer than money (30 dp against 18), which is what
+   * keeps the accumulation negligible over any realistic number of trades.
+   * Storing them at the money scale bricked markets after a few hundred
+   * trades in the 10× load run: the state that fails the check is the state
+   * on disk, so every subsequent trade failed too.
    */
   readonly quantum: Decimal;
 }

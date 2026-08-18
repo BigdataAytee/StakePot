@@ -5,6 +5,7 @@ import { AnalyticsModule } from './analytics/analytics.module';
 import { ApprovalsModule } from './approvals/approvals.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { TokenRevocationModule } from './auth/token-revocation.service';
 import { CommunityLayerModule } from './community-layer/community-layer.module';
 import { CommunityModule } from './community/community.module';
 import { CreatorModule } from './creator/creator.module';
@@ -36,6 +37,7 @@ import { WalletModule } from './wallet/wallet.module';
     LedgerModule,
     WalletModule,
     AuthModule,
+    TokenRevocationModule,
     ReconciliationModule,
     TradeModule,
     ResolutionModule,
