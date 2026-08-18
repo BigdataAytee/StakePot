@@ -19,7 +19,11 @@ conduct bonds, the resolution and dispute flow, four-eyes approvals, the admin
 cockpit at `/admin` — and, as of step 9, the company layer: responsible-gambling
 limits, support ticketing with SLAs, notifications, staff 2FA and a public
 status page at `/status` — and, as of step 10, the AI question engine: a ranked
-drafts queue, community screening, and the wizard's co-pilot.
+drafts queue, community screening, and the wizard's co-pilot. Step 11 adds the
+creator platform: public profiles at `/c/<handle>`, a follow system, the §2.14c
+progression ladder with privileges that actually bind, the creator studio at
+`/studio` with analytics and nudges, the opportunity feed, share cards, and an
+automatic autopsy on every market that closes.
 
 ## Quickstart
 

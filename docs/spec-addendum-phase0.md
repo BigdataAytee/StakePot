@@ -273,6 +273,89 @@ threshold to retune.
 still typing, so it returns a template and an estimate and writes no row — a
 draft per keystroke would be noise in the review queue.
 
+## The creator platform (step 11)
+
+§2.14's loop is _creator posts good ticket → shares it → brings their audience →
+market activates → clean resolution → status + earnings → posts again, better._
+Almost every decision below follows from taking that loop literally: status has
+to be worth something, so it has to cost something to get and be losable; and a
+prompt has to be actionable, so it has to arrive rarely enough to be read.
+
+**A level is computed, never granted.** `creator_profiles.level` is recomputed
+from the counters after every settlement and is the only input to what a creator
+may do. There is no code path that sets a level directly, which means a
+privilege can only ever be as good as the record behind it.
+
+**Levels can fall, and that is a config flip.** §2.14c lists what each level
+unlocks but not what happens when the record stops supporting it. A Pro creator
+who keeps featured placement and a fee bump through a collapsing clean rate is a
+real risk, so the default is that the level follows the record —
+`creator_demotion_enabled`, seeded `true`. Turning it off makes status a trophy
+instead, which is a defensible product call; it is one row in `platform_config`,
+not a code change.
+
+**A void before activation is not held against anybody.** The clean rate counts
+clean, disputed, and _post-activation_ voids. A Path A market that never filled
+is a marketing failure, not misconduct — nobody turned up — so it moves volume
+hosted and nothing else. A dispute that was _refused_ is likewise not a mark
+against the creator: they were right and somebody disagreed, which is the system
+working.
+
+**The creator's fee is stamped on the market at creation.** §2.14a shows a
+creator an earnings preview before they commit, and §2.14c bumps a Pro creator
+from 4% to 4.5%. Reading the split from config at settlement would let a
+promotion (or a demotion) rewrite the terms of a market that was already
+trading, so `markets.creatorBps` is written when the market opens and read at
+payout, clamped to the market's own `feeBps` so a misconfigured level cannot
+make the platform's leg negative. Markets opened before the ladder existed fall
+back to config — the split they opened under.
+
+**Nudges are throttled against the send log, not a column.** §2.14d's prompts
+spend the one channel the platform has to reach a creator who can still fix
+something, so at most one per market per `nudge_min_hours_between`, decided by
+querying what was actually sent. A `lastNudgedAt` field would be one more thing
+that can disagree with the record of what happened. The studio shows the same
+prompts unthrottled, because a line on a screen is not a message.
+
+**Views are recorded by the client, on purpose.** A server-side render is not a
+person. A conversion rate whose denominator counts crawlers tells a creator to
+fix a problem they do not have, so `POST /markets/:id/view` is explicit and
+carries `?src=` from the shared link — which is what turns §2.14d's "traffic
+sources" from a guess into a count. A market nobody has looked at has a **null**
+conversion rate, not zero.
+
+**Unmet demand counts people, not searches.** §2.14b's "47 users searched…" is
+distinct users over a window, normalised so that "BBNaija eviction",
+"bbnaija evictions" and "Eviction BBNaija" are one signal rather than three. A
+gap is suppressed when a live market already answers it, using §2.9's own
+similarity function — pointing a creator at a market that exists splits its
+liquidity (§2.14e), which is worse than saying nothing. Anonymous searchers are
+counted by their query text, which can over-count by one; dropping them entirely
+would discard exactly the people who have not converted yet.
+
+**The autopsy is deterministic, and gives one tip.** §2.14d says "creators and
+the AI improve from the same signals", so the review is computed from the same
+facts §2.9's `recordOutcome` reads — final split, volume, stakers, whether a
+dispute was upheld — with no model call and no API key. A creator whose market
+closes at 2am gets their review at 2am. It is one tip because §2.14d says one:
+a creator handed six things to fix fixes none of them. It is also written in the
+same pass that moves the creator's record, keyed by market id, so at-least-once
+job delivery cannot count one resolution twice.
+
+**The share card is rendered per request, with the brand font fetched.** The
+numbers on it are the point, so a card cached with yesterday's percentages is
+worse than none — somebody will paste it into a group as though it were current.
+The renderer's default face has no ₦, and half the questions on this platform
+carry a naira threshold, so Archivo is fetched as TTF and embedded. If that
+fetch fails the card still renders in the fallback face: one wrong glyph beats a 500.
+
+**Studio pool bars are comparative, with the floor as a tick.** §2.14d asks for
+an "activation progress bar per side". Drawn against the activation floor alone
+it is full on every side the moment the floor is cleared — which is most of the
+time, since the floor is small — and a full bar next to a nudge saying one side
+is short is a screen a creator cannot reconcile. The bar is drawn against the
+best-funded pool, with the floor marked on it.
+
 ## Still open
 
 **The §2.3 liquidity tuning rule understates price impact by 1/p.** Unchanged in

@@ -47,6 +47,8 @@ export interface MarketDetail extends MarketSummary {
   annotations: Annotation[];
   traderCount: number;
   volume24h: string;
+  /** Whose market this is (§2.14c). Null on the official shelf. */
+  creator: CreatorByline | null;
 }
 
 export interface SponsorView {
@@ -74,6 +76,16 @@ export interface SeedComposition {
     raised: string;
     sponsors: SponsorView[];
   } | null;
+}
+
+export interface CreatorByline {
+  id: string;
+  handle: string | null;
+  displayName: string | null;
+  /** §2.14c's level badge. Null at level 1 — a new creator wears no claim. */
+  badge: string | null;
+  followerCount: number;
+  cleanResolutions: number;
 }
 
 export interface PricePoint {

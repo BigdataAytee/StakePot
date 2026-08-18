@@ -88,13 +88,20 @@ export class ResolutionService {
       // §2.3: community 7% splits 4 creator / 3 platform; official is all
       // platform. The split is config, and the remainder trick keeps the two
       // legs summing to the fee exactly.
-      const creatorBps =
+      // §2.14c's level 3 fee bump rides on `market.creatorBps`, stamped when the
+      // market opened. Falling back to config covers markets opened before the
+      // ladder existed — they settle under exactly the split they opened under.
+      const configuredCreatorBps =
         market.shelf === 'community' && market.creatorId !== null
-          ? await this.config.get('community_creator_bps')
+          ? (market.creatorBps ?? (await this.config.get('community_creator_bps')))
           : 0;
+      // Clamped to the fee the market actually charges. A creator share above
+      // it would make the platform's leg negative, and a misconfigured level
+      // must not be able to stop every community market settling.
+      const creatorBps = Math.min(configuredCreatorBps, market.feeBps);
       const platformBps =
         market.shelf === 'community' && market.creatorId !== null
-          ? await this.config.get('community_platform_bps')
+          ? market.feeBps - creatorBps
           : market.feeBps;
       const split = splitResolutionFee(fee.toString(), { creatorBps, platformBps });
       const creatorFee = new Decimal(split.creator.toString());

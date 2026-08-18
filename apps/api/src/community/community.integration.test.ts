@@ -62,7 +62,20 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
       new EmailSender(),
       new SmsSender(),
     );
-    community = new CommunityService(prisma, config, wallet, voids, notifications);
+    // §2.14's creator platform: the ladder, the analytics it reads, and
+    // the autopsy that moves a creator's record when a market closes.
+    const creators = new CreatorService(prisma, config, notifications);
+    const creatorAnalytics = new CreatorAnalyticsService(prisma);
+    const autopsies = new AutopsyService(prisma, creatorAnalytics, creators, notifications);
+    community = new CommunityService(
+      prisma,
+      config,
+      wallet,
+      voids,
+      notifications,
+      creators,
+      autopsies,
+    );
     trades = new TradeService(
       prisma,
       ledger,
@@ -284,3 +297,6 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
     expect(check.status).toBe('clean');
   });
 });
+import { CreatorAnalyticsService } from '../creator/analytics.service';
+import { AutopsyService } from '../creator/autopsy.service';
+import { CreatorService } from '../creator/creator.service';

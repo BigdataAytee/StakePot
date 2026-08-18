@@ -18,6 +18,7 @@
     "@hookform/resolvers": "^5.9.1",
     "@sentry/nextjs": "^10.24.0",
     "@stakeam/tokens": "workspace:*",
+    "@vercel/og": "^1.0.1",
     "date-fns": "^4.1.0",
     "framer-motion": "^12.23.24",
     "lightweight-charts": "^5.0.9",

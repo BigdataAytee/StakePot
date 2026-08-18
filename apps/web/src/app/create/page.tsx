@@ -2,7 +2,8 @@
 
 import { zodResolver } from '@hookform/resolvers/zod';
 import { Plus, Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { creator, type Opportunity } from '@/lib/creator-api';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { z } from 'zod';
 
@@ -73,6 +74,16 @@ export default function CreatePage() {
   const [thinking, setThinking] = useState(false);
   const [estimate, setEstimate] = useState<number | null>(null);
   const [rationale, setRationale] = useState<string | null>(null);
+  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+
+  // §2.14b's feed. Public, so it renders before anybody signs in — the whole
+  // point is to show a would-be creator that there is demand waiting.
+  useEffect(() => {
+    void creator
+      .opportunities()
+      .then(setOpportunities)
+      .catch(() => setOpportunities([]));
+  }, []);
 
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -245,6 +256,33 @@ export default function CreatePage() {
           source, and you earn a cut of the losing pool.
         </p>
       </header>
+
+      {opportunities.length > 0 && (
+        <section className="mb-8 rounded-md border border-money/40 bg-money/5 p-4">
+          <h2 className="text-sm font-semibold">People are already asking</h2>
+          <p className="mt-1 text-sm text-text-muted">
+            Nobody has opened a market for these yet. The first one to does.
+          </p>
+          <ul className="mt-3 space-y-2">
+            {opportunities.slice(0, 5).map((opportunity) => (
+              <li key={opportunity.id} className="flex items-baseline justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIdea(opportunity.title)}
+                  className="text-left text-sm font-semibold underline underline-offset-2"
+                >
+                  {opportunity.title}
+                </button>
+                <span className="whitespace-nowrap font-mono text-xs text-text-muted">
+                  {opportunity.evidence?.searchers != null
+                    ? `${opportunity.evidence.searchers} searched`
+                    : opportunity.source.replace('_', ' ')}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="mb-8 rounded-md border border-border p-4">
         <h2 className="text-sm font-semibold">Say it how you would say it</h2>

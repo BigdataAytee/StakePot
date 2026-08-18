@@ -23,6 +23,13 @@ export const NOTIFICATION_TYPES = {
   dispute_update: { title: 'Dispute update', channels: ['in_app', 'push'] },
   market_activated: { title: 'Market is live', channels: ['in_app', 'push'] },
   support_reply: { title: 'Support replied', channels: ['in_app', 'push', 'email'] },
+  // §2.14's creator platform. Deliberately in-app and push only: a creator's
+  // standing changing is worth an alert, not an email, and a nudge that arrives
+  // by SMS at 3am is how a creator turns notifications off entirely.
+  creator_nudge: { title: 'Your market needs something', channels: ['in_app', 'push'] },
+  creator_new_market: { title: 'A creator you follow posted', channels: ['in_app', 'push'] },
+  creator_level: { title: 'Your creator level changed', channels: ['in_app', 'push'] },
+  market_autopsy: { title: 'Your market closed', channels: ['in_app', 'push'] },
   rg_confirmation: {
     title: 'Your limits changed',
     // Deliberately every channel, including SMS: a person who has just excluded

@@ -5,6 +5,7 @@ import { ApprovalsModule } from './approvals/approvals.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { CommunityModule } from './community/community.module';
+import { CreatorModule } from './creator/creator.module';
 import { HealthController } from './health/health.controller';
 import { LedgerModule } from './ledger/ledger.module';
 import { MarketModule } from './market/market.module';
@@ -40,6 +41,7 @@ import { WalletModule } from './wallet/wallet.module';
     SupportModule,
     StatusModule,
     CommunityModule,
+    CreatorModule,
     MarketModule,
     RealtimeModule,
     HttpModule,

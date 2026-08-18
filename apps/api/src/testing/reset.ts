@@ -43,7 +43,15 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   await prisma.statusIncident.deleteMany();
   await prisma.rgSettings.deleteMany();
   await prisma.marketDraft.deleteMany();
+  await prisma.opportunity.deleteMany();
+  await prisma.ticketTemplate.deleteMany();
   await prisma.market.deleteMany();
+  // §2.14's creator record. Follows and profiles cascade from users, but the
+  // analytics log does not — an `events` row outliving its market would count
+  // toward the next test's conversion rate.
+  await prisma.event.deleteMany();
+  await prisma.follower.deleteMany();
+  await prisma.creatorProfile.deleteMany();
 
   // Config the tests proposed: drop every version past the seeded one and put
   // the seeded row back in charge. `config_versions` is append-only, so the

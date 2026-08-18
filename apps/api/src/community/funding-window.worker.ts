@@ -3,6 +3,8 @@ import { Queue, Worker, type JobsOptions } from 'bullmq';
 
 import { env } from '../config/env';
 import { logger } from '../logger';
+import { NudgeService } from '../creator/nudge.service';
+import { OpportunityService } from '../creator/opportunity.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResolutionFlowService } from '../resolution/resolution-flow.service';
 import { SupportService } from '../support/support.service';
@@ -20,9 +22,18 @@ const QUEUE = 'funding-window';
  *
  * `freeze-sweep` is the odd one out: a repeatable job rather than a deadline,
  * flipping markets whose event has started into `pending_resolution` so the
- * shelf stops saying LIVE during the match.
+ * shelf stops saying LIVE during the match. `nudge-sweep` and
+ * `opportunity-sweep` are the same shape — §2.14's prompts and demand signals
+ * are states of the platform rather than per-market deadlines.
  */
-type CloseKind = 'window' | 'seeding' | 'dispute' | 'freeze-sweep' | 'sla-sweep';
+type CloseKind =
+  | 'window'
+  | 'seeding'
+  | 'dispute'
+  | 'freeze-sweep'
+  | 'sla-sweep'
+  | 'nudge-sweep'
+  | 'opportunity-sweep';
 
 interface CloseJob {
   readonly marketId: string;
@@ -50,6 +61,8 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
     private readonly seeds: SeedService,
     private readonly resolutions: ResolutionFlowService,
     private readonly support: SupportService,
+    private readonly nudges: NudgeService,
+    private readonly opportunities: OpportunityService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -96,6 +109,18 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
         return this.resolutions.closeDisputeWindow(marketId);
       case 'freeze-sweep':
         return { frozen: await this.resolutions.freezeDueMarkets() };
+      case 'nudge-sweep':
+        // §2.14d. The rules decide what is worth saying; the service's own
+        // throttle decides who actually hears it.
+        return this.nudges.sweep();
+      case 'opportunity-sweep': {
+        // §2.14b's unmet demand, plus a tidy-up of what nobody claimed.
+        const gaps = await this.opportunities.detectSearchGaps({
+          since: new Date(Date.now() - 7 * 86_400_000),
+        });
+        const expired = await this.opportunities.expire();
+        return { ...gaps, expired };
+      }
       case 'sla-sweep':
         // §2.12's "SLA timers with escalation". A breach is a state of the
         // queue, so it is swept rather than timed per ticket.
@@ -190,6 +215,18 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       'sla-sweep',
       { every: 300_000 },
       { name: 'close', data: { marketId: '', kind: 'sla-sweep' } },
+    );
+    // Hourly, not every five minutes: a nudge is a message to a person, and the
+    // throttle that keeps it rare is only as good as how often it is asked.
+    await this.queue?.upsertJobScheduler(
+      'nudge-sweep',
+      { every: 3_600_000 },
+      { name: 'close', data: { marketId: '', kind: 'nudge-sweep' } },
+    );
+    await this.queue?.upsertJobScheduler(
+      'opportunity-sweep',
+      { every: 3_600_000 },
+      { name: 'close', data: { marketId: '', kind: 'opportunity-sweep' } },
     );
 
     return windows.length + rounds.length + windowsOnResults.length;

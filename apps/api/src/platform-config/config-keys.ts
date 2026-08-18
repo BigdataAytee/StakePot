@@ -84,6 +84,34 @@ export const CONFIG_SCHEMAS = {
   /** The helpline text shown wherever limits are (§2.12). */
   rg_helpline: z.string().min(1),
 
+  // Creator platform (§2.14). The bracketed numbers in §2.14c's ladder table.
+  creator_level2_clean_resolutions: z.number().int().nonnegative(),
+  creator_level3_clean_resolutions: z.number().int().nonnegative(),
+  creator_level3_volume_spc: z.number().nonnegative(),
+  /** The share of a creator's settled markets that must be clean for level 3. */
+  creator_level3_clean_rate: z.number().min(0).max(1),
+  /** Level → concurrent live markets. §2.14c's "max [2] live" / "max [10] live". */
+  creator_max_live_markets: z.record(z.string(), z.number().int().positive()),
+  /** Level → multiplier on `conduct_bond_spc`. Level 2's "reduced bond". */
+  creator_bond_multiplier: z.record(z.string(), z.number().min(0).max(1)),
+  /** Level → the creator's share of the community fee. The "[4%→4.5%]" bump. */
+  creator_bps_by_level: z.record(z.string(), z.number().int().nonnegative()),
+  /**
+   * Whether a level can be lost when the record stops supporting it. True keeps
+   * privileges honest; false makes status a trophy. A policy call, not a code one.
+   */
+  creator_demotion_enabled: z.boolean(),
+  /** §2.14d's nudges are only useful while they are rare. */
+  nudge_min_hours_between: z.number().int().positive(),
+
+  // The opportunity feed (§2.14b)
+  /** Searches below this are noise, not unmet demand. */
+  opportunity_min_searchers: z.number().int().positive(),
+  /** Beyond this horizon an event is too far off for a creator to act on. */
+  opportunity_horizon_days: z.number().int().positive(),
+  /** How long an unclaimed opportunity stays on the feed. */
+  opportunity_ttl_days: z.number().int().positive(),
+
   // Financial controls (§2.10)
   reconciliation_tolerance_spc: z.number().nonnegative(),
   withdrawals_frozen: z.boolean(),

@@ -9,9 +9,11 @@ import { OutcomeButtons } from '@/components/outcome-buttons';
 import { PriceChart, type Timeframe } from '@/components/price-chart';
 import { RulesCard } from '@/components/rules-card';
 import { SeedPanel } from '@/components/seed-panel';
+import { ShareSheet } from '@/components/share-sheet';
 import { TradeSheet, type TradeIntent } from '@/components/trade-sheet';
 import { useMarketFeed } from '@/hooks/use-market-feed';
 import { api, type MarketDetail, type PricePoint, type SeedComposition } from '@/lib/api';
+import { recordView } from '@/lib/creator-api';
 import { STATE_LABEL, percent, untilFreeze } from '@/lib/format';
 import { useLivePrices } from '@/store/live-prices';
 
@@ -102,6 +104,17 @@ export function TicketView({
     [initial.outcomes, prices],
   );
 
+  // §2.14d's views→stakes conversion starts here. Sent once per mount, tagged
+  // with where the reader came from, so `?src=share` on a pasted link is what
+  // makes "traffic sources" a count rather than a guess.
+  useEffect(() => {
+    const source =
+      typeof window === 'undefined'
+        ? undefined
+        : (new URLSearchParams(window.location.search).get('src') ?? undefined);
+    recordView(initial.id, source);
+  }, [initial.id]);
+
   const headlinePrice = headline === undefined ? 0 : percent(prices[headline.id] ?? headline.price);
   const tradingOpen = initial.state === 'active';
 
@@ -125,10 +138,34 @@ export function TicketView({
 
         <h1 className="mt-3 text-xl font-black leading-tight">{initial.question}</h1>
 
-        <p className="mt-4 flex items-baseline gap-2">
-          <LivingNumber value={headlinePrice} suffix="%" className="text-2xl font-black" />
-          <span className="text-md text-text-muted">{headline?.label}</span>
-        </p>
+        {/* §2.14c's byline. A community market is somebody's promise, so it
+            carries their name and what their record has earned them. */}
+        {initial.creator?.handle != null && (
+          <p className="mt-2 flex items-center gap-2 font-mono text-xs text-text-muted">
+            <a
+              href={`/c/${initial.creator.handle}`}
+              className="text-rise underline underline-offset-2"
+            >
+              @{initial.creator.handle}
+            </a>
+            {initial.creator.badge !== null && (
+              <span className="rounded-full bg-rise px-1.5 py-0.5 text-[10px] font-bold text-paper">
+                {initial.creator.badge}
+              </span>
+            )}
+            {initial.creator.cleanResolutions > 0 && (
+              <span>{initial.creator.cleanResolutions} clean resolutions</span>
+            )}
+          </p>
+        )}
+
+        <div className="mt-4 flex items-baseline justify-between gap-3">
+          <p className="flex items-baseline gap-2">
+            <LivingNumber value={headlinePrice} suffix="%" className="text-2xl font-black" />
+            <span className="text-md text-text-muted">{headline?.label}</span>
+          </p>
+          <ShareSheet marketId={initial.id} question={initial.question} />
+        </div>
       </header>
 
       {/* (a) the hero */}

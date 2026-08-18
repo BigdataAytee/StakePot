@@ -52,3 +52,32 @@ export class JwtGuard implements CanActivate {
     }
   }
 }
+
+/**
+ * The same guard, for reads that are public but nicer when signed in.
+ *
+ * A creator profile is a public record and must render for somebody with no
+ * account; the only thing a token adds is whether the viewer already follows
+ * them. So a missing or broken token is not an error here — it just means no
+ * viewer, and a bad token is treated exactly like none rather than as an
+ * attack, because the endpoint reveals nothing either way.
+ */
+@Injectable()
+export class OptionalJwtGuard implements CanActivate {
+  constructor(private readonly jwt: JwtService) {}
+
+  async canActivate(context: ExecutionContext): Promise<boolean> {
+    const request = context.switchToHttp().getRequest<RequestWithUser>();
+    const header = request.headers['authorization'];
+    if (typeof header !== 'string' || !header.startsWith('Bearer ')) return true;
+
+    try {
+      const payload = await this.jwt.verifyAsync<JwtPayload>(header.slice('Bearer '.length));
+      request.user = { userId: payload.sub, role: payload.role, tier: payload.tier };
+    } catch {
+      // Deliberately silent: an expired token on a public page should show the
+      // page, not an error.
+    }
+    return true;
+  }
+}

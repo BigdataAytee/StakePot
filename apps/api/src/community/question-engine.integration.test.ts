@@ -88,7 +88,16 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
 
     const ledger = new LedgerService(prisma);
     const wallet = new WalletService(prisma, ledger);
-    const seeds = new SeedService(prisma, config, wallet, new MarketVoidService(ledger));
+    const notifications = new NotificationsService(
+      prisma,
+      new PushSender(prisma),
+      new EmailSender(),
+      new SmsSender(),
+    );
+    // §2.14c's follow system reaches into the seed path — a seeded market opens
+    // the moment the seed lands, and that is when followers hear about it.
+    const creators = new CreatorService(prisma, config, notifications);
+    const seeds = new SeedService(prisma, config, wallet, new MarketVoidService(ledger), creators);
     official = new OfficialMarketService(prisma, config, seeds, new AdminAuditService(prisma));
   });
 
@@ -403,3 +412,8 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
     });
   });
 });
+import { CreatorService } from '../creator/creator.service';
+import { EmailSender } from '../notifications/email.sender';
+import { NotificationsService } from '../notifications/notifications.service';
+import { PushSender } from '../notifications/push.sender';
+import { SmsSender } from '../notifications/sms.sender';

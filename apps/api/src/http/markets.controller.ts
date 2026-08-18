@@ -64,7 +64,9 @@ export class MarketsController {
       where: { id },
       include: {
         outcomes: { orderBy: { ordinal: 'asc' } },
-        creator: { select: { id: true, email: true } },
+        creator: {
+          select: { id: true, email: true, handle: true, displayName: true },
+        },
       },
     });
     if (market === null) throw new NotFoundException('market not found');
@@ -93,6 +95,11 @@ export class MarketsController {
       this.prices.read(id),
     ]);
 
+    const creatorProfile =
+      market.creatorId === null
+        ? null
+        : await this.prisma.creatorProfile.findUnique({ where: { userId: market.creatorId } });
+
     return {
       ...this.serialiseMarket(market),
       // Live prices come from Redis when they are there; the row is the fallback.
@@ -105,6 +112,20 @@ export class MarketsController {
       })),
       traderCount: traders.length,
       volume24h: (volume._sum.cost ?? 0).toString(),
+      // §2.14c's byline: whose market this is, and what they have earned the
+      // right to be called. Read here rather than fetched separately because
+      // the share card (§2.14d) renders from this one response.
+      creator:
+        market.creator === null
+          ? null
+          : {
+              id: market.creator.id,
+              handle: market.creator.handle,
+              displayName: market.creator.displayName,
+              badge: badgeFor(creatorProfile?.level ?? 1),
+              followerCount: creatorProfile?.followerCount ?? 0,
+              cleanResolutions: creatorProfile?.cleanResolutions ?? 0,
+            },
     };
   }
 
@@ -203,4 +224,11 @@ export class MarketsController {
       })),
     };
   }
+}
+
+/** §2.14c's ladder names, for the byline. Level 1 wears no badge. */
+function badgeFor(level: number): string | null {
+  if (level >= 3) return 'Pro';
+  if (level === 2) return 'Verified';
+  return null;
 }

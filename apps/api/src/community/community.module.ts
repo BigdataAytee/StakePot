@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { CreatorModule } from '../creator/creator.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ResolutionModule } from '../resolution/resolution.module';
@@ -14,6 +15,7 @@ import { MarketVoidService } from './void.service';
 @Module({
   imports: [
     CommunityQuestionModule,
+    CreatorModule,
     LedgerModule,
     NotificationsModule,
     ResolutionModule,

@@ -7,6 +7,7 @@ import { type Tx } from '../ledger/ledger.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { QuestionEngineService } from '../community/question-engine.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
+import { AutopsyService } from '../creator/autopsy.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResolutionService, type ResolveOutcome } from '../trade/resolution.service';
 
@@ -51,6 +52,7 @@ export class ResolutionFlowService {
     private readonly audit: AdminAuditService,
     private readonly notifications: NotificationsService,
     private readonly engine: QuestionEngineService,
+    private readonly autopsies: AutopsyService,
   ) {}
 
   /**
@@ -328,6 +330,11 @@ export class ResolutionFlowService {
     // §2.9's feedback loop: what the crowd actually did with this question, kept
     // against it so the next cycle can learn from its own hits and misses.
     await this.engine.recordOutcome(market.id);
+
+    // §2.14d's autopsy, from the same facts, in the same pass: "creators and
+    // the AI improve from the same signals". It also moves the creator's
+    // record, so a market cannot settle without the ladder noticing.
+    await this.autopsies.record({ marketId: market.id, kind: 'resolved' });
 
     // Everyone who was paid, and everyone who argued, hears about it — after the
     // money has moved, because that is when it is true (§2.12).

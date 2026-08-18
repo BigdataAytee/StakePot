@@ -67,8 +67,21 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
     );
-    community = new CommunityService(prisma, config, wallet, voids, notifications);
-    seeds = new SeedService(prisma, config, wallet, voids);
+    // §2.14's creator platform: the ladder, the analytics it reads, and
+    // the autopsy that moves a creator's record when a market closes.
+    const creators = new CreatorService(prisma, config, notifications);
+    const creatorAnalytics = new CreatorAnalyticsService(prisma);
+    const autopsies = new AutopsyService(prisma, creatorAnalytics, creators, notifications);
+    community = new CommunityService(
+      prisma,
+      config,
+      wallet,
+      voids,
+      notifications,
+      creators,
+      autopsies,
+    );
+    seeds = new SeedService(prisma, config, wallet, voids, creators);
     trades = new TradeService(
       prisma,
       ledger,
@@ -479,3 +492,6 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
     );
   });
 });
+import { CreatorAnalyticsService } from '../creator/analytics.service';
+import { AutopsyService } from '../creator/autopsy.service';
+import { CreatorService } from '../creator/creator.service';

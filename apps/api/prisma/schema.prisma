@@ -187,6 +187,13 @@ enum OpportunitySource {
   seasonal
 }
 
+/// Why a market closed. A void and a settle teach a creator different things
+/// (§2.14d), so the autopsy has to know which it is reviewing.
+enum AutopsyKind {
+  resolved
+  voided
+}
+
 enum CommentState {
   live
   flagged
@@ -234,6 +241,11 @@ model User {
   id              String   @id @default(cuid())
   email           String?  @unique
   phone           String?  @unique
+  /// The public name a creator is known by (§2.14c's "public creator profiles",
+  /// §2.14d's share card). Claimed, not assigned, and unique because it is the
+  /// profile URL — an account that has never created anything has none.
+  handle          String?  @unique
+  displayName     String?
   contactVerified Boolean  @default(false)
   /// 0 = unverified, 1 = contact verified, 2 = KYC passed
   tier            Int      @default(0)
@@ -344,8 +356,17 @@ model Market {
   liquidityParam     Decimal     @db.Decimal(38, 18)
   potTotal           Decimal     @default(0) @db.Decimal(38, 18)
   feeBps             Int
+  /// The creator's share of `feeBps`, fixed when the market opened (§2.14c's
+  /// level 3 bump). Stored rather than read from config at settlement because
+  /// §2.14a shows the creator an earnings preview before they commit — the
+  /// number they were shown is the number they are owed, whatever their level
+  /// does afterwards. Null on official markets, which have no creator.
+  creatorBps         Int?
   resolvedOutcomeId  String?
   resolutionEvidence String?
+  /// §2.14c's level 3 privilege and §6.2's admin placement, as one column: when
+  /// a market was put on the front. Null means it is ranked like everything else.
+  featuredAt         DateTime?
   createdAt          DateTime    @default(now())
 
   creator         User?             @relation("MarketCreator", fields: [creatorId], references: [id])
@@ -804,10 +825,21 @@ model CreatorProfile {
   /// 1 | 2 | 3
   level             Int     @default(1)
   cleanResolutions  Int     @default(0)
+  /// Settled with a dispute upheld — the other half of the clean rate, and not
+  /// derivable from `cleanResolutions` alone (§2.14c's level 3 needs both).
+  disputedResolutions Int   @default(0)
+  /// Voided *after* activation. A Path A market that never filled is not
+  /// misconduct — nobody turned up — so it is counted separately from a void
+  /// the creator caused, and only this one counts against the record.
+  voidedAfterActivation Int @default(0)
   totalVolumeHosted Decimal @default(0) @db.Decimal(38, 18)
   accuracyPct       Decimal @default(0) @db.Decimal(38, 18)
   badgeFlags        Json
   followerCount     Int     @default(0)
+  /// When the ladder last moved them, so a level change is a dated fact rather
+  /// than a number that silently differs from what the creator was told.
+  levelUpdatedAt    DateTime?
+  createdAt         DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -850,19 +882,39 @@ model Opportunity {
   demandScore  Decimal           @db.Decimal(38, 18)
   claimedBy    String?
   expiresAt    DateTime
+  /// Stable identity for the thing being pointed at, so the sweep that refreshes
+  /// the feed updates an opportunity rather than posting it again every hour.
+  dedupeKey    String            @unique
+  /// What the demand signal was made of — searcher counts, the fixture, the
+  /// season — kept so a creator can see why they are being asked.
+  evidenceJson Json?
+  claimedAt    DateTime?
+  /// The market that claimed it. §2.14b: "first creator to claim an opportunity
+  /// captures its volume", and this is the row that says which one did.
+  marketId     String?
+  createdAt    DateTime          @default(now())
 
   template TicketTemplate? @relation(fields: [templateId], references: [id])
   claimer  User?           @relation(fields: [claimedBy], references: [id])
 
   @@index([expiresAt])
+  @@index([claimedBy])
   @@map("opportunities")
 }
 
 model MarketAutopsy {
   marketId       String   @id
   creatorId      String
+  kind           AutopsyKind
   outcomeSummary String
   tipsJson       Json
+  /// The signals §2.14d says "feed the AI engine's training loop (§2.9)". Kept
+  /// as columns rather than inside `tipsJson` precisely because the loop has to
+  /// query them — a JSON blob is a record, not a signal.
+  finalSplit     Decimal? @db.Decimal(38, 18)
+  volume         Decimal  @default(0) @db.Decimal(38, 18)
+  distinctStakers Int     @default(0)
+  views          Int      @default(0)
   createdAt      DateTime @default(now())
 
   market  Market @relation(fields: [marketId], references: [id], onDelete: Cascade)

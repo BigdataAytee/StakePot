@@ -9,6 +9,7 @@ import { PlatformConfigService } from '../platform-config/platform-config.servic
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
 import { SYSTEM_PLATFORM_ACCOUNT } from '../ledger/posting';
+import { CreatorService } from '../creator/creator.service';
 import { MarketVoidService } from './void.service';
 
 export class SeedError extends Error {
@@ -55,6 +56,7 @@ export class SeedService {
     private readonly config: PlatformConfigService,
     private readonly wallet: WalletService,
     private readonly voids: MarketVoidService,
+    private readonly creators: CreatorService,
   ) {}
 
   /**
@@ -80,7 +82,7 @@ export class SeedService {
     }
     const windowHours = await this.config.get('funding_window_hours');
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const market = await this.lockSeedable(tx, params.marketId);
       if (market.creatorId !== params.userId) {
         throw new SeedError('only the creator can post this market’s seed');
@@ -102,6 +104,12 @@ export class SeedService {
       await this.activate(tx, market.id, fundingClosesAt, 'Seeded — trading is open');
       return { ...applied, fundingClosesAt };
     });
+
+    // §2.14c's follow system, after the commit: a follower told about a market
+    // whose seed then rolled back would be sent to something that does not
+    // exist.
+    await this.creators.announceMarket(params.marketId);
+    return result;
   }
 
   /**
@@ -247,7 +255,7 @@ export class SeedService {
   }): Promise<{ total: Decimal; filled: boolean; sponsors: number }> {
     const amount = new Decimal(params.amount);
 
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       const market = await this.lockSeedable(tx, params.marketId, ['seeding']);
       const syndicate = await tx.syndicate.findUnique({
         where: { marketId: market.id },
@@ -312,6 +320,12 @@ export class SeedService {
       await this.fill(tx, market, syndicate.id, members, total);
       return { total, filled: true, sponsors: members.length };
     });
+
+    // The contribution that fills the round is the one that opens the market.
+    if (result.filled) {
+      await this.creators.announceMarket(params.marketId);
+    }
+    return result;
   }
 
   /**
@@ -325,7 +339,7 @@ export class SeedService {
     outcome: 'filled' | 'voided' | 'skipped';
     reason?: string;
   }> {
-    return this.prisma.$transaction(async (tx) => {
+    const result = await this.prisma.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM markets WHERE id = ${marketId} FOR UPDATE`;
       const syndicate = await tx.syndicate.findUnique({
         where: { marketId },
@@ -358,6 +372,13 @@ export class SeedService {
       await this.voids.voidAndRefund(tx, marketId, reason);
       return { outcome: 'voided' as const, reason };
     });
+
+    // A filled round is the moment a syndicated market opens, so it is the
+    // moment the creator's followers hear about it (§2.14c).
+    if (result.outcome === 'filled') {
+      await this.creators.announceMarket(marketId);
+    }
+    return result;
   }
 
   /**

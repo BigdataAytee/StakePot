@@ -6,6 +6,8 @@ import { type Tx } from '../ledger/ledger.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AutopsyService } from '../creator/autopsy.service';
+import { CreatorService } from '../creator/creator.service';
 import { WalletService } from '../wallet/wallet.service';
 import { decideActivation, type ActivationRules, type OutcomeFunding } from './activation';
 import { screenTemplate, type MarketTemplate } from './market-template';
@@ -34,6 +36,8 @@ export class CommunityService {
     private readonly wallet: WalletService,
     private readonly voids: MarketVoidService,
     private readonly notifications: NotificationsService,
+    private readonly creators: CreatorService,
+    private readonly autopsies: AutopsyService,
   ) {}
 
   /**
@@ -61,7 +65,33 @@ export class CommunityService {
       throw new CommunityMarketError(problems.map((p) => p.message).join(' '));
     }
 
-    const bond = new Decimal(await this.config.get('conduct_bond_spc'));
+    // §2.14c's ladder, applied where it costs something. A level is only worth
+    // holding if it changes what you may do, so the cap and the bond are read
+    // here rather than described on a profile screen.
+    // A profile exists from the first market, not from the first settlement:
+    // §2.14c's profile is public, and a creator with something live must be
+    // followable before anybody has to look them up.
+    await this.creators.ensureProfile(params.creatorId);
+    const privileges = await this.creators.privilegesOf(params.creatorId);
+
+    const live = await this.prisma.market.count({
+      where: {
+        creatorId: params.creatorId,
+        state: { in: ['draft', 'seeding', 'funding', 'active', 'frozen', 'dispute_window'] },
+      },
+    });
+    if (live >= privileges.maxLiveMarkets) {
+      throw new CommunityMarketError(
+        `a level ${privileges.level} creator can run ${privileges.maxLiveMarkets} market${
+          privileges.maxLiveMarkets === 1 ? '' : 's'
+        } at a time — settle one before opening another`,
+      );
+    }
+
+    const baseBond = new Decimal(await this.config.get('conduct_bond_spc'));
+    // Level 2's "reduced bond" (§2.14c). Rounded down to the storage quantum so
+    // a multiplier can never produce a bond the wallet cannot hold exactly.
+    const bond = baseBond.times(privileges.bondMultiplier).toDecimalPlaces(18, Decimal.ROUND_DOWN);
     const feeBps = await this.config.get('community_fee_bps');
     const windowHours =
       params.fundingWindowHours ?? (await this.config.get('funding_window_hours'));
@@ -96,6 +126,9 @@ export class CommunityService {
           voidDate: new Date(params.template.voidDate),
           liquidityParam: new Prisma.Decimal(params.liquidityParam),
           feeBps,
+          // Fixed now, not read at settlement: §2.14a showed this creator an
+          // earnings preview, and the preview is a promise.
+          creatorBps: privileges.creatorBps,
           activationPath: path,
           ...(fundingClosesAt === null ? {} : { fundingClosesAt }),
           // Path A: the market takes stakes but does not trade until the window
@@ -222,6 +255,18 @@ export class CommunityService {
     });
 
     await this.announceRefunds(result, marketId);
+
+    // §2.14d's autopsy covers every close, not only the happy one — a creator
+    // whose market voided is exactly the one with something to learn. Nothing
+    // is announced here: a Path B market has been trading since its seed
+    // landed, so its followers were told then.
+    if (result.outcome === 'voided') {
+      await this.autopsies.record({
+        marketId,
+        kind: 'voided',
+        ...(result.reason === undefined ? {} : { voidReason: result.reason }),
+      });
+    }
     return result;
   }
 
@@ -290,6 +335,20 @@ export class CommunityService {
     });
 
     await this.announceRefunds(result, marketId);
+
+    // §2.14c: "followers are notified when a creator opens a market". Opening
+    // means trading is open, not that a draft exists — a follower sent to a
+    // market that cannot be staked on learns to ignore the next one.
+    if (result.outcome === 'activated') {
+      await this.creators.announceMarket(marketId);
+    }
+    if (result.outcome === 'voided') {
+      await this.autopsies.record({
+        marketId,
+        kind: 'voided',
+        ...(result.reason === undefined ? {} : { voidReason: result.reason }),
+      });
+    }
     return result;
   }
 

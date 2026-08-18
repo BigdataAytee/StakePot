@@ -76,8 +76,21 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
     );
-    community = new CommunityService(prisma, config, wallet, voids, notifications);
-    seeds = new SeedService(prisma, config, wallet, voids);
+    // §2.14's creator platform: the ladder, the analytics it reads, and
+    // the autopsy that moves a creator's record when a market closes.
+    const creators = new CreatorService(prisma, config, notifications);
+    const creatorAnalytics = new CreatorAnalyticsService(prisma);
+    const autopsies = new AutopsyService(prisma, creatorAnalytics, creators, notifications);
+    community = new CommunityService(
+      prisma,
+      config,
+      wallet,
+      voids,
+      notifications,
+      creators,
+      autopsies,
+    );
+    seeds = new SeedService(prisma, config, wallet, voids, creators);
     trades = new TradeService(
       prisma,
       ledger,
@@ -95,6 +108,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       // No API key in tests: the engine's model seam is null, and the parts that
       // matter here — §2.9's outcome log — do not need one.
       new QuestionEngineService(prisma, config, null),
+      autopsies,
     );
     approvals = new ApprovalsService(prisma, ledger, voids, config, audit, new TotpService(prisma));
   });
@@ -631,3 +645,6 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
     });
   });
 });
+import { CreatorAnalyticsService } from '../creator/analytics.service';
+import { AutopsyService } from '../creator/autopsy.service';
+import { CreatorService } from '../creator/creator.service';
