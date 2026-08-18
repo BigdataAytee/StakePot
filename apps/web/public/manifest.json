@@ -1,0 +1,18 @@
+{
+  "name": "StakeAm",
+  "short_name": "StakeAm",
+  "description": "Nigeria's prediction market. Winners split the pot.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#FAFDF7",
+  "theme_color": "#0E7A3D",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

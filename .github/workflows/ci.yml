@@ -1,0 +1,156 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DATABASE_URL: postgresql://stakeam:stakeam@localhost:5432/stakeam
+  TEST_DATABASE_URL: postgresql://stakeam:stakeam@localhost:5432/stakeam_test
+  REDIS_URL: redis://localhost:6379
+  JWT_SECRET: ci-only-secret-not-used-for-anything-32ch
+  NEXT_TELEMETRY_DISABLED: '1'
+
+jobs:
+  verify:
+    name: lint → typecheck → test → build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: stakeam
+          POSTGRES_PASSWORD: stakeam
+          POSTGRES_DB: stakeam
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U stakeam"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      # The §11 queue and the rate limiter degrade gracefully without Redis —
+      # which is exactly why CI must have one: without it the tests silently
+      # exercise the fallbacks and never the real path.
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm --filter @stakeam/api exec prisma generate
+
+      # Ordered so the cheapest checks fail first.
+      - name: Lint
+        run: pnpm lint
+
+      - name: Format check
+        run: pnpm format:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # The ledger's guarantees are database guarantees — append-only grants,
+      # triggers, transactional atomicity — so its tests need a migrated schema
+      # before they run, on a database of their own that they are free to wipe.
+      - name: Apply migrations
+        run: pnpm --filter @stakeam/api exec prisma migrate deploy
+
+      - name: Prepare the integration database
+        run: |
+          psql "$DATABASE_URL" -c 'CREATE DATABASE stakeam_test;'
+          DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @stakeam/api exec prisma migrate deploy
+
+      - name: Test
+        run: pnpm test
+
+      - name: Property tests (engine + ledger invariants)
+        run: pnpm test:props
+
+      - name: Schema has not drifted from migrations
+        run: |
+          psql "$DATABASE_URL" -c 'CREATE DATABASE stakeam_shadow;' || true
+          pnpm --filter @stakeam/api exec prisma migrate diff \
+            --from-schema-datamodel prisma/schema.prisma \
+            --to-url "$DATABASE_URL" \
+            --exit-code \
+          || {
+            echo "::error::prisma/schema.prisma has drifted from prisma/migrations — add a migration"
+            exit 1
+          }
+
+      # The ledger is the reason this repo exists. Prove the rule actually binds
+      # against a live Postgres rather than trusting that the SQL ran.
+      - name: Ledger is append-only
+        run: |
+          set -e
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
+            INSERT INTO users (id, \"contactVerified\", tier, \"pwHash\", role, status)
+            VALUES ('ci_user', true, 0, 'x', 'user', 'active');
+            INSERT INTO ledger (id, \"userId\", type, \"fundClass\", amount, currency)
+            VALUES ('ci_entry', 'ci_user', 'signup_bonus', 'user_available', 100,
+              -- Read the points currency off the enum rather than naming it. This
+              -- step is about the append-only rule, and hardcoding 'PTS' here is
+              -- exactly what broke it when §2.2 renamed the value to 'SPC'.
+              (SELECT enumlabel FROM pg_enum e
+                 JOIN pg_type t ON t.oid = e.enumtypid
+                WHERE t.typname = 'Currency'
+                ORDER BY e.enumsortorder LIMIT 1)::\"Currency\");
+          "
+          if psql "$DATABASE_URL" -c "UPDATE ledger SET amount = 999 WHERE id = 'ci_entry';" 2>/dev/null; then
+            echo "::error::ledger accepted an UPDATE — append-only enforcement is broken"
+            exit 1
+          fi
+          if psql "$DATABASE_URL" -c "DELETE FROM ledger WHERE id = 'ci_entry';" 2>/dev/null; then
+            echo "::error::ledger accepted a DELETE — append-only enforcement is broken"
+            exit 1
+          fi
+          echo "ledger rejected UPDATE and DELETE as expected"
+
+      - name: Build
+        run: pnpm build
+
+  docker:
+    name: images build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build API image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: false
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/web/Dockerfile
+          push: false
