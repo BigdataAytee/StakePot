@@ -112,6 +112,17 @@ export const CONFIG_SCHEMAS = {
   /** How long an unclaimed opportunity stays on the feed. */
   opportunity_ttl_days: z.number().int().positive(),
 
+  // The community layer (§2.15a, §2.15e)
+  /** §2.15a: commenting requires this tier, plus eligibility to trade. */
+  comment_min_tier: z.number().int().nonnegative(),
+  comment_max_length: z.number().int().positive(),
+  /** The gap between one person's comments — stops a flood. */
+  comment_min_seconds_between: z.number().int().nonnegative(),
+  /** The hourly cap — stops a slow grind the gap would not catch. */
+  comment_rate_per_hour: z.number().int().positive(),
+  /** Distinct reporters that pull a live comment into the moderation queue. */
+  comment_reports_to_flag: z.number().int().positive(),
+
   // Financial controls (§2.10)
   reconciliation_tolerance_spc: z.number().nonnegative(),
   withdrawals_frozen: z.boolean(),

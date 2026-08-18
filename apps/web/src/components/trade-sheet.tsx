@@ -47,6 +47,7 @@ export function TradeSheet({
   onFilled: () => void;
 }) {
   const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,6 +122,9 @@ export function TradeSheet({
           amount,
           // A retry must never double-fill (§11).
           requestId: crypto.randomUUID(),
+          // §2.15a's reason prompt. Optional, one line, and it lands on the
+          // thread carrying the position this trade just created.
+          ...(reason.trim().length === 0 ? {} : { reason: reason.trim() }),
         }),
       });
       if (!response.ok) {
@@ -269,6 +273,26 @@ export function TradeSheet({
                 This trade moves {outcome.label} to{' '}
                 <span className="font-mono">{Math.round(percent(preview.priceAfter))}%</span>.
               </p>
+            )}
+
+            {/* §2.15a's reason prompt: "optional one-line 'why?' at trade time,
+                feeding the thread — the best forecasting education new users
+                can get." Optional and public, said plainly, because it posts
+                under their name with the position attached. */}
+            {side === 'buy' && !closed && (
+              <div className="mt-4">
+                <label className="block text-sm font-semibold" htmlFor="trade-reason">
+                  Why? <span className="font-normal text-text-muted">(optional)</span>
+                </label>
+                <input
+                  id="trade-reason"
+                  value={reason}
+                  onChange={(event) => setReason(event.target.value)}
+                  maxLength={500}
+                  placeholder="One line. It goes on the thread with your position."
+                  className="mt-1.5 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-rise"
+                />
+              </div>
             )}
 
             {error !== null && <p className="mt-3 text-sm text-fall">{error}</p>}

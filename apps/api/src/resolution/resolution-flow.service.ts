@@ -7,6 +7,7 @@ import { type Tx } from '../ledger/ledger.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { QuestionEngineService } from '../community/question-engine.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
+import { ThreadService } from '../community-layer/thread.service';
 import { AutopsyService } from '../creator/autopsy.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResolutionService, type ResolveOutcome } from '../trade/resolution.service';
@@ -53,6 +54,7 @@ export class ResolutionFlowService {
     private readonly notifications: NotificationsService,
     private readonly engine: QuestionEngineService,
     private readonly autopsies: AutopsyService,
+    private readonly threads: ThreadService,
   ) {}
 
   /**
@@ -335,6 +337,11 @@ export class ResolutionFlowService {
     // the AI improve from the same signals". It also moves the creator's
     // record, so a market cannot settle without the ladder noticing.
     await this.autopsies.record({ marketId: market.id, kind: 'resolved' });
+
+    // §2.15a's prediction receipts: "at resolution, every comment keeps its
+    // badge permanently". The badge was already permanent — this stamps the one
+    // thing nobody could know at the time, whether the call landed.
+    await this.threads.stampReceipts(market.id);
 
     // Everyone who was paid, and everyone who argued, hears about it — after the
     // money has moved, because that is when it is true (§2.12).

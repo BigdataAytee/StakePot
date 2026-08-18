@@ -109,6 +109,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       // matter here — §2.9's outcome log — do not need one.
       new QuestionEngineService(prisma, config, null),
       autopsies,
+      new ThreadService(prisma, config),
     );
     approvals = new ApprovalsService(prisma, ledger, voids, config, audit, new TotpService(prisma));
   });
@@ -648,3 +649,4 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
 import { CreatorAnalyticsService } from '../creator/analytics.service';
 import { AutopsyService } from '../creator/autopsy.service';
 import { CreatorService } from '../creator/creator.service';
+import { ThreadService } from '../community-layer/thread.service';

@@ -23,7 +23,10 @@ drafts queue, community screening, and the wizard's co-pilot. Step 11 adds the
 creator platform: public profiles at `/c/<handle>`, a follow system, the §2.14c
 progression ladder with privileges that actually bind, the creator studio at
 `/studio` with analytics and nudges, the opportunity feed, share cards, and an
-automatic autopsy on every market that closes.
+automatic autopsy on every market that closes. Step 12 adds the community layer:
+take threads with position badges on every comment, prediction receipts at
+resolution, the optional "why?" at trade time, challenge links, a Trust & Safety
+moderation queue, and the app is now installable and works offline.
 
 ## Quickstart
 

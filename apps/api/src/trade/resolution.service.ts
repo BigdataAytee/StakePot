@@ -217,8 +217,27 @@ export class ResolutionService {
         });
       }
 
-      // If this does not sum to zero the engine and the ledger disagree about
-      // what the market held, and neither is safe to trust.
+      // The engine conserves the pot *within a scaled tolerance*, deliberately:
+      // its arithmetic runs on a logarithmic cost curve at 40 significant
+      // digits, and `pot − fee` then `+ fee` is not associative at fixed
+      // precision — no arrangement of the operations makes it so. The ledger's
+      // contract is stricter and has to be: `assertBalanced` requires postings
+      // summing to zero *to the digit*, because money that does not balance is
+      // money invented by a write.
+      //
+      // Those two contracts meet here, so this is where the gap is closed. The
+      // largest payout leg absorbs the difference — largest so the adjustment is
+      // relatively smallest, and chosen deterministically so the same market
+      // resolved twice produces identical postings. The correction is bounded by
+      // the engine's own tolerance: fractions of 1e-30 SPC, a dozen orders of
+      // magnitude below the storage quantum and thirty below one kobo.
+      //
+      // Left unclosed this was not theoretical. A syndicated market has a dozen
+      // holders, which gives the rounding a dozen chances to bite, and the
+      // market would simply fail to resolve — intermittently, depending on the
+      // share ratios the trading happened to produce.
+      balanceOnLargestPayout(postings);
+
       await this.ledger.post(tx, postings, `resolve:${input.marketId}`);
 
       // One market, one resolution record. Where a result was proposed and sat
@@ -333,4 +352,42 @@ export class ResolutionService {
 
     return [...legs.entries()].map(([userId, amount]) => ({ userId, amount }));
   }
+}
+
+/**
+ * Fold a transaction's rounding residual into its largest payout leg.
+ *
+ * Only ever adjusts a `payout` posting landing in `user_available`: the escrow
+ * releases are read from stored ledger rows and must not be restated, and the
+ * fee legs are what the platform is owed under §2.3. The winner's share is the
+ * one quantity that is a division in the first place, so it is the honest place
+ * for a division's remainder to land.
+ *
+ * A no-op when the postings already balance, which is the common case.
+ */
+export function balanceOnLargestPayout(postings: Posting[]): void {
+  const residual = postings.reduce((acc, posting) => acc.plus(posting.amount), new Decimal(0));
+  if (residual.isZero()) return;
+
+  let target = -1;
+  for (const [index, posting] of postings.entries()) {
+    if (posting.type !== 'payout' || posting.fundClass !== 'user_available') continue;
+    const best = target === -1 ? undefined : postings[target];
+    if (
+      best === undefined ||
+      posting.amount.gt(best.amount) ||
+      (posting.amount.equals(best.amount) && posting.userId < best.userId)
+    ) {
+      target = index;
+    }
+  }
+
+  // Nothing was paid out — a market where every winning share was already
+  // exited. There is no leg that can absorb it, and `assertBalanced` should say
+  // so loudly rather than have this quietly paper over a real imbalance.
+  if (target === -1) return;
+
+  const chosen = postings[target];
+  if (chosen === undefined) return;
+  postings[target] = { ...chosen, amount: chosen.amount.minus(residual) };
 }

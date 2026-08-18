@@ -1,0 +1,37 @@
+{
+  "thread": {
+    "heading": "Takes",
+    "empty": "No takes yet. Say something and your position goes on the record.",
+    "placeholder": "What do you think happens?",
+    "post": "Post",
+    "posting": "Posting…",
+    "signedOut": "Sign in to add your take.",
+    "noPosition": "no position",
+    "reply": "Reply",
+    "report": "Report",
+    "reported": "Reported",
+    "reportReason": "What is wrong with it?",
+    "removed": "Removed by a moderator.",
+    "held": "Waiting on a moderator. Only you can see this.",
+    "flagged": "In the moderation queue.",
+    "fromTrade": "at trade time",
+    "calledIt": "Called it",
+    "missed": "Missed",
+    "boldness": "{pct}% when they said it"
+  },
+  "challenge": {
+    "create": "Challenge someone",
+    "created": "Link copied. Send it to someone who disagrees.",
+    "needPosition": "Take a position first — that is what there is to argue with.",
+    "landing": "{name} says {outcome} at {pct}%.",
+    "proveWrong": "Prove them wrong",
+    "accepted": "Somebody already answered this one.",
+    "accept": "Take the other side",
+    "opens": "{count} opened"
+  },
+  "trade": {
+    "whyLabel": "Why? (optional)",
+    "whyPlaceholder": "One line. It goes on the thread with your position.",
+    "whyHelp": "Optional, and public."
+  }
+}

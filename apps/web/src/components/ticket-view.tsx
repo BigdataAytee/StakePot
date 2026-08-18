@@ -10,6 +10,7 @@ import { PriceChart, type Timeframe } from '@/components/price-chart';
 import { RulesCard } from '@/components/rules-card';
 import { SeedPanel } from '@/components/seed-panel';
 import { ShareSheet } from '@/components/share-sheet';
+import { TakeThread } from '@/components/take-thread';
 import { TradeSheet, type TradeIntent } from '@/components/trade-sheet';
 import { useMarketFeed } from '@/hooks/use-market-feed';
 import { api, type MarketDetail, type PricePoint, type SeedComposition } from '@/lib/api';
@@ -231,6 +232,18 @@ export function TicketView({
       <div className="mt-6">
         <RulesCard market={initial} />
       </div>
+
+      {/* §2.15a: the market page *is* the community space — no separate forum,
+          because the argument and the money belong on the same screen. */}
+      <TakeThread
+        marketId={initial.id}
+        outcomes={initial.outcomes.map((outcome) => ({
+          label: outcome.label,
+          ordinal: outcome.ordinal,
+        }))}
+        resolved={initial.state === 'resolved'}
+        signedIn={token !== null}
+      />
 
       <TradeSheet
         market={initial}

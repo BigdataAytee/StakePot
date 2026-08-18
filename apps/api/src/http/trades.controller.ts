@@ -1,7 +1,8 @@
 import { BadRequestException, Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
-import { IsIn, IsNotEmpty, IsString, Matches } from 'class-validator';
+import { IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
+import { ThreadService } from '../community-layer/thread.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TradeService } from '../trade/trade.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -17,6 +18,11 @@ export class PlaceTradeDto {
   @Matches(DECIMAL, { message: 'amount must be a positive decimal string' }) amount!: string;
   /** Client-generated idempotency key (§11). */
   @IsString() @IsNotEmpty() requestId!: string;
+  /**
+   * §2.15a's reason prompt: the optional one-line "why?" at trade time, which
+   * feeds the thread. "The best forecasting education new users can get."
+   */
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
 }
 
 @Controller()
@@ -25,6 +31,7 @@ export class TradesController {
     private readonly trades: TradeService,
     private readonly wallet: WalletService,
     private readonly prisma: PrismaService,
+    private readonly threads: ThreadService,
   ) {}
 
   @Post('trades')
@@ -49,6 +56,21 @@ export class TradesController {
             shares: body.amount,
             requestId: body.requestId,
           });
+
+    // The reason posts *after* the trade, so the badge it carries is the
+    // position the trade just created — which is the point of asking at trade
+    // time rather than in the thread. Best-effort: a rejected comment (rate
+    // limit, a tripped rule) must never unwind a settled trade.
+    if (body.reason !== undefined && body.reason.trim().length > 0) {
+      await this.threads
+        .post({
+          marketId: body.marketId,
+          userId: user.userId,
+          text: body.reason,
+          fromTrade: true,
+        })
+        .catch(() => undefined);
+    }
 
     return {
       id: trade.id,

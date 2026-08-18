@@ -196,7 +196,11 @@ enum AutopsyKind {
 
 enum CommentState {
   live
+  /// Published, but in the moderation queue — the soft outcome.
   flagged
+  /// Kept out of the thread until a person looks. §2.15e's hard bans land here
+  /// rather than being deleted: no rule removes somebody's words on its own.
+  held
   removed
 }
 
@@ -285,6 +289,8 @@ model User {
   squadsOwned        Squad[]
   squadMemberships   SquadMember[]
   challenges         Challenge[]
+  challengesAccepted Challenge[]        @relation("ChallengeAccepted")
+  commentReports     CommentReport[]
   topCalls           TopCall[]
   leaderboardSnapshots LeaderboardSnapshot[]
   opportunities      Opportunity[]
@@ -929,18 +935,62 @@ model Comment {
   userId   String
   text     String
   /// Snapshot of the commenter's position at the time, e.g. "YES@62" or "none".
+  ///
+  /// Written once and never recomputed. That permanence is the whole mechanism:
+  /// a badge that followed the position would let somebody argue a side, close
+  /// out, and leave a comment that reads as disinterested (§2.15a).
   positionSnapshot String
+  /// §2.15a's "reason prompts": a comment created by the optional one-line
+  /// "why?" at trade time, rather than typed into the thread.
+  fromTrade Boolean     @default(false)
   parentId String?
   state    CommentState @default(live)
+  /// §2.15a's prediction receipt, stamped at resolution. Null while the market
+  /// is open, and null forever on a comment that held no position — that is not
+  /// a wrong call, it is not a call.
+  calledIt Boolean?
+  /// How bold a correct call was, 0–1: a landed 15% shout is the platform's
+  /// best marketing asset, the same call at 90% is a shrug.
+  boldness Decimal?     @db.Decimal(38, 18)
+  /// What the §2.15e rules matched, kept so a held comment can be explained to
+  /// the person who wrote it and checked by whoever reviews it.
+  flagsJson Json?
+  moderatedBy String?
+  moderatedAt DateTime?
   createdAt DateTime    @default(now())
 
   market  Market    @relation(fields: [marketId], references: [id], onDelete: Cascade)
   user    User      @relation(fields: [userId], references: [id])
   parent  Comment?  @relation("CommentThread", fields: [parentId], references: [id])
   replies Comment[] @relation("CommentThread")
+  reports CommentReport[]
 
   @@index([marketId, createdAt])
+  @@index([state, createdAt])
   @@map("comments")
+}
+
+/// §2.15e's report button.
+///
+/// Not in §3's data model, which lists `comments.state` but nothing to carry
+/// *why* a comment is in that state. A moderation queue whose only input is a
+/// flag has no way to tell one furious reader from forty, and no way to show a
+/// reviewer what was actually objected to.
+model CommentReport {
+  id        String   @id @default(cuid())
+  commentId String
+  reporterId String
+  reason    String
+  createdAt DateTime @default(now())
+
+  comment  Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  reporter User    @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+
+  /// One report per person per comment: a queue ordered by report count must
+  /// count people, not clicks.
+  @@unique([commentId, reporterId])
+  @@index([commentId])
+  @@map("comment_reports")
 }
 
 model Reputation {
@@ -1011,11 +1061,17 @@ model Challenge {
   positionSnapshot String
   linkToken        String   @unique
   acceptedBy       String?
+  acceptedAt       DateTime?
+  /// How many people opened the link. §2.15d calls challenge links the
+  /// strongest signup motivator, and a claim like that needs a denominator.
+  opens            Int      @default(0)
   createdAt        DateTime @default(now())
 
   market     Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
   challenger User   @relation(fields: [challengerId], references: [id])
+  accepter   User?  @relation("ChallengeAccepted", fields: [acceptedBy], references: [id])
 
+  @@index([marketId])
   @@map("challenges")
 }
 

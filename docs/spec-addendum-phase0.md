@@ -356,6 +356,114 @@ time, since the floor is small — and a full bar next to a nudge saying one sid
 is short is a screen a creator cannot reconcile. The bar is drawn against the
 best-funded pool, with the floor marked on it.
 
+## The community layer (step 12)
+
+§2.15f's launch slice: take threads with position badges, challenge links, and
+the moderation between them. Titles, Top Calls and Squads are deliberately
+absent — §2.15f ships those after launch, and building them now would be
+building the parts that need an existing community for a platform that does not
+have one yet.
+
+**The badge is a snapshot, and that is the whole mechanism.** §2.15a asks for
+"YES @ 62%" next to every comment so that talking your book is visible. A badge
+that tracked the live position would let somebody argue a side, close out, and
+leave a comment reading as disinterested — so `positionSnapshot` is written once
+and never recomputed. The same permanence is what makes §2.15a's prediction
+receipts possible at all.
+
+**Somebody holding both sides gets the larger one, not both.** A hedged account
+badged with one side would be the opposite of accountability. The largest
+holding is the position they are speaking from.
+
+**"No position" is shown, never omitted.** The absence of a stake is exactly
+what a reader wants to know when somebody is talking a market up, so it gets a
+badge of its own rather than a blank space.
+
+**A comment from somebody holding nothing is not a wrong call.** At resolution
+`calledIt` stays null for an unbadged comment rather than going false. Marking
+it wrong would punish the disinterested commentary the thread wants most.
+
+**Rules hold and flag; only people remove.** §2.15e names the parasite-tipster
+patterns — betting links, tips-for-sale, "DM me for sure odds" — as hard bans,
+and those are held out of the thread until a human looks. Nothing in the rules
+deletes anybody's words: a rule that can, eventually deletes the wrong ones. The
+author always sees their own held comment, so being caught is never silent, and
+a removed comment leaves its shape in the thread because a feed with holes cut
+out of it reads as tampered with.
+
+**"DM me" only counts alongside a pitch.** On its own it is how people talk. It
+becomes §2.15e's contact-harvesting signal when it arrives with tips for sale or
+a guarantee attached — which is the actual pattern the spec names. A bare phone
+number counts on its own.
+
+**Reports count people, not clicks**, enforced by a unique index rather than by
+the endpoint, so a queue ordered by report count means what it says.
+
+**Rate limits are counted from the rows, not a token bucket.** §5.1 puts
+`rate-limiter-flexible` in step 14; a comment cooldown measured against the
+comments already written needs no new dependency and survives a restart that an
+in-memory limiter would not. Two limits, because they stop different things: the
+gap stops a flood, the hourly cap stops a slow grind.
+
+**Self-exclusion closes the argument too.** §2.12's exclusion is a door that
+closes, not a balance that freezes, so an excluded account cannot comment either.
+
+**A challenge is not a wager.** §2.15d is an acquisition mechanism: the link
+carries a claim, and the recipient's stake is an ordinary trade through the
+ordinary path with all of §2.12's limits on it. Nothing is escrowed, matched or
+settled by a challenge. It can only be answered from the _other_ side — same-side
+agreement is not a challenge — and only once, decided by a conditional update
+rather than a read-then-write.
+
+**The three step-12 packages are wired, not parked.** `canvas-confetti` fires
+once when one of _your_ calls landed, reduced-motion respected. `@serwist/next`
+precaches the shell but leaves every number network-first — a stale price shown
+as current is worse than no price, because somebody will trade on it.
+`next-intl` is set up **without** locale routing: StakeAm ships in Nigerian
+English only, and putting twelve routes behind `/[locale]/` for one locale would
+buy nothing today while changing every URL on the day a second one arrives. What
+it does buy now is the part that is genuinely hard to retrofit — strings in a
+catalogue instead of inlined in JSX.
+
+## The engine and the ledger have different contracts (found in step 12)
+
+Step 12's pipeline caught an **intermittent failure to resolve a syndicated
+market**: the ledger refused a transaction whose postings summed to 1e-37
+instead of zero. It reproduced roughly one run in three, and it was not new —
+step 12 simply rolled the dice enough times.
+
+The cause is a mismatch between two contracts, both of which are correct on
+their own terms. The engine conserves the pot _within a scaled tolerance_: its
+arithmetic runs on a logarithmic cost curve at 40 significant digits, per-holder
+payouts are `distributable × shares / outstanding`, and `pot − fee` followed by
+`+ fee` is not associative at fixed precision. The ledger's `assertBalanced`
+requires postings summing to zero _to the digit_, because money that does not
+balance is money invented by a write.
+
+Both were attempted first inside the engine — absorbing the remainder into the
+largest holder, then deriving that holder's payout by subtraction — and property
+testing killed both. Adding ~1e-37 to the biggest payout is exactly what 40
+significant digits swallows, so the correction silently did nothing; and
+`others + (distributable − others)` is not `distributable` either once the
+holdings span several orders of magnitude. **Exact conservation is not
+achievable through fixed-precision arithmetic here**, and the engine's tolerance
+contract is the right one.
+
+So the gap is closed where exactness is actually required: at the ledger
+boundary, in `balanceOnLargestPayout`. The largest payout leg absorbs the
+residual — largest so the adjustment is relatively smallest, chosen
+deterministically so the same market resolved twice produces identical postings.
+It only ever touches a `payout` leg landing in `user_available`: escrow releases
+are read from stored rows and must not be restated, and the fee legs are what
+§2.3 says the platform is owed. The winner's share is a division in the first
+place, so it is the honest place for a division's remainder to land. With no
+payout leg at all — every winning share already exited — it does nothing, and
+`assertBalanced` is left to refuse loudly rather than have a real imbalance
+quietly papered over.
+
+The correction is bounded by the engine's own tolerance: fractions of 1e-30 SPC,
+a dozen orders of magnitude below the storage quantum and thirty below one kobo.
+
 ## Still open
 
 **The §2.3 liquidity tuning rule understates price impact by 1/p.** Unchanged in

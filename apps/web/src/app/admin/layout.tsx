@@ -5,6 +5,7 @@ import {
   Gavel,
   LayoutDashboard,
   LifeBuoy,
+  ShieldAlert,
   ShieldCheck,
   Sparkles,
   Wallet,
@@ -30,6 +31,7 @@ import { admin, type DashboardView } from '@/lib/admin-api';
 const SCREENS = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/admin/drafts', label: 'Drafts', icon: Sparkles },
+  { href: '/admin/moderation', label: 'Moderation', icon: ShieldAlert },
   { href: '/admin/resolution', label: 'Resolution', icon: Gavel },
   { href: '/admin/approvals', label: 'Approvals', icon: ShieldCheck },
   { href: '/admin/money', label: 'Money room', icon: Wallet },

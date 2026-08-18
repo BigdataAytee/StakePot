@@ -4,6 +4,7 @@ import { JwtModule } from '@nestjs/jwt';
 import { AdminModule } from '../admin/admin.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { AuthModule } from '../auth/auth.module';
+import { CommunityLayerModule } from '../community-layer/community-layer.module';
 import { CommunityModule } from '../community/community.module';
 import { CreatorModule } from '../creator/creator.module';
 import { JwtGuard, OptionalJwtGuard } from '../auth/jwt.guard';
@@ -25,6 +26,7 @@ import { StatusController } from './status.controller';
 import { CommunityController } from './community.controller';
 import { CreatorsController, MarketSignalsController } from './creators.controller';
 import { MarketsController } from './markets.controller';
+import { ModerationController, ThreadsController } from './threads.controller';
 import { TradesController } from './trades.controller';
 
 @Module({
@@ -32,6 +34,7 @@ import { TradesController } from './trades.controller';
     AdminModule,
     ApprovalsModule,
     AuthModule,
+    CommunityLayerModule,
     CommunityModule,
     CreatorModule,
     LedgerModule,
@@ -57,6 +60,8 @@ import { TradesController } from './trades.controller';
     CreatorsController,
     MarketSignalsController,
     MarketsController,
+    ModerationController,
+    ThreadsController,
     TradesController,
   ],
   providers: [JwtGuard, OptionalJwtGuard, RolesGuard],

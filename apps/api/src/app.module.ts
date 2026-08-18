@@ -4,6 +4,7 @@ import { AdminModule } from './admin/admin.module';
 import { ApprovalsModule } from './approvals/approvals.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
+import { CommunityLayerModule } from './community-layer/community-layer.module';
 import { CommunityModule } from './community/community.module';
 import { CreatorModule } from './creator/creator.module';
 import { HealthController } from './health/health.controller';
@@ -41,6 +42,7 @@ import { WalletModule } from './wallet/wallet.module';
     SupportModule,
     StatusModule,
     CommunityModule,
+    CommunityLayerModule,
     CreatorModule,
     MarketModule,
     RealtimeModule,
