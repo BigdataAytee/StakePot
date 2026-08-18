@@ -96,7 +96,9 @@ test.describe('the walkthrough', () => {
     await expect(page).toHaveURL(/\/signup/);
 
     await page.getByLabel('Email or phone').fill(email);
-    await page.getByLabel('Password').fill(password);
+    // Exact: the field's accessible name is "Password" and the reveal button's
+    // is "Show password", so a loose match catches both.
+    await page.getByLabel('Password', { exact: true }).fill(password);
     await capture(page, 'signup', testInfo);
 
     await page.getByRole('checkbox').check();

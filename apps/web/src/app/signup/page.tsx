@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import { API_URL } from '@/lib/api';
+import { AuthShell } from '@/components/auth-shell';
+import { PasswordField } from '@/components/password-field';
 import { money } from '@/lib/format';
 import { setToken } from '@/lib/session';
 import { usePublicConfig } from '@/lib/public-config';
@@ -68,7 +70,7 @@ export default function SignupPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-12">
+    <AuthShell>
       <h1 className="text-2xl font-black leading-none">Create your account</h1>
       <p className="mt-2 text-md text-text-muted">
         Ten seconds.{' '}
@@ -87,7 +89,7 @@ export default function SignupPage() {
             onChange={(event) => setContact(event.target.value)}
             placeholder="you@example.com or 08031234567"
             autoComplete="username"
-            className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-md outline-none focus-visible:border-rise"
+            className="rounded-md border border-border bg-surface-raised px-3 py-3 text-md outline-none focus-visible:border-rise"
           />
           <span className="font-mono text-xs text-text-muted">
             {contact.length === 0
@@ -98,26 +100,27 @@ export default function SignupPage() {
           </span>
         </label>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-bold">Password</span>
-          <input
-            required
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            minLength={10}
-            autoComplete="new-password"
-            className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-md outline-none focus-visible:border-rise"
-          />
-          <span className="font-mono text-xs text-text-muted">At least 10 characters.</span>
-        </label>
+        <PasswordField
+          label="Password"
+          value={password}
+          onChange={setPassword}
+          autoComplete="new-password"
+          minLength={10}
+          hint="At least 10 characters."
+        />
 
-        <label className="flex items-start gap-2.5">
+        {/*
+          A 16px checkbox gating the only button on the screen is the kind of
+          thing that reads fine on a desktop and is genuinely hard to hit with a
+          thumb. The whole row is the target now, and the box itself clears the
+          44px minimum.
+        */}
+        <label className="-mx-2 flex min-h-[3rem] cursor-pointer items-center gap-3 rounded-md px-2 py-2">
           <input
             type="checkbox"
             checked={ageAttested}
             onChange={(event) => setAgeAttested(event.target.checked)}
-            className="mt-1 h-4 w-4 accent-rise"
+            className="h-6 w-6 shrink-0 accent-rise"
           />
           <span className="text-sm">
             I am 18 or older, and I have read the{' '}
@@ -140,7 +143,7 @@ export default function SignupPage() {
         <button
           type="submit"
           disabled={busy || !ageAttested}
-          className="mt-2 rounded-md bg-rise px-4 py-3 text-md font-black text-paper transition-transform active:scale-press disabled:opacity-50"
+          className="mt-2 min-h-[3rem] rounded-md bg-rise px-4 py-3 text-md font-black text-paper transition-transform active:scale-press disabled:opacity-50"
         >
           {busy ? 'Creating…' : 'Create account'}
         </button>
@@ -148,10 +151,10 @@ export default function SignupPage() {
 
       <p className="mt-6 text-sm text-text-muted">
         Already have one?{' '}
-        <Link href="/login" className="font-bold underline">
+        <Link href="/login" className="inline-block py-2 font-bold underline">
           Log in
         </Link>
       </p>
-    </main>
+    </AuthShell>
   );
 }
