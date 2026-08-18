@@ -26,6 +26,7 @@ import { AccountController } from './account.controller';
 import { AbuseController, DeviceController } from './abuse.controller';
 import { AdminController } from './admin.controller';
 import { AuthController } from './auth.controller';
+import { PublicConfigController } from './public-config.controller';
 import { StatusController } from './status.controller';
 import { CommunityController } from './community.controller';
 import { CreatorsController, MarketSignalsController } from './creators.controller';
@@ -69,6 +70,7 @@ import { TradesController } from './trades.controller';
     AdminController,
     DeviceController,
     AuthController,
+    PublicConfigController,
     StatusController,
     CommunityController,
     AnalyticsController,

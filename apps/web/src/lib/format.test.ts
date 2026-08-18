@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { closedReason } from './format';
+import { closedReason, exactMoney, money } from './format';
 
 /**
  * The closed-trading line, pinned per state.
@@ -38,5 +38,19 @@ describe('closedReason', () => {
 
   it('falls back to something true rather than something specific', () => {
     expect(closedReason('some_state_added_later')).toBe('Trading is closed on this market.');
+  });
+});
+
+describe('money formatting', () => {
+  it('puts the sign in front of the currency, not inside it', () => {
+    expect(exactMoney('-500')).toBe('-₦500.00');
+    expect(money('-15000')).toBe('-₦15k');
+    expect(money('-2500000')).toBe('-₦2.5m');
+  });
+
+  it('is unchanged for positives', () => {
+    expect(exactMoney('500')).toBe('₦500.00');
+    expect(money('15000')).toBe('₦15k');
+    expect(money('9000')).toBe('₦9,000');
   });
 });

@@ -19,6 +19,21 @@ const API = process.env['API_URL'] ?? 'http://localhost:3001';
 const DB =
   process.env['TEST_DATABASE_URL'] ?? 'postgresql://stakeam:stakeam@localhost:5432/stakeam_test';
 
+/**
+ * Clear this machine's auth rate-limit budget before the run.
+ *
+ * These journeys sign up fresh accounts, which is exactly the shape §11's
+ * limiter exists to refuse — so repeated local runs start 429ing on signup.
+ * CI gets a fresh Redis per job and never notices; a developer re-running the
+ * suite would otherwise see a product failure that is really a working control.
+ * The limiter itself is asserted in walkthrough.spec.ts.
+ */
+try {
+  execSync('redis-cli --scan --pattern "rl:auth:*" | xargs -r redis-cli del', { stdio: 'ignore' });
+} catch {
+  // No redis-cli here: the run is then subject to the real budget.
+}
+
 const stamp = Date.now();
 let marketId: string;
 let yesOutcomeId: string;

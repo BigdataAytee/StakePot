@@ -30,9 +30,14 @@ ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
-# `output: 'standalone'` traces exactly the files the server needs.
+# `output: 'standalone'` traces exactly the files the server needs — but it
+# traces *code*, so the two directories Next serves as-is have to come along
+# separately. Without `public/` the image answers 404 for `/manifest.json` and
+# `/sw.js`: the app still renders, so nothing looks broken, while the PWA is
+# silently uninstallable and the offline shell never registers.
 COPY --from=build /app/apps/web/.next/standalone ./
 COPY --from=build /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=build /app/apps/web/public ./apps/web/public
 USER node
 EXPOSE 3000
 CMD ["node", "apps/web/server.js"]

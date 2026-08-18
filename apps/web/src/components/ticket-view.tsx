@@ -16,6 +16,7 @@ import { useMarketFeed } from '@/hooks/use-market-feed';
 import { api, type MarketDetail, type PricePoint, type SeedComposition } from '@/lib/api';
 import { recordView } from '@/lib/creator-api';
 import { STATE_LABEL, closedReason, percent, untilFreeze } from '@/lib/format';
+import { PositionPanel } from './position-panel';
 import { useLivePrices } from '@/store/live-prices';
 
 /**
@@ -38,6 +39,9 @@ export function TicketView({
   const [intent, setIntent] = useState<TradeIntent | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [composition, setComposition] = useState<SeedComposition | null>(null);
+  // Bumped after a fill so the position panel re-reads rather than showing the
+  // holding the user had before the trade they just made.
+  const [filled, setFilled] = useState(0);
 
   const headline = initial.outcomes[0];
   useMarketFeed(initial.id);
@@ -210,6 +214,13 @@ export function TicketView({
         )}
       </div>
 
+      <PositionPanel
+        market={initial}
+        livePrices={prices}
+        refreshKey={filled}
+        onSell={(outcome, held) => setIntent({ outcome, side: 'sell', held })}
+      />
+
       {composition !== null && (
         <div className="mt-5">
           <SeedPanel
@@ -243,7 +254,13 @@ export function TicketView({
         livePrices={prices}
         token={token}
         onClose={() => setIntent(null)}
-        onFilled={() => window.location.reload()}
+        onFilled={() => {
+          // A fill changes the pot, the thread and the position at once, so the
+          // page is re-read rather than patched in three places. `filled` is
+          // what refreshes the position panel on the paths that do not reload.
+          setFilled((count) => count + 1);
+          window.location.reload();
+        }}
       />
     </main>
   );
