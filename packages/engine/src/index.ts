@@ -21,6 +21,7 @@ export {
   openMarket,
   potIdentityResidual,
   resolve,
+  seed,
   sell,
   splitResolutionFee,
   stakedIdentityResidual,
@@ -34,6 +35,7 @@ export type {
   OpenMarketParams,
   Payout,
   ResolutionResult,
+  SeedResult,
   TradeResult,
 } from './market';
 

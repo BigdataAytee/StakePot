@@ -11,9 +11,11 @@ and [`docs/market-rulebook.md`](docs/market-rulebook.md).
 [`docs/spec-addendum-phase0.md`](docs/spec-addendum-phase0.md) records how the
 Phase 0 scaffold reconciles against them, and the open questions it raised.
 
-## Status: Phase 0 — scaffold
+## Status: Phase 3 — community shelf
 
-Pricing engine, design tokens, data model and CI. No market UI yet.
+Money core, live market and ticket view, multi-outcome markets, community
+creation with AI screening, and — as of step 7 — Path B symmetric seeds, Sponsor
+Syndicates and conduct bonds.
 
 ## Quickstart
 

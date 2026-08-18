@@ -498,3 +498,87 @@ export function splitResolutionFee(fee: Numeric, split: FeeSplitBps): FeeSplit {
   const creator = total.times(creatorBps).div(totalBps);
   return { creator, platform: total.minus(creator) };
 }
+
+export interface SeedResult {
+  /** Market state after the seed. */
+  readonly state: MarketState;
+  /** Shares granted on **every** outcome. Identical by construction. */
+  readonly sharesPerOutcome: Decimal;
+  /** Money staked into each outcome's pool. Identical by construction. */
+  readonly perOutcome: Decimal;
+  /** perOutcome × n — what the seeder pays in total. */
+  readonly total: Decimal;
+  /** Prices after the seed. Unchanged from before it. */
+  readonly pricesAfter: readonly Decimal[];
+}
+
+/**
+ * SYMMETRIC SEED — Path B activation (§2.4, Rulebook Part 3 §2 and §3).
+ *
+ * "The creator stakes a Symmetric Seed of at least [20,000] points into each
+ * pool (equal amounts on every side). The seed must always be symmetric. A
+ * creator can never hold an unequal position in their own market."
+ *
+ * The cost curve makes this exact rather than approximate. Adding the same δ to
+ * every outcome factors straight out of the log-sum:
+ *
+ *   C(q + δ·1) = L·ln( e^(δ/L) · Σ e^(q_j/L) ) = δ + C(q)
+ *
+ * So granting δ shares of every outcome costs exactly δ and moves **no price at
+ * all**. Seeding is therefore the one operation that adds money to a market
+ * without expressing an opinion about it — which is precisely what the rulebook
+ * is asking for, and is why this is one closed-form step and not a loop of
+ * `buy()` calls. Buying `perOutcome` into each side in turn would leave the
+ * result depending on the order the outcomes happened to be listed in, and
+ * would hand the last outcome bought a better price than the first.
+ *
+ * With prices flat at 1/n, δ shares of each outcome divides into exactly δ/n of
+ * money per outcome, so `perOutcome` is the rulebook's unit — "into each pool"
+ * — and δ = perOutcome × n.
+ *
+ * Precondition: every outcome holds the same number of shares, i.e. the market
+ * has not traded. Seeding is defined as "equal money into every pool" and that
+ * only coincides with "equal shares of every outcome" while prices are flat;
+ * on a traded book the two readings diverge and the rulebook does not say which
+ * it means. It never has to — a seed is posted before the market opens.
+ *
+ * `frozen` is deliberately not checked: a market being seeded is not open for
+ * trading yet, and the seed is what opens it.
+ */
+export function seed(state: MarketState, perOutcome: Numeric): SeedResult {
+  const m = toDecimal(perOutcome);
+  if (m.lte(0)) {
+    throw new EngineValidationError(`seed per outcome must be > 0, received ${m.toString()}`);
+  }
+
+  const first = at(state.q, 0);
+  for (const qi of state.q) {
+    if (!qi.equals(first)) {
+      throw new EngineValidationError(
+        'a symmetric seed needs a market that has not traded — shares outstanding differ ' +
+          `across outcomes (${state.q.map((v) => v.toString()).join(', ')})`,
+      );
+    }
+  }
+
+  const n = new Decimal(state.q.length);
+  const total = m.times(n);
+  // δ = total: the grant that costs `total` is `total` shares of every outcome.
+  const delta = total;
+
+  const next: MarketState = {
+    ...state,
+    q: Object.freeze(state.q.map((qi) => qi.plus(delta))),
+    pot: state.pot.plus(total),
+    staked: Object.freeze(state.staked.map((s) => s.plus(m))),
+  };
+  assertInvariants(next);
+
+  return {
+    state: next,
+    sharesPerOutcome: delta,
+    perOutcome: m,
+    total,
+    pricesAfter: prices(next.q, state.liquidity),
+  };
+}

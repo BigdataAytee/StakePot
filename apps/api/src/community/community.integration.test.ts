@@ -12,7 +12,9 @@ import { resetDatabase } from '../testing/reset';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { TradeService } from '../trade/trade.service';
 import { WalletService } from '../wallet/wallet.service';
+import { AdminAuditService } from '../audit/admin-audit.service';
 import { CommunityService } from './community.service';
+import { MarketVoidService } from './void.service';
 import type { MarketTemplate } from './market-template';
 
 /**
@@ -47,7 +49,15 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
     );
-    community = new CommunityService(prisma, config, wallet, ledger);
+    const voids = new MarketVoidService(ledger);
+    community = new CommunityService(
+      prisma,
+      config,
+      wallet,
+      ledger,
+      voids,
+      new AdminAuditService(prisma),
+    );
     trades = new TradeService(prisma, ledger, wallet, config, {
       publish: async () => undefined,
     } as unknown as PriceCacheService);

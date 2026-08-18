@@ -8,6 +8,7 @@ import {
   openMarket,
   prices,
   resolve,
+  seed,
   sell,
   stakedIdentityResidual,
 } from '../index';
@@ -77,6 +78,13 @@ interface Scenario {
   readonly holders: number;
   readonly liquidity: Decimal;
   readonly ops: readonly Op[];
+  /**
+   * A Path B symmetric seed posted before the market opens, or null for a
+   * market that opens flat. Seeded markets are the ones where conservation is
+   * easiest to get wrong — the seeder's shares are outstanding from the first
+   * trade onwards and have to be paid like anyone else's.
+   */
+  readonly seedPerOutcome: Decimal | null;
 }
 
 const scenarioArb: fc.Arbitrary<Scenario> = fc
@@ -84,11 +92,15 @@ const scenarioArb: fc.Arbitrary<Scenario> = fc
     fc.integer({ min: 2, max: 8 }),
     fc.integer({ min: 1, max: 4 }),
     fc.constantFrom(...LIQUIDITY_SCALES).map((l) => new Decimal(l)),
+    fc.option(
+      fc.constantFrom('1', '2000', '20000', '500000').map((v) => new Decimal(v)),
+      { nil: null },
+    ),
   )
-  .chain(([outcomes, holders, liquidity]) =>
+  .chain(([outcomes, holders, liquidity, seedPerOutcome]) =>
     fc
       .array(opArb(outcomes, holders), { minLength: 1, maxLength: 12 })
-      .map((ops) => ({ outcomes, holders, liquidity, ops })),
+      .map((ops) => ({ outcomes, holders, liquidity, ops, seedPerOutcome })),
   );
 
 /** Books per holder, per outcome. Mirrors the engine's own share arithmetic. */
@@ -137,7 +149,17 @@ const sellableOf = (state: MarketState, outcome: number): Decimal =>
 /** Replay a scenario, asserting the per-operation invariants as it goes. */
 function run(scenario: Scenario): { state: MarketState; book: Book } {
   let state = openMarket({ outcomes: scenario.outcomes, liquidity: scenario.liquidity });
-  const book = new Book(scenario.holders, scenario.outcomes);
+  // The seeder gets a book row of its own, past the trading holders.
+  const book = new Book(scenario.holders + 1, scenario.outcomes);
+  const seeder = scenario.holders;
+
+  if (scenario.seedPerOutcome !== null) {
+    const seeded = seed(state, scenario.seedPerOutcome);
+    state = seeded.state;
+    for (let outcome = 0; outcome < scenario.outcomes; outcome += 1) {
+      book.add(seeder, outcome, seeded.sharesPerOutcome);
+    }
+  }
 
   const checkAfterOp = (current: MarketState): void => {
     const p = prices(current.q, current.liquidity);

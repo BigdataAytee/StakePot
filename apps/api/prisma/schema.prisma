@@ -74,6 +74,10 @@ enum MarketState {
 enum TradeSide {
   buy
   sell
+  /// A Path B symmetric seed leg (§2.4). Recorded per outcome so the seed shows
+  /// in market history, and excluded everywhere a *stake* is counted — a seed is
+  /// liquidity, not an opinion, and it can never satisfy an activation floor.
+  seed
 }
 
 enum BondState {
@@ -127,6 +131,24 @@ enum ConfigState {
   active
   pending
   superseded
+}
+
+/// How a community market reaches `active` (§2.4, Rulebook Part 3 §2).
+enum ActivationPath {
+  /// Path A: a funding window that must fill on its own.
+  organic
+  /// Path B: a symmetric seed from the creator or a syndicate.
+  seeded
+}
+
+/// Seeding-round lifecycle (Rulebook Part 3 §3).
+enum SyndicateState {
+  /// Taking contributions.
+  open
+  /// Reached the seed minimum and activated the market.
+  filled
+  /// Ended short of the minimum; every contribution was returned.
+  refunded
 }
 
 enum AnnotationType {
@@ -232,6 +254,12 @@ model Market {
   eventDate          DateTime
   voidDate           DateTime
   state              MarketState @default(draft)
+  activationPath     ActivationPath @default(organic)
+  /// When the funding window closes. Path A activates or voids at this moment;
+  /// Path B re-checks the participation floor. Stored rather than derived from
+  /// `createdAt`, because the queue is not a source of truth and the schedule
+  /// has to be rebuildable from Postgres alone.
+  fundingClosesAt    DateTime?
   creatorId          String?
   /// Liquidity constant L from §2.3. Immutable once the market is created.
   liquidityParam     Decimal     @db.Decimal(38, 18)
@@ -343,18 +371,30 @@ model Position {
 
 model Syndicate {
   id          String   @id @default(cuid())
-  marketId    String
+  marketId    String   @unique
   creatorId   String
   roundEndsAt DateTime
+  /// Total the round must reach to activate: perOutcomeMin × outcomes.
   minTotal    Decimal  @db.Decimal(38, 18)
-  /// Not enumerated in §3.
-  state       String   @default("open")
+  /// The Symmetric Seed minimum per pool ([20,000] pts).
+  perOutcomeMin   Decimal @db.Decimal(38, 18)
+  /// Smallest contribution a sponsor may make ([2,000] pts).
+  minContribution Decimal @db.Decimal(38, 18)
+  /// Maximum sponsors on the round ([20]).
+  maxSponsors     Int
+  /// Organiser's cut of the syndicate fee, in basis points. 0 = pure pro-rata.
+  /// Locked when the round opens: §3 says the split "is displayed on the market
+  /// page before any sponsor joins and is locked once the Seeding Round opens".
+  organiserBps    Int     @default(0)
+  state           SyndicateState @default(open)
+  openedAt        DateTime @default(now())
+  filledAt        DateTime?
 
   market  Market            @relation(fields: [marketId], references: [id])
   creator User              @relation(fields: [creatorId], references: [id])
   members SyndicateMember[]
 
-  @@index([marketId])
+  @@index([state, roundEndsAt])
   @@map("syndicates")
 }
 
@@ -363,7 +403,11 @@ model SyndicateMember {
   syndicateId  String
   userId       String
   contribution Decimal @db.Decimal(38, 18)
-  feeSharePct  Decimal @db.Decimal(38, 18)
+  /// Share of the syndicate fee, as a fraction in [0,1]. Written when the round
+  /// fills, not when a sponsor joins — pro-rata is only knowable once the round
+  /// is closed. The shares sum to exactly 1; the organiser carries the remainder.
+  feeSharePct  Decimal @default(0) @db.Decimal(38, 18)
+  createdAt    DateTime @default(now())
 
   syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
   user      User      @relation(fields: [userId], references: [id])
@@ -374,10 +418,15 @@ model SyndicateMember {
 
 model Bond {
   id        String    @id @default(cuid())
-  marketId  String
+  /// One bond per market — the creator's, posted at creation (Part 3 §1).
+  marketId  String    @unique
   creatorId String
   amount    Decimal   @db.Decimal(38, 18)
   state     BondState @default(held)
+  /// Why it was forfeited, for the audit trail (Part 3 §5).
+  reason     String?
+  createdAt  DateTime  @default(now())
+  resolvedAt DateTime?
 
   market  Market @relation(fields: [marketId], references: [id])
   creator User   @relation(fields: [creatorId], references: [id])

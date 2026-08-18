@@ -28,6 +28,10 @@ export interface ResolveOutcome {
   readonly creatorFee: Decimal;
   readonly platformFee: Decimal;
   readonly payouts: readonly { userId: string; shares: Decimal; payout: Decimal }[];
+  /** Who the creator fee actually went to — the creator, or the syndicate (§3). */
+  readonly creatorLegs: readonly { userId: string; amount: Decimal }[];
+  /** The conduct bond returned to the creator on a clean resolution (Part 3 §5). */
+  readonly bondRefunded: Decimal;
 }
 
 const dec = (v: Decimal | { toString(): string }): Prisma.Decimal =>
@@ -98,28 +102,63 @@ export class ResolutionService {
 
       const postings: Posting[] = [];
 
-      // Everyone's stake leaves escrow; winners' payouts arrive in available.
-      //
-      // Once per *holder*, not once per position: escrowedFor returns what the
-      // user has escrowed in the whole market, so anyone holding two outcomes
-      // would otherwise be released twice. Every binary market hides this —
-      // there, one trader is one position.
-      const holders = await tx.position.findMany({
-        where: { marketId: input.marketId },
-        distinct: ['userId'],
-        select: { userId: true },
+      // A conduct bond sits in the creator's escrow alongside their stakes, and
+      // it is not part of the pot — so it has to leave escrow as its own leg and
+      // land back in the creator's balance. Rulebook Part 3 §5: "The Conduct Bond
+      // is refunded after clean resolution." Without this the transaction cannot
+      // balance at all: escrow would give up more than the pot ever held.
+      const bond = await tx.bond.findUnique({ where: { marketId: input.marketId } });
+      const bondHeld =
+        bond !== null && bond.state === 'held'
+          ? new Decimal(bond.amount.toString())
+          : new Decimal(0);
+
+      // Everyone's escrow in this market is released; winners' payouts arrive in
+      // available. Read straight off the ledger rather than from positions, so a
+      // creator holding nothing but a bond is still accounted for, and so anyone
+      // holding two outcomes is released exactly once — every binary market
+      // hides that second bug, because there one trader is one position.
+      const escrowRows = await tx.ledgerEntry.groupBy({
+        by: ['userId'],
+        where: { marketId: input.marketId, fundClass: 'user_escrow' },
+        _sum: { amount: true },
       });
-      for (const holder of holders) {
-        const staked = await this.escrowedFor(tx, holder.userId, input.marketId);
-        if (staked.isZero()) continue;
-        postings.push({
-          userId: holder.userId,
-          marketId: input.marketId,
-          type: 'payout',
-          fundClass: 'user_escrow',
-          amount: staked.negated(),
-          currency: 'SPC',
-        });
+      for (const row of escrowRows) {
+        const escrowed = new Decimal(row._sum.amount?.toString() ?? '0');
+        if (escrowed.lte(0)) continue;
+        const isCreatorBond = bondHeld.gt(0) && row.userId === bond?.creatorId;
+        const staked = isCreatorBond ? escrowed.minus(bondHeld) : escrowed;
+
+        if (staked.gt(0)) {
+          postings.push({
+            userId: row.userId,
+            marketId: input.marketId,
+            type: 'payout',
+            fundClass: 'user_escrow',
+            amount: staked.negated(),
+            currency: 'SPC',
+          });
+        }
+        if (isCreatorBond) {
+          postings.push(
+            {
+              userId: row.userId,
+              marketId: input.marketId,
+              type: 'bond_refund',
+              fundClass: 'user_escrow',
+              amount: bondHeld.negated(),
+              currency: 'SPC',
+            },
+            {
+              userId: row.userId,
+              marketId: input.marketId,
+              type: 'bond_refund',
+              fundClass: 'user_available',
+              amount: bondHeld,
+              currency: 'SPC',
+            },
+          );
+        }
       }
 
       const payouts = result.payouts.map((p) => ({
@@ -150,13 +189,23 @@ export class ResolutionService {
           currency: 'SPC',
         });
       }
-      if (creatorFee.gt(0) && market.creatorId !== null) {
+      // §3: "The [4]% creator fee becomes the syndicate fee." Where a syndicate
+      // seeded the market, the creator's leg is divided among the sponsors on
+      // the split locked when the round opened; otherwise it is the creator's.
+      const creatorLegs = await this.creatorFeeLegs(
+        tx,
+        input.marketId,
+        market.creatorId,
+        creatorFee,
+      );
+      for (const leg of creatorLegs) {
+        if (leg.amount.lte(0)) continue;
         postings.push({
-          userId: market.creatorId,
+          userId: leg.userId,
           marketId: input.marketId,
           type: 'fee_creator',
           fundClass: 'user_available',
-          amount: creatorFee,
+          amount: leg.amount,
           currency: 'SPC',
         });
       }
@@ -187,20 +236,72 @@ export class ResolutionService {
         },
       });
 
+      if (bondHeld.gt(0) && bond !== null) {
+        await tx.bond.update({
+          where: { id: bond.id },
+          data: { state: 'refunded', resolvedAt: new Date() },
+        });
+      }
+
       await tx.marketAnnotation.create({
         data: { marketId: input.marketId, type: 'resolution', label: 'Market resolved' },
       });
 
-      return { fee, losingPool, creatorFee, platformFee, payouts };
+      return {
+        fee,
+        losingPool,
+        creatorFee,
+        platformFee,
+        payouts,
+        creatorLegs,
+        bondRefunded: bondHeld,
+      };
     });
   }
 
-  /** What this user still has escrowed in this market, straight from the ledger. */
-  private async escrowedFor(tx: Tx, userId: string, marketId: string): Promise<Decimal> {
-    const result = await tx.ledgerEntry.aggregate({
-      where: { userId, marketId, fundClass: 'user_escrow' },
-      _sum: { amount: true },
+  /**
+   * Who the creator fee belongs to (Rulebook Part 3 §3).
+   *
+   * Solo creator: all of it. Syndicate: the organiser's locked cut first, then
+   * the rest pro-rata on the shares written when the round filled. The last leg
+   * is the remainder, so the legs sum to the fee exactly — dividing twice and
+   * hoping the parts add up is how money goes missing a kobo at a time.
+   */
+  private async creatorFeeLegs(
+    tx: Tx,
+    marketId: string,
+    creatorId: string | null,
+    creatorFee: Decimal,
+  ): Promise<readonly { userId: string; amount: Decimal }[]> {
+    if (creatorFee.lte(0) || creatorId === null) return [];
+
+    const syndicate = await tx.syndicate.findUnique({
+      where: { marketId },
+      include: { members: { orderBy: { createdAt: 'asc' } } },
     });
-    return new Decimal(result._sum.amount?.toString() ?? '0');
+    if (syndicate === null || syndicate.state !== 'filled' || syndicate.members.length === 0) {
+      return [{ userId: creatorId, amount: creatorFee }];
+    }
+
+    const legs = new Map<string, Decimal>();
+    const add = (userId: string, amount: Decimal): void => {
+      legs.set(userId, (legs.get(userId) ?? new Decimal(0)).plus(amount));
+    };
+
+    const organiserCut = creatorFee.times(syndicate.organiserBps).div(10_000);
+    if (organiserCut.gt(0)) add(creatorId, organiserCut);
+
+    const pool = creatorFee.minus(organiserCut);
+    let allocated = new Decimal(0);
+    for (const [index, member] of syndicate.members.entries()) {
+      const last = index === syndicate.members.length - 1;
+      const share = last
+        ? pool.minus(allocated)
+        : pool.times(new Decimal(member.feeSharePct.toString()));
+      allocated = allocated.plus(share);
+      add(member.userId, share);
+    }
+
+    return [...legs.entries()].map(([userId, amount]) => ({ userId, amount }));
   }
 }

@@ -36,6 +36,8 @@ const schema = z.object({
   sourceUrl: z.string().url('Link the source.').startsWith('https://', 'Use an https link.'),
   eventDate: z.string().min(1, 'When does it happen?'),
   voidDate: z.string().min(1, 'When does it void if nothing settles it?'),
+  /** §2.4: the creator chooses the activation path, and it is not reversible. */
+  activationPath: z.enum(['organic', 'seeded']),
 });
 
 type FormValues = z.infer<typeof schema>;
@@ -57,6 +59,7 @@ export default function CreatePage() {
       sourceUrl: '',
       eventDate: '',
       voidDate: '',
+      activationPath: 'organic',
     },
   });
 
@@ -72,6 +75,7 @@ export default function CreatePage() {
       sourceUrl: picked.sourceUrl,
       eventDate: '',
       voidDate: '',
+      activationPath: form.getValues('activationPath'),
     });
   }
 
@@ -248,6 +252,11 @@ export default function CreatePage() {
           </Field>
         </div>
 
+        <ActivationPathChooser
+          value={form.watch('activationPath')}
+          onChange={(path) => form.setValue('activationPath', path)}
+        />
+
         {error !== null && <p className="text-sm text-fall">{error}</p>}
 
         <button
@@ -264,6 +273,66 @@ export default function CreatePage() {
         </p>
       </form>
     </main>
+  );
+}
+
+/**
+ * The two ways a market can open (§2.4, Rulebook Part 3 §2).
+ *
+ * Presented as a real trade-off rather than a default and an advanced option:
+ * Path A costs nothing but has to fill on its own; Path B opens now because the
+ * creator (or a syndicate) put money on every outcome at once. The one thing a
+ * creator must not misread is that seeding is not betting — the seed is
+ * symmetric, so it cannot pay off for the person who also settles the market.
+ */
+function ActivationPathChooser({
+  value,
+  onChange,
+}: {
+  value: 'organic' | 'seeded';
+  onChange: (path: 'organic' | 'seeded') => void;
+}) {
+  const options = [
+    {
+      id: 'organic' as const,
+      title: 'Let it fill',
+      blurb: 'Free. Opens for staking, and goes live if enough people back both sides in time.',
+    },
+    {
+      id: 'seeded' as const,
+      title: 'Seed it open',
+      blurb:
+        'You (or sponsors you invite) put equal money on every outcome, and it goes live at once.',
+    },
+  ];
+
+  return (
+    <section>
+      <h2 className="text-sm font-semibold">How should it open?</h2>
+      <div className="mt-2 grid grid-cols-2 gap-2">
+        {options.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onChange(option.id)}
+            aria-pressed={value === option.id}
+            className={`rounded-md border px-3 py-2.5 text-left transition-colors ${
+              value === option.id ? 'border-rise bg-rise/10' : 'border-border hover:border-rise'
+            }`}
+          >
+            <span className="block text-sm font-semibold">{option.title}</span>
+            <span className="mt-1 block text-sm text-text-muted">{option.blurb}</span>
+          </button>
+        ))}
+      </div>
+      {value === 'seeded' && (
+        <p className="mt-2 text-sm text-text-muted">
+          The seed is split equally across every outcome, so you never hold a side in a market you
+          settle. It still needs real backers by the deadline — otherwise the market voids and your
+          seed comes back in full.
+        </p>
+      )}
+    </section>
   );
 }
 

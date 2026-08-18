@@ -30,7 +30,19 @@ export class MarketsController {
     const markets = await this.prisma.market.findMany({
       where: {
         ...(shelf === 'official' || shelf === 'community' ? { shelf } : {}),
-        state: { in: ['active', 'frozen', 'pending_resolution', 'dispute_window', 'resolved'] },
+        state: {
+          // `seeding` and `funding` are on the shelf as well: a market taking
+          // sponsors or stakes is exactly the one that needs to be found.
+          in: [
+            'seeding',
+            'funding',
+            'active',
+            'frozen',
+            'pending_resolution',
+            'dispute_window',
+            'resolved',
+          ],
+        },
       },
       include: { outcomes: { orderBy: { ordinal: 'asc' } } },
       orderBy: [{ state: 'asc' }, { eventDate: 'asc' }],
@@ -62,13 +74,20 @@ export class MarketsController {
         where: { marketId: id },
         orderBy: { ts: 'asc' },
       }),
+      // Seeders are not traders and a seed is not volume: it takes no side and
+      // moves no price (§2.4). Counting it would tell a reader the market has an
+      // argument going when all it has is liquidity.
       this.prisma.trade.findMany({
-        where: { marketId: id },
+        where: { marketId: id, side: { not: 'seed' } },
         distinct: ['userId'],
         select: { userId: true },
       }),
       this.prisma.trade.aggregate({
-        where: { marketId: id, createdAt: { gte: subHours(new Date(), 24) } },
+        where: {
+          marketId: id,
+          side: { not: 'seed' },
+          createdAt: { gte: subHours(new Date(), 24) },
+        },
         _sum: { cost: true },
       }),
       this.prices.read(id),
@@ -133,6 +152,8 @@ export class MarketsController {
     sourceName: string;
     sourceUrl: string;
     state: string;
+    activationPath: string;
+    fundingClosesAt: Date | null;
     eventDate: Date;
     voidDate: Date;
     potTotal: { toString(): string };
@@ -157,6 +178,10 @@ export class MarketsController {
       sourceName: market.sourceName,
       sourceUrl: market.sourceUrl,
       state: market.state,
+      // Path B markets carry a live seed and a floor still to meet, and the
+      // ticket has to say so (§2.14a: the funding-state view).
+      activationPath: market.activationPath,
+      fundingClosesAt: market.fundingClosesAt?.toISOString() ?? null,
       eventDate: market.eventDate.toISOString(),
       voidDate: market.voidDate.toISOString(),
       pot: market.potTotal.toString(),

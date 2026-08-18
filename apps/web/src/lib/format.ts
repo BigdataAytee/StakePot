@@ -54,7 +54,20 @@ export function untilFreeze(eventDate: string, now = Date.now()): string {
   return `${minutes}m`;
 }
 
+/** "21 Aug 2026, 10:13" — one date shape across the ticket. */
+export function dateTime(iso: string): string {
+  return new Date(iso).toLocaleString('en-NG', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 export const STATE_LABEL: Record<string, string> = {
+  draft: 'AWAITING SEED',
+  seeding: 'SEEDING',
   funding: 'FUNDING',
   active: 'LIVE',
   frozen: 'FROZEN',

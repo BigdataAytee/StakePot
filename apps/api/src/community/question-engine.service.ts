@@ -97,6 +97,8 @@ export class QuestionEngineService {
     template: MarketTemplate;
     creatorId: string;
     isFirstMarket: boolean;
+    /** The activation path the creator chose at creation (§2.4). */
+    activationPath?: 'organic' | 'seeded';
     now?: Date;
   }): Promise<{
     draftId: string;
@@ -172,7 +174,12 @@ export class QuestionEngineService {
   }
 
   private async fileDraft(
-    params: { template: MarketTemplate; creatorId: string; isFirstMarket: boolean },
+    params: {
+      template: MarketTemplate;
+      creatorId: string;
+      isFirstMarket: boolean;
+      activationPath?: 'organic' | 'seeded';
+    },
     problems: TemplateProblem[],
     assessment: (Assessment & { balanced: boolean }) | null,
     state: 'suggested' | 'rejected',
@@ -201,8 +208,11 @@ export class QuestionEngineService {
           duplicate: assessment?.duplicateOfLiveMarket ?? false,
           reason: assessment?.reason ?? problems.map((p) => p.message).join(' '),
           firstMarket: params.isFirstMarket,
-          // Approval happens later and needs to know whose market this is.
+          // Approval happens later and needs to know whose market this is, and
+          // which activation path the creator picked (§2.4 — "the creator
+          // chooses at creation", so it cannot be decided by the reviewer).
           creatorId: params.creatorId,
+          activationPath: params.activationPath ?? 'organic',
         },
         state: finalState,
       },

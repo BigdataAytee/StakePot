@@ -41,6 +41,15 @@ export const CONFIG_SCHEMAS = {
   community_activation_total_pot_spc: z.number().nonnegative(),
   community_activation_min_funded_outcomes: z.number().int().positive(),
 
+  // Path B seeds and Sponsor Syndicates (§2.4, Rulebook Part 3 §2–§3)
+  /** The Symmetric Seed minimum, per pool. */
+  symmetric_seed_per_outcome_spc: z.number().positive(),
+  /** Distinct non-creator stakers a seeded market needs by window close. */
+  participation_floor_users: z.number().int().nonnegative(),
+  syndicate_min_contribution_spc: z.number().positive(),
+  syndicate_max_sponsors: z.number().int().positive(),
+  syndicate_round_hours: z.number().int().positive(),
+
   // AI question engine (§2.9 rule 3)
   ai_balance_low: z.number().min(0).max(1),
   ai_balance_high: z.number().min(0).max(1),

@@ -78,6 +78,49 @@ Two things are kept exact rather than tolerated, because they can be:
 exact Postgres additions of one value always agree, where the same sum computed
 in JavaScript and written back would not.
 
+## Path B, syndicates and bonds (step 7)
+
+**The symmetric seed is one closed-form step, not a loop of buys.** Adding the
+same δ to every outcome factors straight out of the log-sum —
+`C(q + δ·1) = δ + C(q)` — so granting δ shares of every outcome costs exactly δ
+and moves **no price at all**. Buying `perOutcome` into each side in turn would
+cost the same money but leave the book tilted, and would hand the last outcome
+bought a better price than the first: the result would depend on the order the
+outcomes happened to be listed in. `seed()` is therefore its own engine
+operation, with the closed form and its own property coverage.
+
+With prices flat at `1/n`, δ shares of each outcome divides into exactly `δ/n`
+of money per outcome, so the rulebook's unit — "at least [20,000] into **each**
+pool" — maps onto `perOutcome`, and `δ = perOutcome × n`.
+
+**The seed requires an untraded market**, enforced in the engine. "Equal money
+in every pool" and "equal shares of every outcome" are the same statement only
+while prices are flat; on a traded book they diverge and Part 3 §2 does not say
+which it means. It never has to — a seed is posted before the market opens.
+
+**The syndicate fee split is stored in two places, deliberately.** The
+organiser's cut lives on `syndicates.organiserBps`, locked when the round opens
+(§3: "displayed on the market page before any sponsor joins and is locked once
+the Seeding Round opens"). Each sponsor's pro-rata share lands on
+`syndicate_members.feeSharePct` when the round _fills_, because pro-rata is not
+knowable until the round is closed. At resolution the organiser's cut comes off
+first and the remainder is divided on those shares, with the last leg computed
+as the remainder so the legs sum to the creator fee exactly.
+
+**A conduct bond sits in the creator's escrow, and resolution has to release it
+as its own leg.** This was latent: `escrow` for a market includes the bond, but
+the pot does not, so a resolution that released everyone's escrow and paid out
+the pot would be short by exactly the bond and the ledger would refuse the whole
+transaction. Part 3 §5 asks for the bond back after a clean resolution, which is
+the same leg — so the rule and the arithmetic want the identical thing.
+Resolution now reads escrow balances from the ledger rather than from positions,
+which also covers a creator who holds no position at all.
+
+**A seed is liquidity, not interest.** Seed legs are recorded as trades with
+`side = 'seed'` and excluded everywhere a _stake_ is counted: the Path A funding
+floors, Path B's participation floor, the ticket's trader count and its 24h
+volume. Otherwise a creator could seed their own market into looking busy.
+
 ## Still open
 
 **The §2.3 liquidity tuning rule understates price impact by 1/p.** Unchanged in
@@ -88,6 +131,17 @@ money-denominated impact is `m(1−p)/L`, **twice** the quoted figure at even
 odds. The engine agrees with the corrected form: the doc's own worked example
 moves the price **1.96 points, not 1**. For ~1-point moves at even odds, `L`
 wants to be ≈ **50× the typical stake**, not 25×. Locked in as a test.
+
+**The stored ledger balances to within one storage quantum per row, not to
+zero.** Every transaction is asserted balanced at 40 significant digits _before_
+it is written, and the columns then hold 18 decimal places — so a payout that
+does not land on that scale is rounded on the way in, and the sum of what is
+stored can sit ~1e-18 SPC off zero. Sixteen orders of magnitude below one kobo,
+and the same for trades as for resolutions, so this is a property of the whole
+money path rather than of step 7. Before real money, decide whether amounts
+should be quantised to the storage scale _before_ `assertBalanced` runs — which
+would force every caller to allocate its own remainder, and make "the ledger
+sums to exactly zero as stored" true rather than nearly true.
 
 **Can `staked[i]` go negative?** Not observed across the property runs, and it
 would take holders of one outcome collectively extracting more than was ever
@@ -111,8 +165,11 @@ than assumed non-negative, and the suite asserts `fee ≤ pot` directly.
 - **`price_history`** takes a `BigInt` identity key rather than a cuid: it is
   high-volume time series and nothing links to it by id.
 - **Enums** exist only where the spec enumerated values. `users.status`,
-  `disputes.state`, `syndicates.state`, `squads.screeningState` and
-  `support_tickets.category` are `String` until §3 pins them down.
+  `disputes.state`, `squads.screeningState` and `support_tickets.category` are
+  `String` until §3 pins them down. `syndicates.state` became an enum in step 7,
+  when the seeding round's lifecycle (`open → filled | refunded`) was actually
+  implemented — the column is converted in place rather than dropped and
+  recreated, because it decides whether contributions get refunded.
 - **`syndicate_members`** gained a unique constraint on `(syndicateId, userId)`.
 - **`ledger` and `admin_audit` are append-only** via both a `REVOKE UPDATE,
 DELETE` from the `stakeam_app` role and a trigger. The revoke is the control

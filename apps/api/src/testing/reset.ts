@@ -16,6 +16,10 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   await prisma.$executeRawUnsafe('DELETE FROM ledger');
   await prisma.$executeRawUnsafe('ALTER TABLE ledger ENABLE TRIGGER ledger_append_only');
 
+  await prisma.$executeRawUnsafe('ALTER TABLE admin_audit DISABLE TRIGGER admin_audit_append_only');
+  await prisma.$executeRawUnsafe('DELETE FROM admin_audit');
+  await prisma.$executeRawUnsafe('ALTER TABLE admin_audit ENABLE TRIGGER admin_audit_append_only');
+
   await prisma.trade.deleteMany();
   await prisma.position.deleteMany();
   await prisma.resolution.deleteMany();

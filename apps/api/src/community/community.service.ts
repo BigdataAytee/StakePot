@@ -2,12 +2,15 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@stakeam/engine';
 
+import { AdminAuditService } from '../audit/admin-audit.service';
 import { LedgerService, type Tx } from '../ledger/ledger.service';
+import { SYSTEM_PLATFORM_ACCOUNT } from '../ledger/posting';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
 import { decideActivation, type ActivationRules, type OutcomeFunding } from './activation';
 import { screenTemplate, type MarketTemplate } from './market-template';
+import { MarketVoidService } from './void.service';
 
 export class CommunityMarketError extends Error {
   constructor(message: string) {
@@ -31,6 +34,8 @@ export class CommunityService {
     private readonly config: PlatformConfigService,
     private readonly wallet: WalletService,
     private readonly ledger: LedgerService,
+    private readonly voids: MarketVoidService,
+    private readonly audit: AdminAuditService,
   ) {}
 
   /**
@@ -45,8 +50,13 @@ export class CommunityService {
     template: MarketTemplate;
     liquidityParam: string;
     fundingWindowHours?: number;
+    /**
+     * Path A opens a funding window; Path B waits in `draft` for the creator's
+     * symmetric seed or a seeding round, and opens the moment one lands (§2.4).
+     */
+    activationPath?: 'organic' | 'seeded';
     now?: Date;
-  }): Promise<{ marketId: string }> {
+  }): Promise<{ marketId: string; fundingClosesAt: Date | null }> {
     const now = params.now ?? new Date();
     const problems = screenTemplate(params.template, { now });
     if (problems.length > 0) {
@@ -67,6 +77,13 @@ export class CommunityService {
 
     const criteria = Object.fromEntries(params.template.outcomes.map((o) => [o.label, o.criteria]));
 
+    const path = params.activationPath ?? 'organic';
+    // Path B's window still exists — it is what the participation floor is
+    // measured against — but it only starts once the seed is in, so the market
+    // waits in `draft` until then rather than quietly taking stakes.
+    const fundingClosesAt =
+      path === 'organic' ? new Date(now.getTime() + windowHours * 3_600_000) : null;
+
     return this.prisma.$transaction(async (tx) => {
       const market = await tx.market.create({
         data: {
@@ -81,9 +98,11 @@ export class CommunityService {
           voidDate: new Date(params.template.voidDate),
           liquidityParam: new Prisma.Decimal(params.liquidityParam),
           feeBps,
+          activationPath: path,
+          ...(fundingClosesAt === null ? {} : { fundingClosesAt }),
           // Path A: the market takes stakes but does not trade until the window
           // closes and the floors are met.
-          state: 'funding',
+          state: path === 'organic' ? 'funding' : 'draft',
           outcomes: {
             create: labels.map((outcome, ordinal) => ({
               label: outcome.label,
@@ -95,7 +114,10 @@ export class CommunityService {
           annotations: {
             create: {
               type: 'open',
-              label: `Funding window open for ${windowHours}h`,
+              label:
+                path === 'organic'
+                  ? `Funding window open for ${windowHours}h`
+                  : 'Awaiting the creator’s symmetric seed',
             },
           },
         },
@@ -120,7 +142,158 @@ export class CommunityService {
         });
       }
 
-      return { marketId: market.id };
+      return { marketId: market.id, fundingClosesAt };
+    });
+  }
+
+  /**
+   * A market's window has run out. What that means depends on how it opened.
+   *
+   * Path A is deciding whether to exist at all — the window either fills or the
+   * market voids. Path B already exists and has been trading; its window is the
+   * participation floor's deadline. One entry point so the job that fires on a
+   * deadline does not have to know which, and cannot pick wrong.
+   */
+  async closeWindow(marketId: string): Promise<{
+    outcome: 'activated' | 'confirmed' | 'voided' | 'skipped';
+    reason?: string;
+  }> {
+    const market = await this.prisma.market.findUnique({
+      where: { id: marketId },
+      select: { activationPath: true },
+    });
+    if (market === null) return { outcome: 'skipped' };
+    return market.activationPath === 'seeded'
+      ? this.closeParticipationWindow(marketId)
+      : this.closeFundingWindow(marketId);
+  }
+
+  /**
+   * Path B's deadline: did anyone else turn up? (§2.4, Rulebook Part 3 §2.)
+   *
+   * "If fewer than [10] distinct users other than the creator have staked by the
+   * end of the Funding Window, the market voids and all stakes — including the
+   * full seed — are refunded."
+   *
+   * A seed is liquidity, not interest, and this is the rule that says so: money
+   * the creator put up cannot stand in for a crowd. Sponsors count only for what
+   * they staked directionally — their seed contribution is not a stake (§3).
+   *
+   * Idempotent by `fundingClosesAt`: a market whose floor has already been
+   * settled has no window left to close.
+   */
+  async closeParticipationWindow(marketId: string): Promise<{
+    outcome: 'confirmed' | 'voided' | 'skipped';
+    reason?: string;
+  }> {
+    const floor = await this.config.get('participation_floor_users');
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM markets WHERE id = ${marketId} FOR UPDATE`;
+
+      const market = await tx.market.findUniqueOrThrow({ where: { id: marketId } });
+      if (market.state !== 'active' || market.fundingClosesAt === null) {
+        return { outcome: 'skipped' as const };
+      }
+
+      const stakers = await tx.trade.findMany({
+        where: {
+          marketId,
+          side: 'buy',
+          ...(market.creatorId === null ? {} : { userId: { not: market.creatorId } }),
+        },
+        distinct: ['userId'],
+        select: { userId: true },
+      });
+
+      if (stakers.length >= floor) {
+        await tx.market.update({ where: { id: marketId }, data: { fundingClosesAt: null } });
+        await tx.marketAnnotation.create({
+          data: {
+            marketId,
+            type: 'activation',
+            label: `Participation floor met — ${stakers.length} backers`,
+          },
+        });
+        return { outcome: 'confirmed' as const };
+      }
+
+      const reason = `only ${stakers.length} of ${floor} backers staked`;
+      await this.voids.voidAndRefund(tx, marketId, reason);
+      return { outcome: 'voided' as const, reason };
+    });
+  }
+
+  /**
+   * Forfeit a creator's conduct bond (Rulebook Part 3 §5).
+   *
+   * "It is forfeited if the creator proposes a resolution contradicted by the
+   * named source, abandons resolution, is found to have inside influence, or
+   * breaks Part 1 §8–9. Forfeited bonds fund the platform's dispute-handling."
+   *
+   * A judgement call by definition, so it is never automatic: staff call this,
+   * with a reason that stays on the record. The money moves escrow → platform
+   * fees, which is what makes it spendable on dispute handling and nothing else
+   * (§2.10).
+   */
+  async forfeitBond(params: {
+    marketId: string;
+    reason: string;
+    decidedBy: string;
+    ip: string;
+  }): Promise<{ amount: Decimal }> {
+    if (params.reason.trim().length < 10) {
+      throw new CommunityMarketError('a forfeited bond needs a reason on the record');
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const bond = await tx.bond.findUnique({ where: { marketId: params.marketId } });
+      if (bond === null) throw new CommunityMarketError('this market has no conduct bond');
+      if (bond.state !== 'held') {
+        throw new CommunityMarketError(`this bond is already ${bond.state}`);
+      }
+
+      const amount = new Decimal(bond.amount.toString());
+      await this.ledger.post(
+        tx,
+        [
+          {
+            userId: bond.creatorId,
+            marketId: params.marketId,
+            type: 'bond_forfeit',
+            fundClass: 'user_escrow',
+            amount: amount.negated(),
+            currency: 'SPC',
+          },
+          {
+            userId: SYSTEM_PLATFORM_ACCOUNT,
+            marketId: params.marketId,
+            type: 'bond_forfeit',
+            fundClass: 'platform_fees',
+            amount,
+            currency: 'SPC',
+          },
+        ],
+        `bond-forfeit:${params.marketId}`,
+      );
+
+      await tx.bond.update({
+        where: { id: bond.id },
+        data: { state: 'forfeited', reason: params.reason, resolvedAt: new Date() },
+      });
+      await this.audit.record(
+        {
+          staffId: params.decidedBy,
+          action: 'bond.forfeit',
+          targetRef: `market:${params.marketId}`,
+          before: { state: 'held', amount: amount.toString() },
+          after: { state: 'forfeited', reason: params.reason },
+          ip: params.ip,
+        },
+        tx,
+      );
+
+      return { amount };
     });
   }
 
@@ -152,7 +325,10 @@ export class CommunityService {
       const decision = decideActivation(funding, rules);
 
       if (decision.activate) {
-        await tx.market.update({ where: { id: marketId }, data: { state: 'active' } });
+        await tx.market.update({
+          where: { id: marketId },
+          data: { state: 'active', fundingClosesAt: null },
+        });
         await tx.marketAnnotation.create({
           data: { marketId, type: 'activation', label: 'Activated — trading is open' },
         });
@@ -165,58 +341,14 @@ export class CommunityService {
   }
 
   /**
-   * Void a market and return every naira in it — stakes and the creator's bond.
+   * Void a market and return every naira in it — stakes, seeds and the bond.
    *
    * The bond comes back because failing to attract stakes is not misconduct.
    * §2.4 says "full refund including seed"; forfeiting a bond is for a creator
-   * who resolved dishonestly, which is a different flow entirely.
+   * who resolved dishonestly, which is `forfeitBond` and a staff decision.
    */
   private async voidAndRefund(tx: Tx, marketId: string, reason: string): Promise<void> {
-    const escrowed = await tx.ledgerEntry.groupBy({
-      by: ['userId'],
-      where: { marketId, fundClass: 'user_escrow' },
-      _sum: { amount: true },
-    });
-
-    for (const row of escrowed) {
-      const held = new Decimal(row._sum.amount?.toString() ?? '0');
-      if (held.lte(0)) continue;
-      await this.ledger.post(
-        tx,
-        [
-          {
-            userId: row.userId,
-            marketId,
-            type: 'refund',
-            fundClass: 'user_escrow',
-            amount: held.negated(),
-            currency: 'SPC',
-          },
-          {
-            userId: row.userId,
-            marketId,
-            type: 'refund',
-            fundClass: 'user_available',
-            amount: held,
-            currency: 'SPC',
-          },
-        ],
-        `void:${marketId}`,
-      );
-    }
-
-    await tx.bond.updateMany({ where: { marketId }, data: { state: 'refunded' } });
-    await tx.market.update({
-      where: { id: marketId },
-      data: { state: 'voided', potTotal: new Prisma.Decimal(0) },
-    });
-    await tx.outcome.updateMany({
-      where: { marketId },
-      data: { stakedTotal: new Prisma.Decimal(0), sharesOutstanding: new Prisma.Decimal(0) },
-    });
-    await tx.marketAnnotation.create({
-      data: { marketId, type: 'resolution', label: `Voided — ${reason}. Everyone refunded.` },
-    });
+    await this.voids.voidAndRefund(tx, marketId, reason);
   }
 
   /** Money staked and distinct backers per outcome, excluding the creator. */

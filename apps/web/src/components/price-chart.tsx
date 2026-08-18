@@ -192,26 +192,40 @@ export function PriceChart({
           times[0]!,
         );
 
+      const snapped = annotations
+        .map((annotation) => ({
+          annotation,
+          time: Math.floor(new Date(annotation.ts).getTime() / 1000),
+        }))
+        .filter(({ time }) => time >= earliest!)
+        .map(({ annotation, time }) => ({
+          time: nearest(Math.min(time, latest!)),
+          // The open mark sits on the first point, where a centred label clips
+          // off the left edge — and says nothing the start of the line does not.
+          text:
+            annotation.type === 'open' ? '' : annotation.label || ANNOTATION_MARK[annotation.type],
+        }));
+
+      // Two events on one point draw two dots stacked on top of each other, which
+      // reads as a rendering fault rather than as history. A seeded market always
+      // hits this — it opens and activates in the same instant — so the later
+      // annotation wins the point, and a labelled one beats a bare mark.
+      const byTime = new Map<number, { time: number; text: string }>();
+      for (const mark of snapped) {
+        const existing = byTime.get(mark.time);
+        if (existing === undefined || mark.text !== '') byTime.set(mark.time, mark);
+      }
+
       markers.current?.setMarkers(
-        annotations
-          .map((annotation) => ({
-            annotation,
-            time: Math.floor(new Date(annotation.ts).getTime() / 1000),
-          }))
-          .filter(({ time }) => time >= earliest!)
-          .map(({ annotation, time }) => ({
-            time: nearest(Math.min(time, latest!)) as Time,
+        [...byTime.values()]
+          .sort((a, b) => a.time - b.time)
+          .map((mark) => ({
+            time: mark.time as Time,
             position: 'aboveBar' as const,
             color: semantic.light.textMuted,
             shape: 'circle' as const,
-            // The open mark sits on the first point, where a centred label clips
-            // off the left edge — and says nothing the start of the line does not.
-            text:
-              annotation.type === 'open'
-                ? ''
-                : annotation.label || ANNOTATION_MARK[annotation.type],
-          }))
-          .sort((a, b) => (a.time as number) - (b.time as number)),
+            text: mark.text,
+          })),
       );
       chart.current?.timeScale().fitContent();
     }
@@ -219,7 +233,14 @@ export function PriceChart({
 
   return (
     <div>
-      <div ref={container} className="h-64 w-full sm:h-80" />
+      {/* An empty canvas is a hole in the page. A market that has not traded —
+          every seeding and funding ticket — says so in one line instead. */}
+      <div ref={container} className={points.length === 0 ? 'hidden' : 'h-64 w-full sm:h-80'} />
+      {points.length === 0 && (
+        <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-text-muted">
+          No trades yet. The first one draws the line.
+        </p>
+      )}
 
       <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-1" role="group" aria-label="Chart timeframe">
@@ -279,10 +300,6 @@ export function PriceChart({
             );
           })}
         </ul>
-      )}
-
-      {points.length === 0 && (
-        <p className="mt-3 text-sm text-text-muted">No trades yet. The first one draws the line.</p>
       )}
     </div>
   );

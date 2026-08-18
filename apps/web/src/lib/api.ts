@@ -19,6 +19,10 @@ export interface MarketSummary {
   sourceName: string;
   sourceUrl: string;
   state: string;
+  /** How the market reaches `active` (§2.4). Path B carries a live seed. */
+  activationPath: 'organic' | 'seeded';
+  /** When the funding window closes — Path B's participation floor deadline. */
+  fundingClosesAt: string | null;
   eventDate: string;
   voidDate: string;
   pot: string;
@@ -45,6 +49,33 @@ export interface MarketDetail extends MarketSummary {
   volume24h: string;
 }
 
+export interface SponsorView {
+  userId: string;
+  contribution: string;
+  feeSharePct: string;
+}
+
+export interface SeedComposition {
+  marketId: string;
+  state: string;
+  activationPath: 'organic' | 'seeded';
+  fundingClosesAt: string | null;
+  /** Money each seeder put in, from the seed legs on the trade record. */
+  seeded: { userId: string; amount: string }[];
+  syndicate: {
+    id: string;
+    state: 'open' | 'filled' | 'refunded';
+    roundEndsAt: string;
+    minTotal: string;
+    perOutcomeMin: string;
+    minContribution: string;
+    maxSponsors: number;
+    organiserBps: number;
+    raised: string;
+    sponsors: SponsorView[];
+  } | null;
+}
+
 export interface PricePoint {
   outcomeId: string;
   price: string;
@@ -69,6 +100,8 @@ export const api = {
   markets: (shelf?: string) =>
     get<MarketSummary[]>(`/markets${shelf === undefined ? '' : `?shelf=${shelf}`}`),
   market: (id: string) => get<MarketDetail>(`/markets/${id}`),
+  /** Seed composition and seeding-round terms (§2.4, Rulebook Part 3 §3). */
+  seed: (id: string) => get<SeedComposition>(`/community/markets/${id}/seed`),
   /** Omit `outcomeId` to get every outcome's series — the multi-line overlay. */
   history: (id: string, outcomeId: string | undefined, tf: string) =>
     get<PricePoint[]>(

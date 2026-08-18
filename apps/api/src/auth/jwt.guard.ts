@@ -20,6 +20,8 @@ export interface AuthenticatedUser {
 export interface RequestWithUser {
   headers: Record<string, string | string[] | undefined>;
   user?: AuthenticatedUser;
+  /** Fastify's resolved client address — §2.11 wants it on every admin action. */
+  ip?: string;
 }
 
 interface JwtPayload {

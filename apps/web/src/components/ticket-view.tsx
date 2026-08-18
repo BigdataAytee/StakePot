@@ -8,9 +8,10 @@ import { MoneyStrip } from '@/components/money-strip';
 import { OutcomeButtons } from '@/components/outcome-buttons';
 import { PriceChart, type Timeframe } from '@/components/price-chart';
 import { RulesCard } from '@/components/rules-card';
+import { SeedPanel } from '@/components/seed-panel';
 import { TradeSheet, type TradeIntent } from '@/components/trade-sheet';
 import { useMarketFeed } from '@/hooks/use-market-feed';
-import { api, type MarketDetail, type PricePoint } from '@/lib/api';
+import { api, type MarketDetail, type PricePoint, type SeedComposition } from '@/lib/api';
 import { STATE_LABEL, percent, untilFreeze } from '@/lib/format';
 import { useLivePrices } from '@/store/live-prices';
 
@@ -33,6 +34,7 @@ export function TicketView({
   const [history, setHistory] = useState<PricePoint[]>(initialHistory);
   const [intent, setIntent] = useState<TradeIntent | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const [composition, setComposition] = useState<SeedComposition | null>(null);
 
   const headline = initial.outcomes[0];
   useMarketFeed(initial.id);
@@ -51,6 +53,24 @@ export function TicketView({
   useEffect(() => {
     setToken(window.localStorage.getItem('stakeam.token'));
   }, []);
+
+  // A seeded market's composition, and a seeding round's terms while it is open.
+  // Official markets and Path A community markets have neither, so they never
+  // ask (§2.4).
+  const seeded = initial.activationPath === 'seeded' || initial.state === 'seeding';
+  useEffect(() => {
+    if (!seeded) return;
+    let cancelled = false;
+    void api
+      .seed(initial.id)
+      .then((found) => {
+        if (!cancelled) setComposition(found);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [initial.id, seeded]);
 
   useEffect(() => {
     if (headline === undefined) return;
@@ -149,10 +169,26 @@ export function TicketView({
           <p className="mt-2 text-sm text-text-muted">
             {initial.state === 'resolved'
               ? 'This market has settled.'
-              : 'Trading is frozen — the event has started.'}
+              : initial.state === 'seeding'
+                ? 'Sponsors are still filling the seed. Trading opens the moment the round fills.'
+                : initial.state === 'draft'
+                  ? 'Waiting on the creator’s symmetric seed.'
+                  : initial.state === 'voided'
+                    ? 'This market voided — every stake was refunded in full.'
+                    : 'Trading is frozen — the event has started.'}
           </p>
         )}
       </div>
+
+      {composition !== null && (
+        <div className="mt-5">
+          <SeedPanel
+            composition={composition}
+            token={token}
+            onChanged={() => window.location.reload()}
+          />
+        </div>
+      )}
 
       {/* (f) below the fold */}
       <div className="mt-6">
