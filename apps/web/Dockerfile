@@ -18,6 +18,15 @@ RUN pnpm install --frozen-lockfile
 # ---------------------------------------------------------------- build
 FROM deps AS build
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# The API's address is baked into the client bundle at build time — Next inlines
+# every NEXT_PUBLIC_* value, so it cannot be supplied later by the runtime
+# environment. Without this the image ships pointing at localhost:3001 and the
+# deployed site calls the visitor's own machine: every request fails, and the
+# app still renders, so nothing looks broken.
+ARG NEXT_PUBLIC_API_URL=http://localhost:3001
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+
 COPY tsconfig.base.json ./
 COPY packages/tokens packages/tokens
 COPY apps/web apps/web

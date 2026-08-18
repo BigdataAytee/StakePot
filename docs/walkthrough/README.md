@@ -82,6 +82,31 @@ at 393×851, the size most Nigerian traffic arrives on. §5's Phase 2 gate is
 had only ever been looked at wide. All fourteen steps pass on both, and no page
 scrolls sideways at phone width.
 
+## The auth screens on a phone
+
+`auth-signup.png` and `auth-login.png` in each viewport folder, checked by
+`apps/web/e2e/auth-screens.spec.ts`. Looking at them at 360px found four things
+that were fine on a desktop and not on a phone:
+
+- **The 18+ checkbox was a 16px tap target — and it gated the only button on
+  the screen.** You could not create an account on a phone without hitting it.
+  The whole row is the target now, and the box clears 44px.
+- **Both forms were anonymous.** No wordmark, no way back to the front door.
+  Someone arriving from a shared link met a password box belonging to nobody.
+- **The password could only be typed blind.** Ten-plus characters on a soft
+  keyboard with autocorrect is a real reason people abandon a signup; there is
+  a labelled Show/Hide toggle now.
+- **The forms were vertically centred**, which wasted the top third of a phone
+  screen and moved the fields out from under a thumb when the keyboard opened.
+
+A fifth came out of the fix: putting the reveal button inside the `<label>`
+made the input's accessible name "Password Show password At least 10
+characters". The label is bound by `htmlFor` now, so a screen reader hears
+"Password" and the hint arrives through `aria-describedby`.
+
+Login also says plainly that password recovery does not exist yet and points at
+support, rather than offering a link that goes nowhere.
+
 ## Known limits of this walkthrough
 
 - **The community create → fund → resolve arc stops at the wizard.** Market

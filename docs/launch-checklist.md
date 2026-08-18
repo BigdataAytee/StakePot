@@ -20,11 +20,12 @@ so it can be re-checked rather than trusted.
 
 ### Phase 0 — Engine property suite green · CI passes · docker compose up works
 
-| Item                        | Status      | Owner  | Evidence / what remains                                                                                                                                                  |
-| --------------------------- | ----------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Engine property suite green | **Done**    | Claude | 44 engine tests, fast-check over 2–8 outcomes and five magnitude bands; `pnpm test:props`                                                                                |
-| CI passes                   | **Done**    | Claude | Four green jobs on `main`: verify, e2e journeys, images build, dependency audit                                                                                          |
-| `docker compose up` works   | **Pending** | You    | Both images build in CI. There is no Docker daemon in this container, so the composed stack cannot be brought up here at all — it needs one run on a machine with Docker |
+| Item                        | Status      | Owner  | Evidence / what remains                                                                                                                                                                                                                                                                         |
+| --------------------------- | ----------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Engine property suite green | **Done**    | Claude | 44 engine tests, fast-check over 2–8 outcomes and five magnitude bands; `pnpm test:props`                                                                                                                                                                                                       |
+| CI passes                   | **Done**    | Claude | Four green jobs on `main`: verify, e2e journeys, images build, dependency audit                                                                                                                                                                                                                 |
+| Deployable from a Blueprint | **Done**    | Claude | `render.yaml` describes Postgres, Key Value, the API and the web app, all on free plans. Read its closing notes before it carries anything real — free Postgres expires after 30 days, and the ledger's append-only grants need a restricted database role that Render's generated owner is not |
+| `docker compose up` works   | **Pending** | You    | Both images build in CI. There is no Docker daemon in this container, so the composed stack cannot be brought up here at all — it needs one run on a machine with Docker                                                                                                                        |
 
 ### Phase 1 — Reconciliation clean · corruption test freezes withdrawals · ledger immutable at DB level
 

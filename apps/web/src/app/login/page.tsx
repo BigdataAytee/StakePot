@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
 import { API_URL } from '@/lib/api';
+import { AuthShell } from '@/components/auth-shell';
+import { PasswordField } from '@/components/password-field';
 import { setToken } from '@/lib/session';
 
 /** §2.1 — "Login: password or OTP; JWT sessions." Password today. */
@@ -51,7 +53,7 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-12">
+    <AuthShell>
       <h1 className="text-2xl font-black leading-none">Welcome back</h1>
       <p className="mt-2 text-md text-text-muted">Pick up where you left off.</p>
 
@@ -64,21 +66,16 @@ export default function LoginPage() {
             value={contact}
             onChange={(event) => setContact(event.target.value)}
             autoComplete="username"
-            className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-md outline-none focus-visible:border-rise"
+            className="rounded-md border border-border bg-surface-raised px-3 py-3 text-md outline-none focus-visible:border-rise"
           />
         </label>
 
-        <label className="flex flex-col gap-1.5">
-          <span className="text-sm font-bold">Password</span>
-          <input
-            required
-            type="password"
-            value={password}
-            onChange={(event) => setPassword(event.target.value)}
-            autoComplete="current-password"
-            className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-md outline-none focus-visible:border-rise"
-          />
-        </label>
+        <PasswordField
+          label="Password"
+          value={password}
+          onChange={setPassword}
+          autoComplete="current-password"
+        />
 
         {error !== null && (
           <p
@@ -92,7 +89,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={busy}
-          className="mt-2 rounded-md bg-rise px-4 py-3 text-md font-black text-paper transition-transform active:scale-press disabled:opacity-50"
+          className="mt-2 min-h-[3rem] rounded-md bg-rise px-4 py-3 text-md font-black text-paper transition-transform active:scale-press disabled:opacity-50"
         >
           {busy ? 'Logging in…' : 'Log in'}
         </button>
@@ -100,10 +97,23 @@ export default function LoginPage() {
 
       <p className="mt-6 text-sm text-text-muted">
         New here?{' '}
-        <Link href="/signup" className="font-bold underline">
+        <Link href="/signup" className="inline-block py-2 font-bold underline">
           Create an account
         </Link>
       </p>
-    </main>
+
+      {/*
+        §2.18's account recovery is "forgot-password via verified contact", and
+        it does not exist yet. Saying so beats a link that goes nowhere, or
+        silence that leaves somebody guessing on the one screen where they are
+        already stuck.
+      */}
+      <p className="mt-2 text-sm text-text-muted">
+        Forgotten your password?{' '}
+        <Link href="/support" className="inline-block py-2 underline">
+          Contact support
+        </Link>
+      </p>
+    </AuthShell>
   );
 }

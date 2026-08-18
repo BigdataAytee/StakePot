@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { AuthShell } from '@/components/auth-shell';
 import { money } from '@/lib/format';
 import { usePublicConfig } from '@/lib/public-config';
 import { authed, getToken, useSession } from '@/lib/session';
@@ -86,7 +87,7 @@ export default function VerifyPage() {
   }
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center px-4 py-12">
+    <AuthShell>
       <h1 className="text-2xl font-black leading-none">Confirm your contact</h1>
       <p className="mt-2 text-md text-text-muted">
         {sentTo === null
@@ -116,7 +117,7 @@ export default function VerifyPage() {
             inputMode="numeric"
             autoComplete="one-time-code"
             placeholder="000000"
-            className="rounded-md border border-border bg-surface-raised px-3 py-2.5 text-center font-mono text-xl tracking-[0.3em] tabular-nums outline-none focus-visible:border-rise"
+            className="rounded-md border border-border bg-surface-raised px-3 py-3 text-center font-mono text-xl tracking-[0.3em] tabular-nums outline-none focus-visible:border-rise"
           />
         </label>
 
@@ -135,7 +136,7 @@ export default function VerifyPage() {
         <button
           type="submit"
           disabled={busy || code.length !== 6}
-          className="rounded-md bg-rise px-4 py-3 text-md font-black text-paper transition-transform active:scale-press disabled:opacity-50"
+          className="min-h-[3rem] rounded-md bg-rise px-4 py-3 text-md font-black text-paper transition-transform active:scale-press disabled:opacity-50"
         >
           {busy ? 'Checking…' : 'Verify'}
         </button>
@@ -143,7 +144,7 @@ export default function VerifyPage() {
         <button
           type="button"
           onClick={() => void send()}
-          className="text-sm text-text-muted underline"
+          className="min-h-[3rem] text-sm text-text-muted underline"
         >
           Send another code
         </button>
@@ -156,6 +157,6 @@ export default function VerifyPage() {
         </Link>{' '}
         — your starter balance already works.
       </p>
-    </main>
+    </AuthShell>
   );
 }
