@@ -50,6 +50,14 @@ export const CONFIG_SCHEMAS = {
   syndicate_max_sponsors: z.number().int().positive(),
   syndicate_round_hours: z.number().int().positive(),
 
+  // Resolution, disputes and config governance (§2.6, §6.4b)
+  /** How long participants have to dispute a proposed resolution. */
+  dispute_window_hours: z.number().int().positive(),
+  /** How long a creator has to propose a resolution after the event (Part 3 §5). */
+  resolution_proposal_hours: z.number().int().positive(),
+  /** §6.4b: approved config changes take effect after a visible delay. */
+  config_change_delay_hours: z.number().int().nonnegative(),
+
   // AI question engine (§2.9 rule 3)
   ai_balance_low: z.number().min(0).max(1),
   ai_balance_high: z.number().min(0).max(1),

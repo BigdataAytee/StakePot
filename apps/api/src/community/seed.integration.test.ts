@@ -3,7 +3,6 @@ import { PrismaClient } from '@prisma/client';
 import { Decimal } from '@stakeam/engine';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { AdminAuditService } from '../audit/admin-audit.service';
 import { AuthService } from '../auth/auth.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
@@ -55,14 +54,7 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
     );
-    community = new CommunityService(
-      prisma,
-      config,
-      wallet,
-      ledger,
-      voids,
-      new AdminAuditService(prisma),
-    );
+    community = new CommunityService(prisma, config, wallet, voids);
     seeds = new SeedService(prisma, config, wallet, voids);
     trades = new TradeService(prisma, ledger, wallet, config, {
       publish: async () => undefined,
@@ -447,45 +439,6 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
     expect(creatorAfter.available.gte(creatorBefore.available.plus(bondAmount))).toBe(true);
 
     await expectLedgerBalances(marketId);
-  });
-
-  it('forfeits a bond to platform fees, with the reason on the record', async () => {
-    const creator = await trader('bad-actor@example.ng');
-    const staff = await trader('staff@example.ng');
-    const { marketId } = await seededMarket(creator);
-    const bondAmount = new Decimal(await config.get('conduct_bond_spc'));
-
-    const platformBefore = await wallet.balanceOf('sys_platform');
-    const { amount } = await community.forfeitBond({
-      marketId,
-      reason: 'Proposed a resolution the named source contradicts.',
-      decidedBy: staff,
-      ip: '10.0.0.1',
-    });
-    expect(amount.eq(bondAmount)).toBe(true);
-
-    const bond = await prisma.bond.findUniqueOrThrow({ where: { marketId } });
-    expect(bond.state).toBe('forfeited');
-    expect(bond.reason).toMatch(/named source/);
-
-    const platformAfter = await wallet.balanceOf('sys_platform');
-    expect(platformAfter.available.minus(platformBefore.available).eq(bondAmount)).toBe(true);
-    expect((await wallet.balanceOf(creator)).escrowed.isZero()).toBe(true);
-
-    // Forfeiting twice would take money the creator no longer has escrowed.
-    await expect(
-      community.forfeitBond({
-        marketId,
-        reason: 'Proposed a resolution the named source contradicts.',
-        decidedBy: staff,
-        ip: '10.0.0.1',
-      }),
-    ).rejects.toThrow(/already forfeited/);
-
-    const audit = await prisma.adminAudit.findFirstOrThrow({
-      where: { targetRef: `market:${marketId}` },
-    });
-    expect(audit.action).toBe('bond.forfeit');
   });
 
   it('refuses to seed a market that has already traded', async () => {

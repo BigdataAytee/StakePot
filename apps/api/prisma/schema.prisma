@@ -24,10 +24,21 @@ enum Currency {
   NGN
 }
 
+/// §6.11's role → screen matrix. §3 enumerated only the first four; the admin
+/// spec names five staff roles, and a permission matrix that cannot express
+/// "support staff can read tickets but not the ledger" (§2.11) is not one.
 enum UserRole {
   user
   creator
+  /// Support desk + read-only user context. No money, no markets.
+  support
+  /// Resolution centre and disputes. No balances.
   resolver
+  /// Users, abuse queue, creators desk.
+  trust_safety
+  /// Money room, and one of the two eyes on a money approval.
+  finance
+  /// Everything — but still no solo money moves, and every click audited.
   admin
 }
 
@@ -45,6 +56,10 @@ enum LedgerType {
   bond_refund
   bond_forfeit
   prize
+  /// A manual correction, only ever reachable through the four-eyes approvals
+  /// workflow (§2.10). Typed distinctly so "money a human moved by hand" is one
+  /// query, not an inference.
+  adjustment
 }
 
 enum FundClass {
@@ -101,6 +116,15 @@ enum ApprovalState {
   pending
   approved
   rejected
+}
+
+/// A dispute's life (§2.6, Rulebook Part 1 §5). `withdrawn` is the filer
+/// changing their mind; only a resolver can uphold or reject.
+enum DisputeState {
+  open
+  upheld
+  rejected
+  withdrawn
 }
 
 enum TemplateCategory {
@@ -260,6 +284,10 @@ model Market {
   /// `createdAt`, because the queue is not a source of truth and the schedule
   /// has to be rebuildable from Postgres alone.
   fundingClosesAt    DateTime?
+  /// When the 48h dispute window shuts (§2.6). Set when a resolution is
+  /// proposed; the market cannot be finalised before it, and the job that
+  /// closes it is rebuilt from this column rather than from a queue.
+  disputeClosesAt    DateTime?
   creatorId          String?
   /// Liquidity constant L from §2.3. Immutable once the market is created.
   liquidityParam     Decimal     @db.Decimal(38, 18)
@@ -459,15 +487,16 @@ model Resolution {
 }
 
 model Dispute {
-  id          String  @id @default(cuid())
+  id          String       @id @default(cuid())
   marketId    String
   userId      String
   evidenceUrl String
   text        String
-  /// Not enumerated in §3.
-  state       String  @default("open")
+  state       DisputeState @default(open)
   decidedBy   String?
   decision    String?
+  createdAt   DateTime     @default(now())
+  decidedAt   DateTime?
 
   market Market @relation(fields: [marketId], references: [id])
   user   User   @relation(fields: [userId], references: [id])
@@ -514,8 +543,18 @@ model Approval {
   approver2   String?
   state       ApprovalState @default(pending)
   createdAt   DateTime      @default(now())
+  /// Mandatory: §6.4b requires a written reason on every proposal, and the
+  /// approver is being asked to agree with a stated case, not a bare diff.
+  reason      String        @default("")
+  decidedAt   DateTime?
+  /// Why it was refused, shown back to the proposer.
+  rejection   String?
+  /// When the action actually ran. An approved-but-unexecuted row is an
+  /// incident, so the two timestamps are kept apart.
+  executedAt  DateTime?
 
   @@index([state, createdAt])
+  @@index([actionType, state])
   @@map("approvals")
 }
 

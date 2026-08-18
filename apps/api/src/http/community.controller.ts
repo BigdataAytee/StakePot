@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Body,
   Controller,
-  ForbiddenException,
   Get,
   NotFoundException,
   Param,
@@ -25,10 +24,14 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
+import type { UserRole } from '@prisma/client';
+
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
+import { Roles, RolesGuard } from '../auth/roles.guard';
 import { CommunityService, CommunityMarketError } from '../community/community.service';
 import { FundingWindowWorker } from '../community/funding-window.worker';
 import { SeedError, SeedService } from '../community/seed.service';
+import { ResolutionFlowError, ResolutionFlowService } from '../resolution/resolution-flow.service';
 import {
   QuestionEngineService,
   QuestionEngineUnavailableError,
@@ -64,8 +67,14 @@ export class ContributeDto {
   @IsNumberString() amount!: string;
 }
 
-export class ForfeitBondDto {
-  @IsString() @MinLength(10) reason!: string;
+export class ProposeResultDto {
+  @IsString() outcomeId!: string;
+  @IsString() evidenceUrl!: string;
+}
+
+export class DisputeDto {
+  @IsString() evidenceUrl!: string;
+  @IsString() @MinLength(20) text!: string;
 }
 
 export class CreateCommunityMarketDto {
@@ -85,6 +94,7 @@ export class CommunityController {
   constructor(
     private readonly community: CommunityService,
     private readonly seeds: SeedService,
+    private readonly resolutions: ResolutionFlowService,
     private readonly engine: QuestionEngineService,
     private readonly windows: FundingWindowWorker,
     private readonly config: PlatformConfigService,
@@ -165,7 +175,8 @@ export class CommunityController {
    * (§6), which is where the rest of the staff surface lives.
    */
   @Post('drafts/:id/approve')
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
   async approve(
     @Req() request: RequestWithUser,
     @Param('id') draftId: string,
@@ -173,9 +184,6 @@ export class CommunityController {
   ) {
     const user = request.user;
     if (user === undefined) throw new BadRequestException('no authenticated user');
-    if (user.role !== 'admin' && user.role !== 'resolver') {
-      throw new ForbiddenException('only staff can open a market from the review queue');
-    }
 
     const draft = await this.prisma.marketDraft.findUnique({ where: { id: draftId } });
     if (draft === null) throw new NotFoundException('draft not found');
@@ -381,30 +389,71 @@ export class CommunityController {
   }
 
   /**
-   * Forfeit a conduct bond (Part 3 §5). Staff only, reason on the record.
+   * The creator posts the Proposed Resolution (Part 3 §5).
+   *
+   * Within [48] hours of the event concluding, with a reference to the named
+   * source. This opens the dispute window and pays out nothing — the platform
+   * confirms every community resolution before any money moves, and that is a
+   * different person, in the resolution centre.
    */
-  @Post('markets/:id/bond/forfeit')
+  @Post('markets/:id/resolution/propose')
   @UseGuards(JwtGuard)
-  async forfeitBond(
+  async proposeResult(
     @Req() request: RequestWithUser,
     @Param('id') marketId: string,
-    @Body() body: ForfeitBondDto,
+    @Body() body: ProposeResultDto,
   ) {
     const user = request.user;
     if (user === undefined) throw new BadRequestException('no authenticated user');
-    if (user.role !== 'admin' && user.role !== 'resolver') {
-      throw new ForbiddenException('only staff can forfeit a conduct bond');
-    }
 
-    const { amount } = await this.run(() =>
-      this.community.forfeitBond({
+    const { resolution, disputeClosesAt } = await this.run(() =>
+      this.resolutions.propose({
         marketId,
-        reason: body.reason,
-        decidedBy: user.userId,
-        ip: request.ip ?? 'unknown',
+        outcomeId: body.outcomeId,
+        evidenceUrl: body.evidenceUrl,
+        actor: {
+          userId: user.userId,
+          role: user.role as UserRole,
+          ip: request.ip ?? 'unknown',
+        },
       }),
     );
-    return { state: 'forfeited', amount: amount.toString() };
+
+    await this.windows.scheduleDisputeWindow(marketId, disputeClosesAt);
+
+    return {
+      id: resolution.id,
+      state: 'dispute_window',
+      disputeClosesAt: disputeClosesAt.toISOString(),
+    };
+  }
+
+  /**
+   * File a dispute (Part 1 §5, Part 3 §6).
+   *
+   * Open to anyone with money in the market, and only while the [48]-hour window
+   * is open. Only evidence from the market's named source is admissible, which
+   * staff judge — this endpoint's job is to get the claim on the record in time.
+   */
+  @Post('markets/:id/disputes')
+  @UseGuards(JwtGuard)
+  async dispute(
+    @Req() request: RequestWithUser,
+    @Param('id') marketId: string,
+    @Body() body: DisputeDto,
+  ) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+
+    const dispute = await this.run(() =>
+      this.resolutions.fileDispute({
+        marketId,
+        userId: user.userId,
+        evidenceUrl: body.evidenceUrl,
+        text: body.text,
+      }),
+    );
+    return { id: dispute.id, state: dispute.state };
   }
 
   /**
@@ -418,7 +467,11 @@ export class CommunityController {
     try {
       return await operation();
     } catch (error) {
-      if (error instanceof SeedError || error instanceof CommunityMarketError) {
+      if (
+        error instanceof SeedError ||
+        error instanceof CommunityMarketError ||
+        error instanceof ResolutionFlowError
+      ) {
         throw new BadRequestException(error.message);
       }
       throw error;

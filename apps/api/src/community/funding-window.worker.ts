@@ -4,6 +4,7 @@ import { Queue, Worker, type JobsOptions } from 'bullmq';
 import { env } from '../config/env';
 import { logger } from '../logger';
 import { PrismaService } from '../prisma/prisma.service';
+import { ResolutionFlowService } from '../resolution/resolution-flow.service';
 import { CommunityService } from './community.service';
 import { SeedService } from './seed.service';
 
@@ -12,10 +13,15 @@ const QUEUE = 'funding-window';
 /**
  * `window` is the funding window's deadline — Path A activates or voids, Path B
  * re-checks the participation floor. `seeding` is a syndicate round's deadline:
- * fill or refund. Two deadlines, two jobs, so a market that has both cannot lose
- * one to the other's job id.
+ * fill or refund. `dispute` is the 48h window on a proposed result. Three
+ * deadlines, three job ids, so a market that carries more than one cannot lose
+ * one to another's.
+ *
+ * `freeze-sweep` is the odd one out: a repeatable job rather than a deadline,
+ * flipping markets whose event has started into `pending_resolution` so the
+ * shelf stops saying LIVE during the match.
  */
-type CloseKind = 'window' | 'seeding';
+type CloseKind = 'window' | 'seeding' | 'dispute' | 'freeze-sweep';
 
 interface CloseJob {
   readonly marketId: string;
@@ -41,6 +47,7 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly community: CommunityService,
     private readonly seeds: SeedService,
+    private readonly resolutions: ResolutionFlowService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -52,11 +59,8 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       QUEUE,
       async (job) => {
         const { marketId, kind } = job.data;
-        const result =
-          kind === 'seeding'
-            ? await this.seeds.closeSeedingRound(marketId)
-            : await this.community.closeWindow(marketId);
-        logger.info({ marketId, kind, ...result }, 'community deadline handled');
+        const result = await this.handle(kind, marketId);
+        logger.info({ marketId, kind, ...result }, 'market deadline handled');
         return result;
       },
       { connection, concurrency: 4 },
@@ -82,6 +86,19 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  private async handle(kind: CloseKind, marketId: string): Promise<Record<string, unknown>> {
+    switch (kind) {
+      case 'seeding':
+        return this.seeds.closeSeedingRound(marketId);
+      case 'dispute':
+        return this.resolutions.closeDisputeWindow(marketId);
+      case 'freeze-sweep':
+        return { frozen: await this.resolutions.freezeDueMarkets() };
+      case 'window':
+        return this.community.closeWindow(marketId);
+    }
+  }
+
   /** Schedule a market's funding-window close. Safe to call more than once. */
   async schedule(marketId: string, closesAt: Date): Promise<void> {
     await this.enqueue(marketId, 'window', closesAt);
@@ -90,6 +107,11 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
   /** Schedule a seeding round's deadline (Rulebook Part 3 §3). */
   async scheduleSeedingRound(marketId: string, roundEndsAt: Date): Promise<void> {
     await this.enqueue(marketId, 'seeding', roundEndsAt);
+  }
+
+  /** Schedule the close of a proposed result's 48h dispute window (§2.6). */
+  async scheduleDisputeWindow(marketId: string, closesAt: Date): Promise<void> {
+    await this.enqueue(marketId, 'dispute', closesAt);
   }
 
   private async enqueue(marketId: string, kind: CloseKind, at: Date): Promise<void> {
@@ -141,7 +163,25 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       await this.scheduleSeedingRound(round.marketId, round.roundEndsAt);
     }
 
-    return windows.length + rounds.length;
+    const windowsOnResults = await this.prisma.market.findMany({
+      where: { state: 'dispute_window', disputeClosesAt: { not: null } },
+      select: { id: true, disputeClosesAt: true },
+    });
+    for (const market of windowsOnResults) {
+      if (market.disputeClosesAt === null) continue;
+      await this.scheduleDisputeWindow(market.id, market.disputeClosesAt);
+    }
+
+    // The freeze sweep is a standing job rather than a per-market deadline: it
+    // is cheap, it is idempotent, and a market that froze late is a display bug
+    // rather than a money one (the trade path checks the clock itself).
+    await this.queue?.upsertJobScheduler(
+      'freeze-sweep',
+      { every: 300_000 },
+      { name: 'close', data: { marketId: '', kind: 'freeze-sweep' } },
+    );
+
+    return windows.length + rounds.length + windowsOnResults.length;
   }
 
   async onModuleDestroy(): Promise<void> {

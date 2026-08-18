@@ -14,8 +14,9 @@ Phase 0 scaffold reconciles against them, and the open questions it raised.
 ## Status: Phase 3 — community shelf
 
 Money core, live market and ticket view, multi-outcome markets, community
-creation with AI screening, and — as of step 7 — Path B symmetric seeds, Sponsor
-Syndicates and conduct bonds.
+creation with AI screening, Path B symmetric seeds, Sponsor Syndicates and
+conduct bonds, and — as of step 8 — the resolution and dispute flow, four-eyes
+approvals, and the admin cockpit's first four screens at `/admin`.
 
 ## Quickstart
 
@@ -63,6 +64,10 @@ pnpm dev                      # web on :3000, api on :3001
 - **The pot invariants are asserts, not enforcement.** If
   `pot === C(q) − C(q0)` or `Σstaked === pot` ever fires, the implementation is
   wrong — do not clamp around it.
+- **No god button** (§6). No screen lets one person edit a balance, resolve a
+  market without a trail, or spend escrow. Voids after activation, bond
+  forfeitures, manual ledger corrections and config changes are proposals; a
+  second person approves them, and the proposer never can.
 - **Tunable values live in `platform_config`, never in code** (§6.4b). Fees,
   limits, thresholds and windows are four-eyes-approved database rows with an
   immutable history. Constants in the engine are validation rails, not settings.

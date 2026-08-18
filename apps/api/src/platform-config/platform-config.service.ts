@@ -28,6 +28,7 @@ export class PlatformConfigService implements OnModuleInit {
   }
 
   async refresh(): Promise<void> {
+    await this.activateDue();
     const rows = await this.prisma.platformConfig.findMany({ where: { state: 'active' } });
     const next = new Map<string, unknown>();
     for (const row of rows) {
@@ -35,6 +36,41 @@ export class PlatformConfigService implements OnModuleInit {
     }
     this.cache = next;
     this.loadedAt = Date.now();
+  }
+
+  /**
+   * Promote approved changes whose effective date has arrived (§6.4b).
+   *
+   * "Approved changes take effect after a visible delay (default [24]h, config)
+   * and never retroactively." The promotion is driven by the clock and is
+   * idempotent, and it runs from `refresh()` so that any process which reads
+   * config also advances the schedule — a config change cannot be stranded by a
+   * scheduler that happens not to be running.
+   */
+  async activateDue(now = new Date()): Promise<number> {
+    const due = await this.prisma.platformConfig.findMany({
+      where: { state: 'pending', effectiveAt: { lte: now } },
+      orderBy: { version: 'asc' },
+    });
+    if (due.length === 0) return 0;
+
+    for (const row of due) {
+      await this.prisma.$transaction([
+        this.prisma.platformConfig.updateMany({
+          where: { key: row.key, state: 'active' },
+          data: { state: 'superseded' },
+        }),
+        this.prisma.platformConfig.update({
+          where: { key_version: { key: row.key, version: row.version } },
+          data: { state: 'active' },
+        }),
+      ]);
+    }
+    // `config_versions` is deliberately not touched here: it is append-only at
+    // the database level, like the ledger. Its `activatedAt` is written when the
+    // change is approved, because that is when the effective date is decided —
+    // §6.4b's history is a record of decisions, not a log of clock ticks.
+    return due.length;
   }
 
   /**

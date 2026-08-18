@@ -8,6 +8,7 @@ import {
   prices,
   resolve,
   seed,
+  sell,
   stakedIdentityResidual,
 } from '../index';
 
@@ -149,5 +150,72 @@ describe('seed()', () => {
     expect(creator).toBeDefined();
     expect(creator?.payout.gt(20_000)).toBe(true);
     expect(creator?.payout.lt(40_000)).toBe(true);
+  });
+});
+
+/**
+ * The counterexample fast-check found for `fee ≤ pot`, pinned as a fixed case.
+ *
+ * It is the answer to a question the Phase 0 addendum left open — "can
+ * `staked[i]` go negative?" — and the answer is yes, on an ordinary sequence of
+ * trades: buy heavily into one outcome so the other prices near zero, buy a
+ * little of that other outcome (which is now cheap by the share), sell the first
+ * outcome back down so the book swings, then sell the second. More money leaves
+ * through the second outcome than was ever staked on it, and its `staked` goes
+ * deeply negative.
+ *
+ * Left unclamped, `pot − staked[w]` then exceeds the whole pot, the fee exceeds
+ * the pot, and every payout comes out negative — the market bills its winners.
+ */
+describe('a losing pool can never exceed the pot', () => {
+  it('survives the swing that drives staked[w] negative', () => {
+    let state = openMarket({ outcomes: 2, liquidity: 10_000 });
+    const seeded = seed(state, 500_000);
+    state = seeded.state;
+
+    const first = buy(state, 0, 37_800_000);
+    state = first.state;
+    const second = buy(state, 1, 100_000);
+    state = second.state;
+
+    let heldZero = first.shares;
+    let heldOne = second.shares;
+    for (const [outcome, fraction] of [
+      [0, '0.9'],
+      [0, '0.25'],
+      [1, '0.9'],
+      [1, '0.5'],
+    ] as const) {
+      const held = outcome === 0 ? heldZero : heldOne;
+      const delta = held.times(fraction);
+      state = sell(state, outcome, delta).state;
+      if (outcome === 0) heldZero = heldZero.minus(delta);
+      else heldOne = heldOne.minus(delta);
+    }
+
+    // The bookkeeping figure really is negative — that is not the bug.
+    expect((state.staked[1] ?? new Decimal(0)).isNegative()).toBe(true);
+
+    const result = resolve(state, 1, '0.1', [
+      { holderId: 'seeder', shares: seeded.sharesPerOutcome },
+      { holderId: 'trader', shares: heldOne },
+    ]);
+
+    // The fee basis is: it is money, and money is bounded by the pot.
+    expect(result.losingPool.lte(state.pot)).toBe(true);
+    expect(result.fee.lte(state.pot)).toBe(true);
+    for (const payout of result.payouts) {
+      expect(
+        payout.payout.gte(0),
+        `${payout.holderId} was billed ${payout.payout.toString()}`,
+      ).toBe(true);
+    }
+    expect(
+      sum(result.payouts.map((p) => p.payout))
+        .plus(result.fee)
+        .minus(state.pot)
+        .abs()
+        .lte('1e-20'),
+    ).toBe(true);
   });
 });

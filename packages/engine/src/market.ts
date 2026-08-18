@@ -379,7 +379,7 @@ export function estimatedPayoutPerShare(state: MarketState, outcomeIndex: number
 /**
  * RESOLVE — pay the winning outcome out of the pot.
  *
- *   losingPool = pot − staked[w]
+ *   losingPool = clamp(pot − staked[w], 0, pot)
  *   fee = losingPool × feeRate;  distributable = pot − fee
  *   holder of s winning shares receives distributable × s / q[w]
  *
@@ -423,15 +423,39 @@ export function resolve(
     );
   }
 
-  const losingPool = state.pot.minus(at(state.staked, w));
+  // The losing pool is a quantity of *money*, so it is bounded by the money in
+  // the pot. That bound is not decoration: `staked[i]` is money in per outcome
+  // net of exits, and it can go negative — sell an outcome after the book has
+  // swung towards it and more money leaves through that outcome than was ever
+  // staked on it. `pot − staked[w]` then exceeds the pot, and charging a fee on
+  // that basis produces a fee larger than the pot and *negative* payouts: the
+  // market would bill its own winners. Clamped here, at the point where the
+  // quantity stops being a bookkeeping figure and becomes a fee basis.
+  const unclamped = state.pot.minus(at(state.staked, w));
+  const losingPool = Decimal.min(Decimal.max(unclamped, ZERO), Decimal.max(state.pot, ZERO));
   const fee = losingPool.times(rate);
   const distributable = state.pot.minus(fee);
+
+  if (fee.gt(state.pot.plus(stateTolerance(state)))) {
+    throw new EngineInvariantError(
+      `resolution fee ${fee.toString()} exceeds the pot ${state.pot.toString()}`,
+    );
+  }
 
   const payouts: Payout[] = holdings.map((holding) => {
     const s = toDecimal(holding.shares);
     const payout = outstanding.lte(0) ? ZERO : distributable.times(s).div(outstanding);
     return { holderId: holding.holderId, shares: s, payout };
   });
+
+  for (const payout of payouts) {
+    if (payout.payout.isNegative()) {
+      throw new EngineInvariantError(
+        `payout for ${payout.holderId} is negative (${payout.payout.toString()}) — ` +
+          'a resolution pays winners, it never bills them',
+      );
+    }
+  }
 
   const paid = payouts.reduce((acc, p) => acc.plus(p.payout), ZERO);
   const residual = paid.plus(fee).minus(state.pot);

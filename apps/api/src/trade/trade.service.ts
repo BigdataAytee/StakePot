@@ -234,6 +234,15 @@ export class TradeService {
       throw new TradeError(`market is ${market.state} — trading is closed`);
     }
 
+    // §7.2's countdown is a promise: trading freezes when the event starts. The
+    // job that flips the market's state runs on a sweep and can be late, so the
+    // money path checks the clock itself rather than trusting the flag — a trade
+    // placed after kick-off by someone watching the match is the exact abuse
+    // this closes.
+    if (market.eventDate.getTime() <= Date.now()) {
+      throw new TradeError('this market froze when the event started');
+    }
+
     // §2.5: "Creator cannot place directional stakes in own market (enforced at
     // trade endpoint), except symmetric seed." A creator who can take a side in
     // the market they also settle has both the motive and the means, and the

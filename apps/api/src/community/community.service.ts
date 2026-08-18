@@ -2,9 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@stakeam/engine';
 
-import { AdminAuditService } from '../audit/admin-audit.service';
-import { LedgerService, type Tx } from '../ledger/ledger.service';
-import { SYSTEM_PLATFORM_ACCOUNT } from '../ledger/posting';
+import { type Tx } from '../ledger/ledger.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -33,9 +31,7 @@ export class CommunityService {
     private readonly prisma: PrismaService,
     private readonly config: PlatformConfigService,
     private readonly wallet: WalletService,
-    private readonly ledger: LedgerService,
     private readonly voids: MarketVoidService,
-    private readonly audit: AdminAuditService,
   ) {}
 
   /**
@@ -225,79 +221,6 @@ export class CommunityService {
   }
 
   /**
-   * Forfeit a creator's conduct bond (Rulebook Part 3 §5).
-   *
-   * "It is forfeited if the creator proposes a resolution contradicted by the
-   * named source, abandons resolution, is found to have inside influence, or
-   * breaks Part 1 §8–9. Forfeited bonds fund the platform's dispute-handling."
-   *
-   * A judgement call by definition, so it is never automatic: staff call this,
-   * with a reason that stays on the record. The money moves escrow → platform
-   * fees, which is what makes it spendable on dispute handling and nothing else
-   * (§2.10).
-   */
-  async forfeitBond(params: {
-    marketId: string;
-    reason: string;
-    decidedBy: string;
-    ip: string;
-  }): Promise<{ amount: Decimal }> {
-    if (params.reason.trim().length < 10) {
-      throw new CommunityMarketError('a forfeited bond needs a reason on the record');
-    }
-
-    return this.prisma.$transaction(async (tx) => {
-      const bond = await tx.bond.findUnique({ where: { marketId: params.marketId } });
-      if (bond === null) throw new CommunityMarketError('this market has no conduct bond');
-      if (bond.state !== 'held') {
-        throw new CommunityMarketError(`this bond is already ${bond.state}`);
-      }
-
-      const amount = new Decimal(bond.amount.toString());
-      await this.ledger.post(
-        tx,
-        [
-          {
-            userId: bond.creatorId,
-            marketId: params.marketId,
-            type: 'bond_forfeit',
-            fundClass: 'user_escrow',
-            amount: amount.negated(),
-            currency: 'SPC',
-          },
-          {
-            userId: SYSTEM_PLATFORM_ACCOUNT,
-            marketId: params.marketId,
-            type: 'bond_forfeit',
-            fundClass: 'platform_fees',
-            amount,
-            currency: 'SPC',
-          },
-        ],
-        `bond-forfeit:${params.marketId}`,
-      );
-
-      await tx.bond.update({
-        where: { id: bond.id },
-        data: { state: 'forfeited', reason: params.reason, resolvedAt: new Date() },
-      });
-      await this.audit.record(
-        {
-          staffId: params.decidedBy,
-          action: 'bond.forfeit',
-          targetRef: `market:${params.marketId}`,
-          before: { state: 'held', amount: amount.toString() },
-          after: { state: 'forfeited', reason: params.reason },
-          ip: params.ip,
-        },
-        tx,
-      );
-
-      return { amount };
-    });
-  }
-
-  /**
    * Close a funding window: activate, or void and refund everyone (§2.4).
    *
    * Idempotent by state — a market not in `funding` is left alone. The job that
@@ -345,7 +268,8 @@ export class CommunityService {
    *
    * The bond comes back because failing to attract stakes is not misconduct.
    * §2.4 says "full refund including seed"; forfeiting a bond is for a creator
-   * who resolved dishonestly, which is `forfeitBond` and a staff decision.
+   * who resolved dishonestly, which is a `bond.forfeit` proposal through the
+   * four-eyes workflow (§2.10) — never a method on this service.
    */
   private async voidAndRefund(tx: Tx, marketId: string, reason: string): Promise<void> {
     await this.voids.voidAndRefund(tx, marketId, reason);

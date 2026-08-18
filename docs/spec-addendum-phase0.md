@@ -121,6 +121,53 @@ which also covers a creator who holds no position at all.
 floors, Path B's participation floor, the ticket's trader count and its 24h
 volume. Otherwise a creator could seed their own market into looking busy.
 
+## Resolution, disputes and four-eyes (step 8)
+
+**A market cannot settle on one person's say-so.** Two rules carry §6's "no god
+button" design signature: the Final Resolution is staff-only, and the finaliser
+can never be the person who proposed the result. On a community market the
+proposer is usually the creator, so the second rule _is_ Part 3 §5's "the
+platform confirms every community resolution before payout", enforced rather
+than promised. The payout path itself is unchanged — the flow is the procedure
+around it.
+
+**One market, one resolution record.** The payout path used to write its own
+`resolutions` row, which meant a market that went through a proposal and a
+dispute window ended up with two — the second claiming the resolver had also
+proposed it. It now finalises the open proposal instead, and only creates a row
+when there was none (an official market settled directly). The resolution log is
+the licensing exhibit; it has to read as what actually happened.
+
+**Trading freezes on the clock, not on a flag.** The trade path refuses a buy or
+sell at or after the market's event date regardless of the state column. A sweep
+job flips `active → pending_resolution` so the shelf stops saying LIVE during the
+match, but a late sweep is then a display bug rather than a money one — someone
+watching the first half must not be able to stake on it.
+
+**Four eyes are two people, not two clicks.** Every action in
+`APPROVAL_ACTIONS` — post-activation void, bond forfeit, manual ledger
+adjustment, config change, and the licensed-phase withdrawal release — is a
+proposal first. The proposer can never approve their own, and a money-affecting
+action needs a Finance or Admin approver (§6.4b). Approval and execution are one
+transaction: an approved row whose action never ran would be an audit trail
+saying money moved and money that did not, so a failing executor leaves the
+proposal pending and tells the proposer why.
+
+**Config changes land as a pending version with a visible delay.** §6.4b's "never
+retroactively" is why the approved value does not replace the active row: it is
+inserted as `pending` with an effective date, and promoted by the clock. The
+promotion runs from `PlatformConfigService.refresh()`, so any process that reads
+config also advances the schedule and a change cannot be stranded by a scheduler
+that happens not to be running. `config_versions` is append-only like the ledger,
+so the effective date is recorded when the change is approved rather than
+back-filled when it activates.
+
+**Staff roles.** §3's `UserRole` enum listed four values; §6.11's matrix names
+five staff roles. `support`, `trust_safety` and `finance` were added — a
+permission matrix that cannot express "support reads tickets but not the ledger"
+is not a permission matrix. Roles are checked by a guard on the handler, so an
+endpoint that forgets to declare who may call it is an endpoint nobody may call.
+
 ## Still open
 
 **The §2.3 liquidity tuning rule understates price impact by 1/p.** Unchanged in
@@ -143,10 +190,24 @@ should be quantised to the storage scale _before_ `assertBalanced` runs — whic
 would force every caller to allocate its own remainder, and make "the ledger
 sums to exactly zero as stored" true rather than nearly true.
 
-**Can `staked[i]` go negative?** Not observed across the property runs, and it
-would take holders of one outcome collectively extracting more than was ever
-staked on it. It is not _proven_ impossible, so `losingPool` is computed rather
-than assumed non-negative, and the suite asserts `fee ≤ pot` directly.
+**~~Can `staked[i]` go negative?~~ Answered in step 8: yes, and it mattered.**
+The seeded scenarios added to the property suite in step 7 found it within a
+hundred runs, and the counterexample is an ordinary sequence of trades: buy
+heavily into one outcome so the other prices near zero, buy a little of that
+other outcome (cheap by the share), sell the first back down so the book swings,
+then sell the second. More money leaves through the second outcome than was ever
+staked on it, and its `staked` goes deeply negative.
+
+Unclamped, `pot − staked[w]` then exceeds the whole pot: on the shrunk case the
+fee came to ₦3,829,999 against a pot of ₦3,828,588 and **every payout came out
+negative** — the market billing its own winners. Conservation still held
+(`Σpayouts + fee === pot`), which is why only the `fee ≤ pot` assertion caught
+it.
+
+The fix is in `resolve()`: the losing pool is a quantity of _money_, so it is
+clamped to `[0, pot]` at the point where it stops being a bookkeeping figure and
+becomes a fee basis. `resolve()` also now refuses to return a negative payout.
+The counterexample is pinned as a fixed test in `seed.test.ts`.
 
 ## Implementation decisions taken where the spec left a gap
 

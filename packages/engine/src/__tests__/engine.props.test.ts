@@ -264,11 +264,21 @@ describe('engine invariants (property-based)', () => {
 
           within(paid.plus(result.fee), state.pot, 'payouts + fee must equal the pot');
           within(result.residual, ZERO, 'resolution residual');
+          // Everything staked off the winning outcome — bounded, because it is
+          // money. `staked[w]` can go negative when the book swings and money
+          // leaves through the winner's own outcome, and an unbounded basis
+          // there produces a fee larger than the pot and negative payouts.
+          const unclamped = state.pot.minus(state.staked[winner] ?? ZERO);
+          const expected = Decimal.min(Decimal.max(unclamped, ZERO), Decimal.max(state.pot, ZERO));
           within(
             result.losingPool,
-            state.pot.minus(state.staked[winner] ?? ZERO),
-            'losing pool must be everything staked off the winning outcome',
+            expected,
+            'losing pool must be the money staked off the winner',
           );
+          expect(
+            result.losingPool.gte(0) && result.losingPool.lte(Decimal.max(state.pot, ZERO)),
+            `losing pool ${result.losingPool.toString()} is outside [0, pot]`,
+          ).toBe(true);
           within(result.fee, result.losingPool.times(feeRate), 'fee must be losingPool × feeRate');
           expect(
             result.fee.lte(state.pot.plus(TOLERANCE)),

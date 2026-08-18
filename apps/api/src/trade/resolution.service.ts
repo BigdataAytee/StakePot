@@ -214,17 +214,39 @@ export class ResolutionService {
       // what the market held, and neither is safe to trust.
       await this.ledger.post(tx, postings, `resolve:${input.marketId}`);
 
-      await tx.resolution.create({
-        data: {
-          marketId: input.marketId,
-          proposedBy: input.resolvedBy,
-          proposedOutcomeId: input.winningOutcomeId,
-          evidenceUrl: input.evidenceUrl,
-          finalizedBy: input.resolvedBy,
-          finalizedAt: new Date(),
-          finalOutcomeId: input.winningOutcomeId,
-        },
+      // One market, one resolution record. Where a result was proposed and sat
+      // through a dispute window (§2.6), that row is the record and this
+      // finalises it — writing a second one would claim the resolver had also
+      // proposed it, and the resolution log is the licensing exhibit. Only a
+      // market resolved without a proposal (an official market settled directly)
+      // creates its row here.
+      const open = await tx.resolution.findFirst({
+        where: { marketId: input.marketId, finalizedAt: null },
+        orderBy: { proposedAt: 'desc' },
       });
+
+      if (open === null) {
+        await tx.resolution.create({
+          data: {
+            marketId: input.marketId,
+            proposedBy: input.resolvedBy,
+            proposedOutcomeId: input.winningOutcomeId,
+            evidenceUrl: input.evidenceUrl,
+            finalizedBy: input.resolvedBy,
+            finalizedAt: new Date(),
+            finalOutcomeId: input.winningOutcomeId,
+          },
+        });
+      } else {
+        await tx.resolution.update({
+          where: { id: open.id },
+          data: {
+            finalizedBy: input.resolvedBy,
+            finalizedAt: new Date(),
+            finalOutcomeId: input.winningOutcomeId,
+          },
+        });
+      }
 
       await tx.market.update({
         where: { id: input.marketId },

@@ -38,6 +38,20 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   await prisma.marketDraft.deleteMany();
   await prisma.market.deleteMany();
 
+  // Config the tests proposed: drop every version past the seeded one and put
+  // the seeded row back in charge. `config_versions` is append-only, so the
+  // trigger comes off for the fixture the same way the ledger's does.
+  await prisma.$executeRawUnsafe(
+    'ALTER TABLE config_versions DISABLE TRIGGER config_versions_append_only',
+  );
+  await prisma.$executeRawUnsafe('DELETE FROM config_versions');
+  await prisma.$executeRawUnsafe(
+    'ALTER TABLE config_versions ENABLE TRIGGER config_versions_append_only',
+  );
+  await prisma.platformConfig.deleteMany({ where: { version: { gt: 1 } } });
+  await prisma.platformConfig.updateMany({ where: { version: 1 }, data: { state: 'active' } });
+  await prisma.approval.deleteMany();
+
   await prisma.wallet.updateMany({ data: { available: 0, escrowed: 0 } });
   await prisma.user.deleteMany({ where: { status: { not: 'system' } } });
   await prisma.reconciliationRun.deleteMany();
