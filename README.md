@@ -59,5 +59,8 @@ pnpm dev                      # web on :3000, api on :3001
 - **No `any` in `packages/engine`.** It is the money path; `any` erases the
   guarantees the ledger depends on.
 - **The pot invariants are asserts, not enforcement.** If
-  `pot === C(q) − C(q0)` ever fires, the implementation is wrong — do not clamp
-  around it.
+  `pot === C(q) − C(q0)` or `Σstaked === pot` ever fires, the implementation is
+  wrong — do not clamp around it.
+- **Tunable values live in `platform_config`, never in code** (§6.4b). Fees,
+  limits, thresholds and windows are four-eyes-approved database rows with an
+  immutable history. Constants in the engine are validation rails, not settings.
