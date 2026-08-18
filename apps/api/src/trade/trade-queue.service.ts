@@ -146,21 +146,40 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
     // Nudge the loop rather than waiting for the next tick.
     void this.drain(request.marketId);
 
+    // Waiters watch Redis, not Postgres. The worker announces each outcome with
+    // a short-lived key, so a submit that is waiting costs no database
+    // connections — this matters more than it looks: on a small pool (CI has
+    // two cores, so Prisma gives five connections), a handful of waiters
+    // polling the trades table starved the very transaction they were waiting
+    // on, and the queue timed out against itself. The database is consulted
+    // once, at the end, as a belt-and-braces check in case the announcement
+    // write was lost.
     const deadline = Date.now() + waitMs;
     while (Date.now() < deadline) {
-      const filled = await this.prisma.trade.findUnique({
-        where: { requestId: request.requestId },
-      });
-      if (filled !== null) {
-        return { status: 'filled', requestId: request.requestId, trade: filled };
+      const announced = await redis
+        .mget(filledKey(request.requestId), rejectionKey(request.requestId))
+        .catch(() => [null, null]);
+
+      if (announced[0] !== null) {
+        const filled = await this.prisma.trade.findUnique({
+          where: { requestId: request.requestId },
+        });
+        if (filled !== null) {
+          return { status: 'filled', requestId: request.requestId, trade: filled };
+        }
       }
-      const rejection = await redis.get(rejectionKey(request.requestId)).catch(() => null);
-      if (rejection !== null) {
-        return { status: 'rejected', requestId: request.requestId, reason: rejection };
+      if (announced[1] != null) {
+        return { status: 'rejected', requestId: request.requestId, reason: announced[1] };
       }
-      await sleep(25);
+      await sleep(50);
     }
 
+    const lastLook = await this.prisma.trade.findUnique({
+      where: { requestId: request.requestId },
+    });
+    if (lastLook !== null) {
+      return { status: 'filled', requestId: request.requestId, trade: lastLook };
+    }
     return { status: 'queued', requestId: request.requestId };
   }
 
@@ -266,6 +285,8 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
     try {
       if (request.kind === 'buy') await this.trades.buy(request);
       else await this.trades.sell(request);
+      // Announce the fill so waiters never have to poll the database for it.
+      await redis.set(filledKey(request.requestId), '1', 'EX', 300).catch(() => undefined);
     } catch (error) {
       if (isRefusal(error)) {
         // A refusal is an answer, not a failure: the caller is waiting for it,
@@ -315,5 +336,6 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
 }
 
 const rejectionKey = (requestId: string): string => `stakeam:trades:rejected:${requestId}`;
+const filledKey = (requestId: string): string => `stakeam:trades:filled:${requestId}`;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
