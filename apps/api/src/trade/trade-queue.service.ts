@@ -75,6 +75,8 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
   private draining = false;
   private timer: NodeJS.Timeout | null = null;
   private readonly name = `worker-${process.pid}`;
+  /** Tail of each market's in-process inline chain — see executeInline. */
+  private readonly inlineTail = new Map<string, Promise<void>>();
 
   constructor(
     private readonly trades: TradeService,
@@ -194,7 +196,37 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
     return { status: 'queued', requestId };
   }
 
+  /**
+   * The Redis-down path, serialised per market *before* the database.
+   *
+   * The row lock alone makes concurrent inline trades correct, but each one
+   * waiting on that lock is parked inside an open transaction holding a pooled
+   * connection — and on a small pool a burst on one market starves itself into
+   * "unable to start a transaction" (observed on CI's two-core runner, where
+   * Prisma's pool is five). Chaining same-market requests in-process means at
+   * most one of a market's trades occupies a connection at a time, which is
+   * §11's ordering discipline applied to the fallback too. Different markets
+   * still run in parallel; per-process ordering is weaker than the queue's
+   * cross-node ordering, but the fallback was never cross-node ordered — the
+   * row lock is what holds then, exactly as documented above.
+   */
   private async executeInline(request: QueuedRequest): Promise<QueueOutcome> {
+    const previous = this.inlineTail.get(request.marketId) ?? Promise.resolve();
+    const outcome = previous.then(() => this.runInline(request));
+    const tail = outcome.then(
+      () => undefined,
+      () => undefined,
+    );
+    this.inlineTail.set(request.marketId, tail);
+    void tail.then(() => {
+      if (this.inlineTail.get(request.marketId) === tail) {
+        this.inlineTail.delete(request.marketId);
+      }
+    });
+    return outcome;
+  }
+
+  private async runInline(request: QueuedRequest): Promise<QueueOutcome> {
     try {
       const trade =
         request.kind === 'buy' ? await this.trades.buy(request) : await this.trades.sell(request);
