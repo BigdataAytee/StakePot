@@ -8,6 +8,8 @@ import { MetricsController } from './observability/metrics.controller';
 import { PlatformConfigModule } from './platform-config/platform-config.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
+import { HttpModule } from './http/http.module';
+import { RealtimeModule } from './realtime/realtime.module';
 import { TradeModule } from './trade/trade.module';
 import { WalletModule } from './wallet/wallet.module';
 
@@ -21,6 +23,8 @@ import { WalletModule } from './wallet/wallet.module';
     AuthModule,
     ReconciliationModule,
     TradeModule,
+    RealtimeModule,
+    HttpModule,
   ],
   controllers: [HealthController, MetricsController],
 })

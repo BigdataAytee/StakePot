@@ -11,6 +11,7 @@ import type { PrismaService } from '../prisma/prisma.service';
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { WalletService } from '../wallet/wallet.service';
 import { resetDatabase } from '../testing/reset';
+import type { PriceCacheService } from '../realtime/price-cache.service';
 import { ResolutionService } from './resolution.service';
 import { TradeService } from './trade.service';
 
@@ -52,7 +53,11 @@ describe.skipIf(!TEST_DATABASE_URL)('binary official market, end to end', () => 
       config,
     );
     markets = new MarketService(prisma, config);
-    trades = new TradeService(prisma, ledger, wallet, config);
+    // The live feed is a fan-out concern, not a money concern: a tick that
+    // never publishes must not change what a trade did. Stubbed so these tests
+    // stay off Redis and prove exactly that.
+    const priceFeed = { publish: async () => undefined } as unknown as PriceCacheService;
+    trades = new TradeService(prisma, ledger, wallet, config, priceFeed);
     resolution = new ResolutionService(prisma, ledger, config);
     reconciliation = new ReconciliationService(prisma, config);
   });

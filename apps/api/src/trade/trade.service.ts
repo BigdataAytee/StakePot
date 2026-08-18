@@ -8,6 +8,7 @@ import { release } from '../ledger/posting';
 import { indexOf, outcomeAt, toEngineState } from '../market/market-state';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PriceCacheService } from '../realtime/price-cache.service';
 import { WalletService } from '../wallet/wallet.service';
 
 export class TradeError extends Error {
@@ -58,13 +59,37 @@ export class TradeService {
     private readonly ledger: LedgerService,
     private readonly wallet: WalletService,
     private readonly config: PlatformConfigService,
+    private readonly prices: PriceCacheService,
   ) {}
+
+  /**
+   * Push the new prices onto the live feed.
+   *
+   * Deliberately after the transaction commits, not inside it: a tick for a
+   * trade that then rolled back would show every watcher a price that never
+   * existed. A tick that fails to publish is a missed frame — the next trade
+   * corrects it, and the chart's history comes from `price_history` regardless.
+   */
+  private async broadcast(
+    marketId: string,
+    loaded: ReturnType<typeof toEngineState>,
+    result: TradeResult,
+  ): Promise<void> {
+    const prices: Record<string, string> = {};
+    for (const [i, outcome] of loaded.outcomes.entries()) {
+      const price = result.pricesAfter[i];
+      if (price !== undefined) prices[outcome.id] = price.toString();
+    }
+    await this.prices
+      .publish({ marketId, prices, pot: result.state.pot.toString(), at: Date.now() })
+      .catch(() => undefined);
+  }
 
   async buy(input: BuyInput): Promise<Trade> {
     const amount = new Decimal(input.amount);
     if (amount.lte(0)) throw new TradeError('amount must be greater than zero');
 
-    return this.prisma.$transaction(async (tx) => {
+    const committed = await this.prisma.$transaction(async (tx) => {
       const existing = await this.replay(tx, input.requestId);
       if (existing) return existing;
 
@@ -83,9 +108,16 @@ export class TradeService {
 
       const result = buy(loaded.state, index, amount.toString());
       await this.persist(tx, input, loaded, index, result, 'buy', amount, new Decimal(0));
+      const trade = await this.recordTrade(tx, input, index, result, 'buy', amount, new Decimal(0));
 
-      return this.recordTrade(tx, input, index, result, 'buy', amount, new Decimal(0));
+      return { trade, loaded, result };
     });
+
+    if ('loaded' in committed) {
+      await this.broadcast(input.marketId, committed.loaded, committed.result);
+      return committed.trade;
+    }
+    return committed;
   }
 
   /**
@@ -99,7 +131,7 @@ export class TradeService {
     const shares = new Decimal(input.shares);
     if (shares.lte(0)) throw new TradeError('shares must be greater than zero');
 
-    return this.prisma.$transaction(async (tx) => {
+    const committed = await this.prisma.$transaction(async (tx) => {
       const existing = await this.replay(tx, input.requestId);
       if (existing) return existing;
 
@@ -167,8 +199,16 @@ export class TradeService {
       }
 
       await this.persist(tx, input, loaded, index, result, 'sell', gross.negated(), fee);
-      return this.recordTrade(tx, input, index, result, 'sell', net, fee);
+      const trade = await this.recordTrade(tx, input, index, result, 'sell', net, fee);
+
+      return { trade, loaded, result };
     });
+
+    if ('loaded' in committed) {
+      await this.broadcast(input.marketId, committed.loaded, committed.result);
+      return committed.trade;
+    }
+    return committed;
   }
 
   /** A repeated request_id returns the original fill rather than trading again. */

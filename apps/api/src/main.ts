@@ -1,11 +1,13 @@
 import 'reflect-metadata';
 
+import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import * as Sentry from '@sentry/node';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
+import { RealtimeGateway } from './realtime/realtime.gateway';
 import { env } from './config/env';
 import { logger } from './logger';
 
@@ -33,9 +35,15 @@ async function bootstrap(): Promise<void> {
     });
 
   app.enableCors({ origin: env.WEB_ORIGIN, credentials: true });
+  app.useGlobalPipes(
+    new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+  );
   app.enableShutdownHooks();
 
   await app.listen(env.PORT, '0.0.0.0');
+
+  // Share the HTTP server with socket.io rather than opening a second port.
+  app.get(RealtimeGateway).attach(app.getHttpServer());
   logger.info({ port: env.PORT, env: env.NODE_ENV }, 'stakeam api listening');
 }
 
