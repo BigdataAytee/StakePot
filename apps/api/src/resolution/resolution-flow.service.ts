@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { Decimal } from '@stakeam/engine';
 import type { Dispute, Resolution, UserRole } from '@prisma/client';
 
 import { AdminAuditService } from '../audit/admin-audit.service';
@@ -7,6 +8,7 @@ import { type Tx } from '../ledger/ledger.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { QuestionEngineService } from '../community/question-engine.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { ThreadService } from '../community-layer/thread.service';
 import { AutopsyService } from '../creator/autopsy.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -55,6 +57,7 @@ export class ResolutionFlowService {
     private readonly engine: QuestionEngineService,
     private readonly autopsies: AutopsyService,
     private readonly threads: ThreadService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   /**
@@ -342,6 +345,20 @@ export class ResolutionFlowService {
     // badge permanently". The badge was already permanent — this stamps the one
     // thing nobody could know at the time, whether the call landed.
     await this.threads.stampReceipts(market.id);
+
+    // §6.8's dashboard. Recorded after the money has moved, because that is
+    // when it is true.
+    // The pot is what the winners split plus what the platform took — the two
+    // halves of the money that was in the market when it settled.
+    const distributed = result.payouts.reduce(
+      (total, payout) => total.plus(payout.payout),
+      new Decimal(0),
+    );
+    await this.analytics.record('market_resolved', {
+      marketId: market.id,
+      pot: distributed.plus(result.fee).toString(),
+      fee: result.fee.toString(),
+    });
 
     // Everyone who was paid, and everyone who argued, hears about it — after the
     // money has moved, because that is when it is true (§2.12).

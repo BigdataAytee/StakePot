@@ -2,12 +2,14 @@
 
 import {
   AlertTriangle,
+  BarChart3,
   Gavel,
   LayoutDashboard,
   LifeBuoy,
   ShieldAlert,
   ShieldCheck,
   Sparkles,
+  Trophy,
   Wallet,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -32,6 +34,8 @@ const SCREENS = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/admin/drafts', label: 'Drafts', icon: Sparkles },
   { href: '/admin/moderation', label: 'Moderation', icon: ShieldAlert },
+  { href: '/admin/prizes', label: 'Prizes', icon: Trophy },
+  { href: '/admin/analytics', label: 'Analytics', icon: BarChart3 },
   { href: '/admin/resolution', label: 'Resolution', icon: Gavel },
   { href: '/admin/approvals', label: 'Approvals', icon: ShieldCheck },
   { href: '/admin/money', label: 'Money room', icon: Wallet },

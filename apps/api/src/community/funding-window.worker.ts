@@ -5,6 +5,7 @@ import { env } from '../config/env';
 import { logger } from '../logger';
 import { NudgeService } from '../creator/nudge.service';
 import { OpportunityService } from '../creator/opportunity.service';
+import { LeaderboardService } from '../leaderboard/leaderboard.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResolutionFlowService } from '../resolution/resolution-flow.service';
 import { SupportService } from '../support/support.service';
@@ -33,7 +34,8 @@ type CloseKind =
   | 'freeze-sweep'
   | 'sla-sweep'
   | 'nudge-sweep'
-  | 'opportunity-sweep';
+  | 'opportunity-sweep'
+  | 'leaderboard-sweep';
 
 interface CloseJob {
   readonly marketId: string;
@@ -63,6 +65,7 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
     private readonly support: SupportService,
     private readonly nudges: NudgeService,
     private readonly opportunities: OpportunityService,
+    private readonly leaderboards: LeaderboardService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -121,6 +124,11 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
         const expired = await this.opportunities.expire();
         return { ...gaps, expired };
       }
+      case 'leaderboard-sweep':
+        // §2.8's boards. Recomputed rather than incremented: a market settling
+        // changes several people's standings at once, and a board rebuilt from
+        // the ledger cannot drift from it.
+        return this.leaderboards.snapshotAll();
       case 'sla-sweep':
         // §2.12's "SLA timers with escalation". A breach is a state of the
         // queue, so it is swept rather than timed per ticket.
@@ -227,6 +235,14 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       'opportunity-sweep',
       { every: 3_600_000 },
       { name: 'close', data: { marketId: '', kind: 'opportunity-sweep' } },
+    );
+    // Every fifteen minutes. A leaderboard nobody can watch move is a table,
+    // not a competition — but recomputing it per trade would put a full scan on
+    // the write path, which §11 forbids outright.
+    await this.queue?.upsertJobScheduler(
+      'leaderboard-sweep',
+      { every: 900_000 },
+      { name: 'close', data: { marketId: '', kind: 'leaderboard-sweep' } },
     );
 
     return windows.length + rounds.length + windowsOnResults.length;

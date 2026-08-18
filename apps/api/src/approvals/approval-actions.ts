@@ -50,6 +50,19 @@ export const APPROVAL_ACTIONS = {
     summary: 'Change a platform_config value',
   },
   /**
+   * §6.8's "weekly prize runs (approve airtime payouts)".
+   *
+   * The run and its awards are drawn up first and reviewable as a table; this
+   * is only the signature that moves the money. A promotional competition
+   * paying out to a leaderboard is exactly the kind of discretionary spend one
+   * credential must not be able to authorise alone.
+   */
+  'prize.run': {
+    schema: z.object({ runId: z.string().min(1) }),
+    money: true,
+    summary: 'Pay a weekly prize run to its leaderboard winners',
+  },
+  /**
    * Registered but not executable: deposits and withdrawals arrive with the
    * licence (§9). The threshold config and the inbox exist now so the control
    * is not something to remember to build later.

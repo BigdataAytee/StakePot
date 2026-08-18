@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 export class AuthError extends Error {
   constructor(message: string) {
@@ -58,6 +59,7 @@ export class AuthService {
     private readonly wallet: WalletService,
     private readonly jwt: JwtService,
     private readonly config: PlatformConfigService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   async signup(input: SignupInput): Promise<AuthTokens> {
@@ -114,10 +116,12 @@ export class AuthService {
   async markContactVerified(userId: string): Promise<void> {
     const bonus = await this.config.get('signup_bonus_spc');
 
-    await this.prisma.$transaction(async (tx) => {
+    const promoted = await this.prisma.$transaction(async (tx) => {
       const user = await tx.user.findUnique({ where: { id: userId } });
       if (user === null) throw new AuthError('user not found');
-      if (user.contactVerified) return;
+      // Idempotent: verifying twice must not pay twice, and must not record a
+      // second funnel step for the same person.
+      if (user.contactVerified) return false;
 
       await tx.user.update({
         where: { id: userId },
@@ -133,7 +137,15 @@ export class AuthService {
           tx,
         });
       }
+      return true;
     });
+
+    // §6.8's funnel step. Outside the transaction and best-effort: the
+    // promotion has already happened, and a dashboard write must never be able
+    // to roll one back.
+    if (promoted) {
+      await this.analytics.record('contact_verified', { tier: 1 }, userId);
+    }
   }
 
   async login(params: { contact: string; password: string }): Promise<AuthTokens> {

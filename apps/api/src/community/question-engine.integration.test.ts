@@ -13,6 +13,11 @@ import { SeedService } from './seed.service';
 import { MarketVoidService } from './void.service';
 import type { MarketTemplate } from './market-template';
 import type { Assessment, GenerationRequest, Proposal, QuestionModel } from './question-model';
+import { CreatorService } from '../creator/creator.service';
+import { EmailSender } from '../notifications/email.sender';
+import { NotificationsService } from '../notifications/notifications.service';
+import { PushSender } from '../notifications/push.sender';
+import { SmsSender } from '../notifications/sms.sender';
 
 /**
  * §2.9's engine against a real database, with a stand-in for the model.
@@ -412,8 +417,3 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
     });
   });
 });
-import { CreatorService } from '../creator/creator.service';
-import { EmailSender } from '../notifications/email.sender';
-import { NotificationsService } from '../notifications/notifications.service';
-import { PushSender } from '../notifications/push.sender';
-import { SmsSender } from '../notifications/sms.sender';

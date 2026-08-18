@@ -27,6 +27,11 @@ import { TradeService } from '../trade/trade.service';
 import { WalletService } from '../wallet/wallet.service';
 import { RgBlockedError, RgService } from './rg.service';
 import type { MarketTemplate } from '../community/market-template';
+import { CreatorAnalyticsService } from '../creator/analytics.service';
+import { AutopsyService } from '../creator/autopsy.service';
+import { CreatorService } from '../creator/creator.service';
+import { AnalyticsService } from '../analytics/analytics.service';
+import { PrizeService } from '../leaderboard/prize.service';
 
 /**
  * The company layer against a real database (§2.11, §2.12).
@@ -76,17 +81,29 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
       wallet,
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
+      new AnalyticsService(prisma),
     );
     rg = new RgService(prisma, config);
     support = new SupportService(prisma, config, notifications);
     status = new StatusService(prisma);
     totp = new TotpService(prisma);
-    approvals = new ApprovalsService(prisma, ledger, voids, config, audit, totp);
+    // §2.8's prize tool: drawn up in the leaderboard module and paid only
+    // when the approvals workflow signs it.
+    const prizes = new PrizeService(
+      prisma,
+      config,
+      wallet,
+      notifications,
+      audit,
+      new AnalyticsService(prisma),
+    );
+    approvals = new ApprovalsService(prisma, ledger, voids, config, audit, totp, prizes);
     // §2.14's creator platform: the ladder, the analytics it reads, and
     // the autopsy that moves a creator's record when a market closes.
     const creators = new CreatorService(prisma, config, notifications);
     const creatorAnalytics = new CreatorAnalyticsService(prisma);
     const autopsies = new AutopsyService(prisma, creatorAnalytics, creators, notifications);
+    const analytics = new AnalyticsService(prisma);
     community = new CommunityService(
       prisma,
       config,
@@ -95,6 +112,7 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
       notifications,
       creators,
       autopsies,
+      analytics,
     );
     seeds = new SeedService(prisma, config, wallet, voids, creators);
     trades = new TradeService(
@@ -496,6 +514,3 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
     });
   });
 });
-import { CreatorAnalyticsService } from '../creator/analytics.service';
-import { AutopsyService } from '../creator/autopsy.service';
-import { CreatorService } from '../creator/creator.service';

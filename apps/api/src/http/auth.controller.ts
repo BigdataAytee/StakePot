@@ -1,6 +1,7 @@
 import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
 import { IsBoolean, IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 
+import { AnalyticsService } from '../analytics/analytics.service';
 import { AuthService } from '../auth/auth.service';
 
 export class SignupDto {
@@ -17,17 +18,23 @@ export class LoginDto {
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly analytics: AnalyticsService,
+  ) {}
 
   @Post('signup')
   async signup(@Body() body: SignupDto) {
     try {
-      return await this.auth.signup({
+      const result = await this.auth.signup({
         ...(body.email === undefined ? {} : { email: body.email }),
         ...(body.phone === undefined ? {} : { phone: body.phone }),
         password: body.password,
         ageAttested: body.ageAttested,
       });
+      // The top of §6.8's funnel. Best-effort, like every analytics write.
+      await this.analytics.record('signup', { tier: result.tier }, result.userId);
+      return result;
     } catch (error) {
       throw new BadRequestException((error as Error).message);
     }

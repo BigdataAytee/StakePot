@@ -21,6 +21,10 @@ import { CommunityService } from './community.service';
 import { SeedService } from './seed.service';
 import { MarketVoidService } from './void.service';
 import type { MarketTemplate } from './market-template';
+import { CreatorAnalyticsService } from '../creator/analytics.service';
+import { AutopsyService } from '../creator/autopsy.service';
+import { CreatorService } from '../creator/creator.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 /**
  * Path B seeds, Sponsor Syndicates and conduct bonds against a real database
@@ -66,12 +70,14 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
       wallet,
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
+      new AnalyticsService(prisma),
     );
     // §2.14's creator platform: the ladder, the analytics it reads, and
     // the autopsy that moves a creator's record when a market closes.
     const creators = new CreatorService(prisma, config, notifications);
     const creatorAnalytics = new CreatorAnalyticsService(prisma);
     const autopsies = new AutopsyService(prisma, creatorAnalytics, creators, notifications);
+    const analytics = new AnalyticsService(prisma);
     community = new CommunityService(
       prisma,
       config,
@@ -80,6 +86,7 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
       notifications,
       creators,
       autopsies,
+      analytics,
     );
     seeds = new SeedService(prisma, config, wallet, voids, creators);
     trades = new TradeService(
@@ -156,30 +163,24 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
   /**
    * Every posting for this market, summed. Zero, or money was invented.
    *
-   * Each transaction is asserted to balance at 40 digits before it is written;
-   * the columns then hold 18 decimal places, so a payout that does not land on
-   * that scale is rounded on the way in. The sum of what is *stored* can
-   * therefore sit one storage quantum (1e-18 SPC) off zero per row — sixteen
-   * orders of magnitude below one kobo. `quantumsOf` is that bound, made
-   * explicit so a real discrepancy still fails the test.
+   * Exactly zero, since step 13. The resolution path now brings its postings to
+   * the storage scale (18 dp) *before* balancing them rather than letting
+   * Postgres round them on the way in, so what the ledger asserts and what the
+   * database holds are the same numbers. Previously this could sit one quantum
+   * off zero per row and the test had to allow for it.
    */
-  async function ledgerResidual(
-    marketId: string,
-  ): Promise<{ residual: Decimal; quantumsOf: Decimal }> {
+  async function ledgerResidual(marketId: string): Promise<{ residual: Decimal }> {
     const rows = await prisma.ledgerEntry.findMany({ where: { marketId } });
     const residual = rows.reduce(
       (acc, row) => acc.plus(new Decimal(row.amount.toString())),
       new Decimal(0),
     );
-    return { residual, quantumsOf: new Decimal('1e-18').times(rows.length) };
+    return { residual };
   }
 
   async function expectLedgerBalances(marketId: string): Promise<void> {
-    const { residual, quantumsOf } = await ledgerResidual(marketId);
-    expect(
-      residual.abs().lte(quantumsOf),
-      `ledger for ${marketId} is off by ${residual.toString()}`,
-    ).toBe(true);
+    const { residual } = await ledgerResidual(marketId);
+    expect(residual.isZero(), `ledger for ${marketId} is off by ${residual.toString()}`).toBe(true);
   }
 
   it('opens a seeded market flat: equal money in every pool and no price moved', async () => {
@@ -492,6 +493,3 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
     );
   });
 });
-import { CreatorAnalyticsService } from '../creator/analytics.service';
-import { AutopsyService } from '../creator/autopsy.service';
-import { CreatorService } from '../creator/creator.service';

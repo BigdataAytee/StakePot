@@ -51,6 +51,7 @@ describe.skipIf(!TEST_DATABASE_URL)('community layer (integration)', () => {
       wallet,
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
+      new AnalyticsService(prisma),
     );
     trades = new TradeService(
       prisma,
@@ -495,3 +496,4 @@ describe.skipIf(!TEST_DATABASE_URL)('community layer (integration)', () => {
     expect(stored.positionSnapshot).toMatch(/^YES@/);
   });
 });
+import { AnalyticsService } from '../analytics/analytics.service';

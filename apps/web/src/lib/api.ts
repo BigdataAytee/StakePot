@@ -49,6 +49,8 @@ export interface MarketDetail extends MarketSummary {
   volume24h: string;
   /** Whose market this is (§2.14c). Null on the official shelf. */
   creator: CreatorByline | null;
+  /** What the winners split. Null while the market is still open. */
+  distributed: string | null;
 }
 
 export interface SponsorView {

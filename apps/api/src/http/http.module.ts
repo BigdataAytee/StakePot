@@ -4,12 +4,14 @@ import { JwtModule } from '@nestjs/jwt';
 import { AdminModule } from '../admin/admin.module';
 import { ApprovalsModule } from '../approvals/approvals.module';
 import { AuthModule } from '../auth/auth.module';
+import { AnalyticsModule } from '../analytics/analytics.module';
 import { CommunityLayerModule } from '../community-layer/community-layer.module';
 import { CommunityModule } from '../community/community.module';
 import { CreatorModule } from '../creator/creator.module';
 import { JwtGuard, OptionalJwtGuard } from '../auth/jwt.guard';
 import { RolesGuard } from '../auth/roles.guard';
 import { env } from '../config/env';
+import { LeaderboardModule } from '../leaderboard/leaderboard.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { MarketModule } from '../market/market.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -25,6 +27,11 @@ import { AuthController } from './auth.controller';
 import { StatusController } from './status.controller';
 import { CommunityController } from './community.controller';
 import { CreatorsController, MarketSignalsController } from './creators.controller';
+import {
+  AnalyticsController,
+  LeaderboardController,
+  PrizeController,
+} from './leaderboard.controller';
 import { MarketsController } from './markets.controller';
 import { ModerationController, ThreadsController } from './threads.controller';
 import { TradesController } from './trades.controller';
@@ -32,11 +39,13 @@ import { TradesController } from './trades.controller';
 @Module({
   imports: [
     AdminModule,
+    AnalyticsModule,
     ApprovalsModule,
     AuthModule,
     CommunityLayerModule,
     CommunityModule,
     CreatorModule,
+    LeaderboardModule,
     LedgerModule,
     MarketModule,
     NotificationsModule,
@@ -57,7 +66,10 @@ import { TradesController } from './trades.controller';
     AuthController,
     StatusController,
     CommunityController,
+    AnalyticsController,
     CreatorsController,
+    LeaderboardController,
+    PrizeController,
     MarketSignalsController,
     MarketsController,
     ModerationController,

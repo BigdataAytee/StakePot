@@ -30,6 +30,9 @@ export const NOTIFICATION_TYPES = {
   creator_new_market: { title: 'A creator you follow posted', channels: ['in_app', 'push'] },
   creator_level: { title: 'Your creator level changed', channels: ['in_app', 'push'] },
   market_autopsy: { title: 'Your market closed', channels: ['in_app', 'push'] },
+  // §2.8's weekly prize. Email as well: money arriving is worth a record
+  // somewhere the recipient can find again.
+  prize: { title: 'You won a prize', channels: ['in_app', 'push', 'email'] },
   rg_confirmation: {
     title: 'Your limits changed',
     // Deliberately every channel, including SMS: a person who has just excluded

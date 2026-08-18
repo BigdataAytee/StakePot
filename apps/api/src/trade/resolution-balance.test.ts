@@ -43,7 +43,7 @@ describe('resolution balancing', () => {
     expect(() => assertBalanced(postings)).not.toThrow();
   });
 
-  it('folds a rounding residual into the largest payout', () => {
+  it('folds a rounding residual into a payout', () => {
     const postings: Posting[] = [
       posting('a', 'payout', 'user_escrow', '-100'),
       posting('a', 'payout', 'user_available', '60'),
@@ -55,9 +55,41 @@ describe('resolution balancing', () => {
 
     // The transaction now balances exactly, which is the whole point.
     expect(() => assertBalanced(postings)).not.toThrow();
-    // And the correction landed on the larger of the two payouts.
-    expect(postings[1]?.amount.toString()).not.toBe('60');
-    expect(postings[2]?.amount.toString()).toBe('32.9999999999999999999999999999999999999');
+  });
+
+  it('absorbs a one-quantum residual exactly', () => {
+    // What the balancer actually sees. Every posting reaching it is a whole
+    // multiple of 1e-18 — the scale the money columns hold — because the
+    // resolution path quantises before it balances. A residual is then also a
+    // multiple of 1e-18, and any leg can carry one exactly.
+    const postings: Posting[] = [
+      posting('whale', 'payout', 'user_available', '3829999.123456789012345678'),
+      posting('minnow', 'payout', 'user_available', '0.000001'),
+      posting('esc', 'payout', 'user_escrow', '-3829999.123456790012345678'),
+    ];
+
+    balanceOnLargestPayout(postings);
+
+    expect(() => assertBalanced(postings)).not.toThrow();
+    // The whale's payout is untouched: the smaller leg carried it.
+    expect(postings[0]?.amount.toString()).toBe('3829999.123456789012345678');
+  });
+
+  it('cannot rescue a sub-quantum residual, which is why quantising comes first', () => {
+    // A tail finer than the storage scale cannot be absorbed at all: at 40
+    // significant digits, adding 1e-37 to a number of order 1e6 is a no-op, so
+    // the correction vanishes and the transaction is still refused. This is the
+    // failure that made the resolution path quantise its postings *before*
+    // balancing them, and this test is here so nobody removes that step.
+    const postings: Posting[] = [
+      posting('whale', 'payout', 'user_available', '3829999.123456789012345678'),
+      posting('minnow', 'payout', 'user_available', '0.000001'),
+      posting('esc', 'payout', 'user_escrow', '-3829999.1234567890123456790000000000000000001'),
+    ];
+
+    balanceOnLargestPayout(postings);
+
+    expect(() => assertBalanced(postings)).toThrow();
   });
 
   it('never restates an escrow release or a fee', () => {
@@ -90,8 +122,11 @@ describe('resolution balancing', () => {
     balanceOnLargestPayout(reversed);
 
     // The same market resolved twice must produce identical postings.
-    const adjusted = (rows: Posting[]) => rows.find((row) => row.userId === 'b')?.amount.toString();
-    expect(adjusted(forward)).toBe(adjusted(reversed));
+    const amounts = (rows: Posting[]) =>
+      [...rows]
+        .sort((left, right) => (left.userId < right.userId ? -1 : 1))
+        .map((row) => `${row.userId}:${row.amount.toString()}`);
+    expect(amounts(forward)).toEqual(amounts(reversed));
   });
 
   it('refuses to paper over an imbalance with nothing to absorb it', () => {

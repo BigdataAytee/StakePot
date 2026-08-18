@@ -1,4 +1,5 @@
 import { Controller, Get, NotFoundException, Param, Query } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { subHours } from 'date-fns';
 
 import { PriceCacheService } from '../realtime/price-cache.service';
@@ -100,6 +101,18 @@ export class MarketsController {
         ? null
         : await this.prisma.creatorProfile.findUnique({ where: { userId: market.creatorId } });
 
+    // What the winners actually split. `potTotal` is drained to zero when a
+    // market settles — correct, since the pot no longer exists — so a recap
+    // card reading it would report nothing was at stake. Summed from the payout
+    // legs, which is the money that really landed in people's balances.
+    const distributed =
+      market.state !== 'resolved'
+        ? null
+        : await this.prisma.ledgerEntry.aggregate({
+            where: { marketId: id, type: 'payout', fundClass: 'user_available' },
+            _sum: { amount: true },
+          });
+
     return {
       ...this.serialiseMarket(market),
       // Live prices come from Redis when they are there; the row is the fallback.
@@ -112,6 +125,9 @@ export class MarketsController {
       })),
       traderCount: traders.length,
       volume24h: (volume._sum.cost ?? 0).toString(),
+      /** Null while a market is open; what the winners split once it settled. */
+      distributed:
+        distributed === null ? null : (distributed._sum.amount ?? new Prisma.Decimal(0)).toString(),
       // §2.14c's byline: whose market this is, and what they have earned the
       // right to be called. Read here rather than fetched separately because
       // the share card (§2.14d) renders from this one response.

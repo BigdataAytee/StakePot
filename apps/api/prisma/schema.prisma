@@ -187,6 +187,22 @@ enum OpportunitySource {
   seasonal
 }
 
+/// §2.8's two boards. They rank different people on purpose: profit rewards
+/// size and nerve, accuracy rewards being right.
+enum LeaderboardBoard {
+  profit
+  accuracy
+}
+
+/// A prize run's life. `paid` is terminal and irreversible — the credits are on
+/// the ledger by then, and the ledger does not take things back (§2.10).
+enum PrizeRunState {
+  draft
+  pending_approval
+  paid
+  cancelled
+}
+
 /// Why a market closed. A void and a settle teach a creator different things
 /// (§2.14d), so the autopsy has to know which it is reviewing.
 enum AutopsyKind {
@@ -293,6 +309,7 @@ model User {
   commentReports     CommentReport[]
   topCalls           TopCall[]
   leaderboardSnapshots LeaderboardSnapshot[]
+  prizeAwards        PrizeAward[]
   opportunities      Opportunity[]
   proposedResolutions Resolution[]       @relation("ResolutionProposer")
   finalizedResolutions Resolution[]      @relation("ResolutionFinalizer")
@@ -1128,14 +1145,24 @@ model MarketAnnotation {
 model LeaderboardSnapshot {
   period   String
   userId   String
+  /// Which board this row is a standing on: profit and accuracy rank different
+  /// people, and §2.8 asks for both.
+  board    LeaderboardBoard @default(profit)
   profit   Decimal @db.Decimal(38, 18)
   accuracy Decimal @db.Decimal(38, 18)
   rank     Int
+  /// The counts the numbers were computed from, kept so a published standing
+  /// can be checked against its own inputs rather than only recomputed.
+  staked         Decimal @default(0) @db.Decimal(38, 18)
+  marketsSettled Int     @default(0)
+  marketsWon     Int     @default(0)
+  streak         Int     @default(0)
+  computedAt     DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@id([period, userId])
-  @@index([period, rank])
+  @@id([period, board, userId])
+  @@index([period, board, rank])
   @@map("leaderboard_snapshots")
 }
 
@@ -1148,6 +1175,57 @@ model LeaderboardSnapshot {
 /// Changes are proposals through the four-eyes workflow (§2.10), take effect
 /// after a visible delay, and never apply retroactively — a market already open
 /// resolves under the values in force when it opened.
+/// §2.8's "airtime/data prize distribution tool for weekly winners", and
+/// §6.8's "weekly prize runs (approve airtime payouts)".
+///
+/// A run is a *proposal* until two people have signed it: the awards are drawn
+/// up and visible, and only then does money move. In points mode the prize is
+/// SPC credited to the winner; when the licensed phase arrives the same run
+/// carries an airtime reference instead, which is why the payout reference is a
+/// column rather than an assumption.
+model PrizeRun {
+  id          String        @id @default(cuid())
+  /// The leaderboard period this run rewards, e.g. `2026-W34`.
+  period      String
+  board       LeaderboardBoard
+  state       PrizeRunState @default(draft)
+  /// Total SPC across every award, held on the row so the approver sees one
+  /// number rather than summing the table themselves.
+  totalAmount Decimal       @default(0) @db.Decimal(38, 18)
+  note        String?
+  createdBy   String
+  /// Set when the four-eyes approval executes. Until then nothing has moved.
+  paidAt      DateTime?
+  approvalId  String?
+  createdAt   DateTime      @default(now())
+
+  awards PrizeAward[]
+
+  @@unique([period, board])
+  @@index([state])
+  @@map("prize_runs")
+}
+
+model PrizeAward {
+  id       String  @id @default(cuid())
+  runId    String
+  userId   String
+  rank     Int
+  amount   Decimal @db.Decimal(38, 18)
+  /// Where the prize actually went. Null in points mode, an airtime or data
+  /// reference once §9's licensed phase makes that real.
+  payoutRef String?
+
+  run  PrizeRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  user User     @relation(fields: [userId], references: [id])
+
+  /// One award per person per run: a run that could pay somebody twice is a
+  /// run nobody can reconcile.
+  @@unique([runId, userId])
+  @@index([userId])
+  @@map("prize_awards")
+}
+
 model PlatformConfig {
   key         String
   valueJson   Json

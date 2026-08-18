@@ -259,3 +259,72 @@ export const admin = {
       body: JSON.stringify({ upheld, decision }),
     }),
 };
+
+// ---------------------------------------------------------------- step 13
+
+export interface LeaderboardRow {
+  rank: number;
+  userId: string;
+  handle: string | null;
+  displayName: string | null;
+  profit: string;
+  accuracyPct: number;
+  marketsSettled: number;
+  marketsWon: number;
+  streak: number;
+  staked: string;
+}
+
+export interface PrizeRunView {
+  id: string;
+  period: string;
+  board: 'profit' | 'accuracy';
+  state: 'draft' | 'pending_approval' | 'paid' | 'cancelled';
+  total: string;
+  note: string | null;
+  paidAt: string | null;
+  createdAt: string;
+  awards: {
+    rank: number;
+    userId: string;
+    handle: string | null;
+    displayName: string | null;
+    tier: number;
+    amount: string;
+  }[];
+}
+
+export interface AnalyticsOverview {
+  days: number;
+  counts: { name: string; count: number }[];
+  funnel: { stage: string; people: number; shareOfTop: number | null }[];
+}
+
+export const growth = {
+  prizeRuns: () => request<PrizeRunView[]>('/admin/prizes'),
+  prizePreview: (period: string, board: string) =>
+    request<LeaderboardRow[]>(
+      `/admin/prizes/preview?period=${encodeURIComponent(period)}&board=${board}`,
+    ),
+  draftRun: (body: { period: string; board: string; places?: number; poolSpc?: string }) =>
+    request<{ runId: string; awards: number; total: string }>('/admin/prizes', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  submitRun: (id: string, reason: string) =>
+    request<{ approvalId: string }>(`/admin/prizes/${id}/submit`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+  announceRun: (id: string) =>
+    request<{ told: number }>(`/admin/prizes/${id}/announce`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  cancelRun: (id: string) =>
+    request<{ cancelled: boolean }>(`/admin/prizes/${id}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+  analytics: (days = 14) => request<AnalyticsOverview>(`/admin/analytics?days=${days}`),
+};

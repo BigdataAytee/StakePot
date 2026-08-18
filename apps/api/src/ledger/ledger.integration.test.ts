@@ -70,6 +70,7 @@ describe.skipIf(!TEST_DATABASE_URL)('ledger (integration)', () => {
       wallet,
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
+      new AnalyticsService(prisma),
     );
   });
 
@@ -285,6 +286,7 @@ describe.skipIf(!TEST_DATABASE_URL)('reconciliation (integration)', () => {
       wallet,
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
+      new AnalyticsService(prisma),
     );
     reconciliation = new ReconciliationService(prisma, config);
   });
@@ -352,3 +354,4 @@ describe.skipIf(!TEST_DATABASE_URL)('reconciliation (integration)', () => {
     expect(run.status).toBe('exception');
   });
 });
+import { AnalyticsService } from '../analytics/analytics.service';

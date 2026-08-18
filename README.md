@@ -26,7 +26,11 @@ progression ladder with privileges that actually bind, the creator studio at
 automatic autopsy on every market that closes. Step 12 adds the community layer:
 take threads with position badges on every comment, prediction receipts at
 resolution, the optional "why?" at trade time, challenge links, a Trust & Safety
-moderation queue, and the app is now installable and works offline.
+moderation queue, and the app is now installable and works offline. Step 13 adds
+the engagement layer: weekly and all-time leaderboards on profit and accuracy at
+`/leaderboard`, streaks, a prize tool whose payouts need two signatures, a
+resolution-day recap card, and a typed analytics event taxonomy behind §6.8's
+dashboard.
 
 ## Quickstart
 

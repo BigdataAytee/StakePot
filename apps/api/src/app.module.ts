@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { AdminModule } from './admin/admin.module';
+import { AnalyticsModule } from './analytics/analytics.module';
 import { ApprovalsModule } from './approvals/approvals.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
@@ -8,6 +9,7 @@ import { CommunityLayerModule } from './community-layer/community-layer.module';
 import { CommunityModule } from './community/community.module';
 import { CreatorModule } from './creator/creator.module';
 import { HealthController } from './health/health.controller';
+import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { LedgerModule } from './ledger/ledger.module';
 import { MarketModule } from './market/market.module';
 import { MetricsController } from './observability/metrics.controller';
@@ -28,6 +30,7 @@ import { WalletModule } from './wallet/wallet.module';
   imports: [
     PrismaModule,
     PlatformConfigModule,
+    AnalyticsModule,
     AuditModule,
     LedgerModule,
     WalletModule,
@@ -35,6 +38,7 @@ import { WalletModule } from './wallet/wallet.module';
     ReconciliationModule,
     TradeModule,
     ResolutionModule,
+    LeaderboardModule,
     ApprovalsModule,
     AdminModule,
     NotificationsModule,

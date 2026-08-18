@@ -464,6 +464,82 @@ quietly papered over.
 The correction is bounded by the engine's own tolerance: fractions of 1e-30 SPC,
 a dozen orders of magnitude below the storage quantum and thirty below one kobo.
 
+## Leaderboards, prizes and analytics (step 13)
+
+**Boards are built from settled markets only.** A board counting open positions
+would rank people on paper gains that can still evaporate, and the weekly winner
+would change every time a price moved — a ticker, not a competition. A market
+contributes to somebody's record on the day it resolves and never before.
+
+**Two boards, because they rank different people.** §2.8 asks for profit _and_
+accuracy: profit rewards size and nerve, accuracy rewards being right. Both
+carry a sample-size floor, because a board on profit alone is a board of whoever
+staked most and a board on accuracy alone is a board of whoever placed one lucky
+stake. Zero settled markets is **no** accuracy rather than zero accuracy — the
+eligibility rules keep those accounts off the board instead of ranking them last,
+which would be a claim the rows do not support.
+
+**Ties share a standing.** 1, 2, 2, 4 rather than an arbitrary order, with the
+tiebreak deciding display order only. A board whose order wobbles between
+refreshes is one nobody believes, so ranking is deterministic from its inputs and
+the snapshot is replaced wholesale rather than patched.
+
+**Stake is read per fund class, and that is load-bearing.** A `trade_buy` writes
+two legs — money out of `user_available`, the same money into `user_escrow` — so
+a sum across both cancels to zero. The first version of the query did exactly
+that and produced a board where everyone had staked nothing. What left the
+balance is the `user_available` leg alone.
+
+**A prize run is drawn up before it is paid.** §6.8 puts "approve airtime
+payouts" behind two pairs of eyes, so the awards exist as rows a reviewer can
+read — who, what rank, how much — and money moves only when the run is signed
+through §2.10's approvals workflow. The desk that chooses winners cannot pay
+them. Runs pay against a _published snapshot_, not a live board: a run drawn
+against numbers that are still moving would pay whoever happened to be top at the
+moment of approval, which is not the competition anybody entered.
+
+**Tier 1 is checked twice.** §2.1 gates prizes on a verified contact, at draw
+time so a reviewer never sees an unpayable award, and again at payment because a
+tier can change in between.
+
+**A run pays the top `prize_places` of a board, whatever the board's depth.** On
+a thin board that means everybody on it is paid, including people who lost money.
+That is a config decision for the operator rather than a rule worth hard-coding —
+with a real board of hundreds, the top ten are winners.
+
+**Analytics names live in a registry.** A free-text `name` column is how an
+analytics table becomes unusable: six months in there are four spellings of one
+event and no way to tell which dashboards are wrong. Every write is typed, and
+every write is best-effort — a dashboard must never be the reason a trade fails.
+The funnel counts **distinct people**, not events, because one person viewing
+forty markets is not forty people considering a stake.
+
+## The stored ledger now balances to zero (step 13)
+
+The long-standing caveat below — that stored balances sat within one storage
+quantum of zero rather than on it — is **closed**, and closing it fixed a real
+bug rather than tidying a footnote.
+
+Step 12 had a syndicated market intermittently fail to resolve, and the fix
+folded the residual into the largest payout leg. That fix was wrong in a way
+that only showed up under a rarer roll: at 40 significant digits, subtracting
+1e-37 from a payout of 3.8e6 is a **no-op**, so the correction silently did
+nothing and the transaction was refused anyway. Choosing a smaller leg helps but
+does not settle it either, because `assertBalanced` then sums values spanning
+forty orders of magnitude, and that sum cannot be exact at any fixed precision.
+
+The actual fix is upstream of the balancing: the resolution path brings its
+payouts and fee legs to the storage scale — 18 decimal places, what the money
+columns hold — _before_ it balances them. Once every leg is a whole multiple of
+1e-18 the sum is exact, because the largest realistic pot still leaves the total
+well inside 40 significant digits. The residual the balancer then sees is itself
+a multiple of 1e-18, which any leg can carry.
+
+Two consequences worth stating. What the ledger asserts and what Postgres stores
+are now the same numbers, rather than the second being a rounded copy of the
+first. And the integration tests assert `residual.isZero()` where they used to
+allow a quantum per row.
+
 ## Still open
 
 **The §2.3 liquidity tuning rule understates price impact by 1/p.** Unchanged in
@@ -475,16 +551,8 @@ odds. The engine agrees with the corrected form: the doc's own worked example
 moves the price **1.96 points, not 1**. For ~1-point moves at even odds, `L`
 wants to be ≈ **50× the typical stake**, not 25×. Locked in as a test.
 
-**The stored ledger balances to within one storage quantum per row, not to
-zero.** Every transaction is asserted balanced at 40 significant digits _before_
-it is written, and the columns then hold 18 decimal places — so a payout that
-does not land on that scale is rounded on the way in, and the sum of what is
-stored can sit ~1e-18 SPC off zero. Sixteen orders of magnitude below one kobo,
-and the same for trades as for resolutions, so this is a property of the whole
-money path rather than of step 7. Before real money, decide whether amounts
-should be quantised to the storage scale _before_ `assertBalanced` runs — which
-would force every caller to allocate its own remainder, and make "the ledger
-sums to exactly zero as stored" true rather than nearly true.
+**(Closed in step 13 — see above.)** The stored ledger balanced to within one
+storage quantum per row; it now balances to zero.
 
 **~~Can `staked[i]` go negative?~~ Answered in step 8: yes, and it mattered.**
 The seeded scenarios added to the property suite in step 7 found it within a

@@ -6,6 +6,7 @@ import { type Tx } from '../ledger/ledger.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { AutopsyService } from '../creator/autopsy.service';
 import { CreatorService } from '../creator/creator.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -38,6 +39,7 @@ export class CommunityService {
     private readonly notifications: NotificationsService,
     private readonly creators: CreatorService,
     private readonly autopsies: AutopsyService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   /**
@@ -341,12 +343,17 @@ export class CommunityService {
     // market that cannot be staked on learns to ignore the next one.
     if (result.outcome === 'activated') {
       await this.creators.announceMarket(marketId);
+      await this.analytics.record('market_activated', { marketId, path: 'organic' });
     }
     if (result.outcome === 'voided') {
       await this.autopsies.record({
         marketId,
         kind: 'voided',
         ...(result.reason === undefined ? {} : { voidReason: result.reason }),
+      });
+      await this.analytics.record('market_voided', {
+        marketId,
+        reason: result.reason ?? 'unknown',
       });
     }
     return result;

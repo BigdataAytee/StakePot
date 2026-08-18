@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Get, Post, Req, UseGuards } from
 import { IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
+import { AnalyticsService } from '../analytics/analytics.service';
 import { ThreadService } from '../community-layer/thread.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TradeService } from '../trade/trade.service';
@@ -32,6 +33,7 @@ export class TradesController {
     private readonly wallet: WalletService,
     private readonly prisma: PrismaService,
     private readonly threads: ThreadService,
+    private readonly analytics: AnalyticsService,
   ) {}
 
   @Post('trades')
@@ -56,6 +58,28 @@ export class TradesController {
             shares: body.amount,
             requestId: body.requestId,
           });
+
+    // §3's analytics table. Best-effort by construction — `record` swallows its
+    // own failures — because a dashboard is never a reason a trade fails.
+    await this.analytics.record(
+      'trade_placed',
+      { marketId: body.marketId, side: body.side, amount: body.amount },
+      user.userId,
+    );
+    if (body.side === 'buy') {
+      const priorTrades = await this.prisma.trade.count({
+        where: { userId: user.userId, side: 'buy' },
+      });
+      if (priorTrades === 1) {
+        // The trade just written is the only one: this was their first stake,
+        // which is the funnel step that actually matters.
+        await this.analytics.record(
+          'first_stake',
+          { marketId: body.marketId, amount: body.amount },
+          user.userId,
+        );
+      }
+    }
 
     // The reason posts *after* the trade, so the badge it carries is the
     // position the trade just created — which is the point of asking at trade

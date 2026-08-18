@@ -38,6 +38,15 @@ const dec = (v: Decimal | { toString(): string }): Prisma.Decimal =>
   new Prisma.Decimal(v.toString());
 
 /**
+ * The scale money is stored at: `Decimal(38, 18)` on every money column.
+ *
+ * Postings are brought to it *before* they are balanced rather than being
+ * rounded on the way into Postgres, so what the ledger asserts and what the
+ * database holds are the same numbers.
+ */
+const STORAGE_DP = 18;
+
+/**
  * Resolution and per-share payout (§2.3, §2.6).
  *
  * The engine decides the arithmetic; this decides the bookkeeping. Its one job
@@ -104,8 +113,14 @@ export class ResolutionService {
           ? market.feeBps - creatorBps
           : market.feeBps;
       const split = splitResolutionFee(fee.toString(), { creatorBps, platformBps });
-      const creatorFee = new Decimal(split.creator.toString());
-      const platformFee = new Decimal(split.platform.toString());
+      const creatorFee = new Decimal(split.creator.toString()).toDecimalPlaces(
+        STORAGE_DP,
+        Decimal.ROUND_DOWN,
+      );
+      const platformFee = new Decimal(split.platform.toString()).toDecimalPlaces(
+        STORAGE_DP,
+        Decimal.ROUND_DOWN,
+      );
 
       const postings: Posting[] = [];
 
@@ -168,10 +183,20 @@ export class ResolutionService {
         }
       }
 
+      // Quantised to the storage scale on the way in.
+      //
+      // The columns hold `Decimal(38, 18)`, so anything finer is rounded when
+      // it is written anyway — but until it *is* rounded, the postings span
+      // forty-odd orders of magnitude (a 3.8e6 payout beside a 1e-37 tail), and
+      // a sum across that range cannot be exact at any fixed precision. Once
+      // every leg is a whole multiple of 1e-18 the sum is exact, because the
+      // largest realistic pot still leaves the total well inside 40 significant
+      // digits. This is also what makes the *stored* ledger balance to zero
+      // rather than to within a quantum per row.
       const payouts = result.payouts.map((p) => ({
         userId: p.holderId,
         shares: new Decimal(p.shares.toString()),
-        payout: new Decimal(p.payout.toString()),
+        payout: new Decimal(p.payout.toString()).toDecimalPlaces(STORAGE_DP, Decimal.ROUND_DOWN),
       }));
 
       for (const payout of payouts) {
@@ -333,7 +358,11 @@ export class ResolutionService {
 
     const legs = new Map<string, Decimal>();
     const add = (userId: string, amount: Decimal): void => {
-      legs.set(userId, (legs.get(userId) ?? new Decimal(0)).plus(amount));
+      // Every leg lands on the storage scale, for the same reason the payouts
+      // do: a set of postings that are all whole multiples of 1e-18 can be
+      // summed exactly, and one that is not, cannot.
+      const quantised = amount.toDecimalPlaces(STORAGE_DP, Decimal.ROUND_DOWN);
+      legs.set(userId, (legs.get(userId) ?? new Decimal(0)).plus(quantised));
     };
 
     const organiserCut = creatorFee.times(syndicate.organiserBps).div(10_000);
@@ -355,13 +384,25 @@ export class ResolutionService {
 }
 
 /**
- * Fold a transaction's rounding residual into its largest payout leg.
+ * Fold a transaction's rounding residual into one payout leg.
  *
  * Only ever adjusts a `payout` posting landing in `user_available`: the escrow
  * releases are read from stored ledger rows and must not be restated, and the
  * fee legs are what the platform is owed under §2.3. The winner's share is the
  * one quantity that is a division in the first place, so it is the honest place
  * for a division's remainder to land.
+ *
+ * The **smallest** payout absorbs it, not the largest. That is counter-intuitive
+ * — the relative adjustment is biggest there — but it is the only choice that
+ * works: at 40 significant digits, subtracting ~1e-37 from a payout of ~3.8e6
+ * is a no-op, so the correction silently does nothing and the transaction is
+ * refused anyway. A smaller leg has the precision headroom to actually carry
+ * it. The amounts involved are fractions of 1e-30 SPC, thirty orders of
+ * magnitude below one kobo, so "biggest relative adjustment" is a rounding
+ * error on a rounding error; being *effective* is what matters.
+ *
+ * Ties are broken by user id so the same market resolved twice produces
+ * identical postings.
  *
  * A no-op when the postings already balance, which is the common case.
  */
@@ -372,10 +413,11 @@ export function balanceOnLargestPayout(postings: Posting[]): void {
   let target = -1;
   for (const [index, posting] of postings.entries()) {
     if (posting.type !== 'payout' || posting.fundClass !== 'user_available') continue;
+    if (posting.amount.lte(0)) continue;
     const best = target === -1 ? undefined : postings[target];
     if (
       best === undefined ||
-      posting.amount.gt(best.amount) ||
+      posting.amount.lt(best.amount) ||
       (posting.amount.equals(best.amount) && posting.userId < best.userId)
     ) {
       target = index;

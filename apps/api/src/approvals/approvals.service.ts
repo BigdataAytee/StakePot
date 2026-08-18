@@ -7,6 +7,7 @@ import { AdminAuditService } from '../audit/admin-audit.service';
 import { MONEY_ROLES } from '../auth/roles.guard';
 import { TotpService } from '../auth/totp.service';
 import { MarketVoidService } from '../community/void.service';
+import { PrizeService } from '../leaderboard/prize.service';
 import { NotImplementedError } from '../integrations/errors';
 import { LedgerService, type Tx } from '../ledger/ledger.service';
 import { SYSTEM_PLATFORM_ACCOUNT } from '../ledger/posting';
@@ -53,6 +54,7 @@ export class ApprovalsService {
     private readonly config: PlatformConfigService,
     private readonly audit: AdminAuditService,
     private readonly totp: TotpService,
+    private readonly prizes: PrizeService,
   ) {}
 
   /**
@@ -391,6 +393,15 @@ export class ApprovalsService {
             activatedAt: effectiveAt,
           },
         });
+        return;
+      }
+
+      case 'prize.run': {
+        // §6.8's "approve airtime payouts". The run and its awards were drawn
+        // up and reviewable long before this; all that happens here is the
+        // money, in the same transaction as the signature.
+        const { runId } = parsed as { runId: string };
+        await this.prizes.pay(tx, runId);
         return;
       }
 

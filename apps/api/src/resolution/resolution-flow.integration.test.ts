@@ -28,6 +28,12 @@ import { TradeService } from '../trade/trade.service';
 import { WalletService } from '../wallet/wallet.service';
 import { ResolutionFlowService } from './resolution-flow.service';
 import type { MarketTemplate } from '../community/market-template';
+import { CreatorAnalyticsService } from '../creator/analytics.service';
+import { AutopsyService } from '../creator/autopsy.service';
+import { CreatorService } from '../creator/creator.service';
+import { ThreadService } from '../community-layer/thread.service';
+import { AnalyticsService } from '../analytics/analytics.service';
+import { PrizeService } from '../leaderboard/prize.service';
 
 /**
  * The resolution flow and the four-eyes workflow, against a real database
@@ -75,7 +81,9 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       wallet,
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
+      new AnalyticsService(prisma),
     );
+    const analytics = new AnalyticsService(prisma);
     // §2.14's creator platform: the ladder, the analytics it reads, and
     // the autopsy that moves a creator's record when a market closes.
     const creators = new CreatorService(prisma, config, notifications);
@@ -89,6 +97,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       notifications,
       creators,
       autopsies,
+      analytics,
     );
     seeds = new SeedService(prisma, config, wallet, voids, creators);
     trades = new TradeService(
@@ -110,8 +119,20 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       new QuestionEngineService(prisma, config, null),
       autopsies,
       new ThreadService(prisma, config),
+      analytics,
     );
-    approvals = new ApprovalsService(prisma, ledger, voids, config, audit, new TotpService(prisma));
+    // §2.8's prize tool: drawn up here, and paid only when the approvals
+    // workflow signs it — which is the path under test.
+    const prizes = new PrizeService(prisma, config, wallet, notifications, audit, analytics);
+    approvals = new ApprovalsService(
+      prisma,
+      ledger,
+      voids,
+      config,
+      audit,
+      new TotpService(prisma),
+      prizes,
+    );
   });
 
   afterAll(async () => {
@@ -646,7 +667,3 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
     });
   });
 });
-import { CreatorAnalyticsService } from '../creator/analytics.service';
-import { AutopsyService } from '../creator/autopsy.service';
-import { CreatorService } from '../creator/creator.service';
-import { ThreadService } from '../community-layer/thread.service';

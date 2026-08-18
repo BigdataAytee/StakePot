@@ -20,6 +20,10 @@ import { WalletService } from '../wallet/wallet.service';
 import { CommunityService } from './community.service';
 import { MarketVoidService } from './void.service';
 import type { MarketTemplate } from './market-template';
+import { CreatorAnalyticsService } from '../creator/analytics.service';
+import { AutopsyService } from '../creator/autopsy.service';
+import { CreatorService } from '../creator/creator.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 /**
  * The community shelf against a real database.
@@ -52,6 +56,7 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
       wallet,
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
+      new AnalyticsService(prisma),
     );
     const voids = new MarketVoidService(ledger);
     // Notifications are best-effort by design; in tests they run against the
@@ -67,6 +72,7 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
     const creators = new CreatorService(prisma, config, notifications);
     const creatorAnalytics = new CreatorAnalyticsService(prisma);
     const autopsies = new AutopsyService(prisma, creatorAnalytics, creators, notifications);
+    const analytics = new AnalyticsService(prisma);
     community = new CommunityService(
       prisma,
       config,
@@ -75,6 +81,7 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
       notifications,
       creators,
       autopsies,
+      analytics,
     );
     trades = new TradeService(
       prisma,
@@ -297,6 +304,3 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
     expect(check.status).toBe('clean');
   });
 });
-import { CreatorAnalyticsService } from '../creator/analytics.service';
-import { AutopsyService } from '../creator/autopsy.service';
-import { CreatorService } from '../creator/creator.service';

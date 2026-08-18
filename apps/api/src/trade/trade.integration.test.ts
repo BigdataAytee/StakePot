@@ -52,6 +52,7 @@ describe.skipIf(!TEST_DATABASE_URL)('binary official market, end to end', () => 
       wallet,
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
+      new AnalyticsService(prisma),
     );
     markets = new MarketService(prisma, config);
     // The live feed is a fan-out concern, not a money concern: a tick that
@@ -619,3 +620,4 @@ describe.skipIf(!TEST_DATABASE_URL)('binary official market, end to end', () => 
     });
   });
 });
+import { AnalyticsService } from '../analytics/analytics.service';

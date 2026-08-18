@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import type { EventName } from '../analytics/events';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -15,8 +16,10 @@ import { PrismaService } from '../prisma/prisma.service';
  * their own money seeding a market is entitled to a real number.
  */
 
-export const VIEW_EVENT = 'market_view';
-export const SEARCH_EVENT = 'market_search';
+// The names come from §3's taxonomy rather than being spelled here: two
+// spellings of one event is how an analytics table stops being usable.
+export const VIEW_EVENT: EventName = 'market_view';
+export const SEARCH_EVENT: EventName = 'market_search';
 
 export interface CreatorAnalytics {
   readonly marketId: string;

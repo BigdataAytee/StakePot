@@ -22,6 +22,7 @@ import { AutopsyService } from './autopsy.service';
 import { CreatorError, CreatorService } from './creator.service';
 import { NudgeService } from './nudge.service';
 import { OpportunityError, OpportunityService } from './opportunity.service';
+import { AnalyticsService } from '../analytics/analytics.service';
 
 /**
  * §2.14's creator platform against a real database.
@@ -81,6 +82,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
       wallet,
       new JwtService({ secret: 'test-secret-at-least-32-characters-long' }),
       config,
+      new AnalyticsService(prisma),
     );
     creators = new CreatorService(prisma, config, notifications);
     analytics = new CreatorAnalyticsService(prisma);
@@ -88,6 +90,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     nudges = new NudgeService(prisma, config, notifications, analytics);
     opportunities = new OpportunityService(prisma, config, analytics);
     const seeds = new SeedService(prisma, config, wallet, voids, creators);
+    const events = new AnalyticsService(prisma);
     community = new CommunityService(
       prisma,
       config,
@@ -96,6 +99,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
       notifications,
       creators,
       autopsies,
+      events,
     );
     void seeds;
   });

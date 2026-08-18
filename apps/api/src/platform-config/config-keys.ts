@@ -123,6 +123,19 @@ export const CONFIG_SCHEMAS = {
   /** Distinct reporters that pull a live comment into the moderation queue. */
   comment_reports_to_flag: z.number().int().positive(),
 
+  // Leaderboards and prizes (§2.8, §6.8)
+  /** Settled markets below this and an accuracy figure is noise, not a record. */
+  leaderboard_min_markets_accuracy: z.number().int().nonnegative(),
+  /** Stake below this and a profit figure is noise too. */
+  leaderboard_min_staked_profit: z.number().nonnegative(),
+  /** §2.1: Tier 1 "unlocks ... leaderboards, and prize eligibility". */
+  leaderboard_min_tier: z.number().int().nonnegative(),
+  leaderboard_page_size: z.number().int().positive(),
+  /** How many places a weekly prize run pays. */
+  prize_places: z.number().int().positive(),
+  /** The pot a weekly run splits across those places, in SPC. */
+  prize_pool_spc: z.number().nonnegative(),
+
   // Financial controls (§2.10)
   reconciliation_tolerance_spc: z.number().nonnegative(),
   withdrawals_frozen: z.boolean(),
