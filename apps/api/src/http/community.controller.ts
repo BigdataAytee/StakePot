@@ -38,6 +38,7 @@ import {
 } from '../community/question-engine.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { RateLimit, RateLimitGuard } from '../hardening/rate-limit.guard';
 
 export class OutcomeDto {
   @IsString() @MinLength(1) label!: string;
@@ -124,7 +125,8 @@ export class CommunityController {
    * in `funding` with the bond escrowed and the window scheduled.
    */
   @Post('markets')
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RateLimitGuard)
+  @RateLimit('market_create')
   async submit(@Req() request: RequestWithUser, @Body() body: CreateCommunityMarketDto) {
     const user = request.user;
     if (user === undefined) throw new BadRequestException('no authenticated user');

@@ -8,6 +8,7 @@ import { AuthModule } from './auth/auth.module';
 import { CommunityLayerModule } from './community-layer/community-layer.module';
 import { CommunityModule } from './community/community.module';
 import { CreatorModule } from './creator/creator.module';
+import { HardeningModule } from './hardening/hardening.module';
 import { HealthController } from './health/health.controller';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { LedgerModule } from './ledger/ledger.module';
@@ -48,6 +49,7 @@ import { WalletModule } from './wallet/wallet.module';
     CommunityModule,
     CommunityLayerModule,
     CreatorModule,
+    HardeningModule,
     MarketModule,
     RealtimeModule,
     HttpModule,

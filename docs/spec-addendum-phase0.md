@@ -540,6 +540,79 @@ are now the same numbers, rather than the second being a rounded copy of the
 first. And the integration tests assert `residual.isZero()` where they used to
 allow a quantum per row.
 
+## Hardening (step 14)
+
+The last step of the §8 build order. Everything here is a control, and every
+control follows the same shape the platform has used since step 8: rules
+detect, people decide, and the record shows both.
+
+**Rate limits are two budgets per class, not one.** A burst budget over seconds
+catches the double-tap and the script; a sustained budget over an hour catches
+the patient version. Both are consumed per _user and_ per IP — one account
+spraying from one address trips the first, a farm behind one NAT trips the
+second. Counters live in Redis because the API is meant to run as several
+stateless nodes; when Redis is away the limiter degrades to per-node counters,
+which is wrong by the replica count and still the least bad of the three
+options (failing open removes the control exactly when the platform is
+degraded; failing closed turns a cache outage into a total one).
+
+**Staff cannot trade, enforced where it cannot be bypassed.** §2.7's rule had
+no code behind it until now. It lives in the one service every trade passes
+through — not at an endpoint — so any endpoint added later inherits it. The
+same check refuses frozen accounts, and a freeze deliberately leaves every
+naira in place: balance changes go through §2.10's approvals workflow and
+nowhere else, so the abuse queue has no code path that touches money.
+
+**Abuse detection files evidence, never verdicts.** §6.5 asks for wash-trading
+flags, stake-flood alerts and multi-account clusters "each with evidence +
+freeze/clear", and the phrase that shaped the build is _each with evidence_: a
+flag carries the numbers the rule fired on, so the reviewer sees the same
+arithmetic the detector did. Flags dedupe by finding (an hourly sweep updates
+rather than re-files), and a flag a person has _cleared_ is never re-raised
+from the same evidence — overruling a reviewer automatically is how a queue
+loses the people who work it. Wash detection knows an LMSR round trip already
+pays the exit fee, so it looks for the repeated-cycles pattern, not for anyone
+who ever changed their mind. Flood detection counts trades in a _sliding_ hour
+(the calendar-hour version misses a burst straddling the boundary — a test pins
+this). Cluster detection weights unverified accounts, because a cluster of
+Tier 1 accounts has paid a verified contact each, which is the gate working.
+
+**The ledger audit re-derives what the platform believes.** §2.7's nightly job,
+run six-hourly because it is cheap and the gap between a broken invariant and
+somebody knowing is where damage compounds. It checks the ledger sums to zero,
+escrow per open market equals pot plus bond, no user balance is negative, and
+Σstaked matches the pot cache. A violation is arithmetic on our own rows
+failing — a bug by definition — so it opens an incident and pages rather than
+logging quietly. The adversarial test bypasses the ledger service with a
+one-legged SQL insert and confirms the audit catches it.
+
+**§11's per-market queue is an accelerator, not a dependency.** Redis Streams,
+one stream per market, drained under a short per-market lock: ordered within a
+market, parallel across markets, burst absorbed as stream entries rather than
+as held database connections. If Redis is away, submission executes inline
+against the same `TradeService` — whose row lock already serialises writers per
+market — so a cache outage degrades latency, never correctness. The ordering
+proof is conservation: six concurrent buys leave Σstaked === pot to the digit,
+which two trades pricing off the same state would break. Refusals (funds, RG
+limits, frozen market) travel back to the waiting caller _verbatim_ — the first
+version masked a wallet refusal as "could not be processed", which turns an
+answer into a support ticket, and a test now pins the distinction. A caller
+whose wait times out gets 202 and a status endpoint, per §11's "order placed
+instantly, confirmation when executed".
+
+**Journeys and load.** Four Playwright journeys run against the real stack in
+the real browser: signup → stake with a reason → the badge landing on the
+thread; the leaderboard for a signed-out visitor; a challenge link for somebody
+with no account; and the installable shell. `scripts/load/peak.js` encodes the
+10× election-night profile — 500 trades/minute against hot markets under a
+reader storm, with "the money path never 5xxs" as a hard threshold — but k6 is
+a system install absent here, so **the load test is written, not executed**.
+
+**The security review is a document, not a feeling** —
+`docs/security-review-phase0.md`, including the gaps: tokens in localStorage,
+unrevocable JWTs, TOTP secrets unencrypted at rest, client-asserted
+fingerprints, and the unexecuted load test.
+
 ## Still open
 
 **The §2.3 liquidity tuning rule understates price impact by 1/p.** Unchanged in

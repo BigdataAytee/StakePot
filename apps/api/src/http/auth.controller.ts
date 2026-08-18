@@ -1,8 +1,9 @@
-import { BadRequestException, Body, Controller, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { IsBoolean, IsEmail, IsOptional, IsString, MinLength } from 'class-validator';
 
 import { AnalyticsService } from '../analytics/analytics.service';
 import { AuthService } from '../auth/auth.service';
+import { RateLimit, RateLimitGuard } from '../hardening/rate-limit.guard';
 
 export class SignupDto {
   @IsOptional() @IsEmail() email?: string;
@@ -24,6 +25,8 @@ export class AuthController {
   ) {}
 
   @Post('signup')
+  @UseGuards(RateLimitGuard)
+  @RateLimit('auth')
   async signup(@Body() body: SignupDto) {
     try {
       const result = await this.auth.signup({
@@ -41,6 +44,8 @@ export class AuthController {
   }
 
   @Post('login')
+  @UseGuards(RateLimitGuard)
+  @RateLimit('auth')
   async login(@Body() body: LoginDto) {
     try {
       return await this.auth.login(body);

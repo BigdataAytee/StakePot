@@ -15,6 +15,7 @@
     "test": "pnpm -r test",
     "test:props": "pnpm -r test:props",
     "test:load": "k6 run scripts/load/smoke.js",
+    "test:load:peak": "k6 run scripts/load/peak.js",
     "lint": "pnpm -r lint",
     "//typecheck": "The apps resolve @stakeam/* through dist, so the libraries have to exist before tsc runs. Without this, typecheck fails on a clean checkout — which is exactly what CI is.",
     "pretypecheck": "pnpm run libs",

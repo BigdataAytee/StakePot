@@ -17,6 +17,7 @@ import { Roles, RolesGuard } from '../auth/roles.guard';
 import { AdminAuditService } from '../audit/admin-audit.service';
 import { ChallengeError, ChallengeService } from '../community-layer/challenge.service';
 import { ThreadError, ThreadService } from '../community-layer/thread.service';
+import { RateLimit, RateLimitGuard } from '../hardening/rate-limit.guard';
 
 export class PostCommentDto {
   @IsString() @MinLength(1) @MaxLength(500) text!: string;
@@ -59,7 +60,8 @@ export class ThreadsController {
   }
 
   @Post('markets/:id/thread')
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RateLimitGuard)
+  @RateLimit('comment')
   async post(
     @Req() request: RequestWithUser,
     @Param('id') marketId: string,

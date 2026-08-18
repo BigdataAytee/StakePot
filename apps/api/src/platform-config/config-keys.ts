@@ -136,6 +136,18 @@ export const CONFIG_SCHEMAS = {
   /** The pot a weekly run splits across those places, in SPC. */
   prize_pool_spc: z.number().nonnegative(),
 
+  // Anti-fraud and integrity (§2.7, §6.5)
+  /** Buy-then-sell round trips inside this window count as one wash cycle. */
+  abuse_wash_window_minutes: z.number().int().positive(),
+  /** Round trips on one market before it reads as churn rather than a change of mind. */
+  abuse_wash_cycles: z.number().int().positive(),
+  /** Trades in a sliding hour above which a person is unlikely to be typing. */
+  abuse_flood_trades_per_hour: z.number().int().positive(),
+  /** Accounts on one device above which it stops looking like a household. */
+  abuse_cluster_accounts: z.number().int().positive(),
+  /** The nightly audit's allowance on cached aggregates. Never on the ledger. */
+  audit_cache_tolerance_spc: z.number().nonnegative(),
+
   // Financial controls (§2.10)
   reconciliation_tolerance_spc: z.number().nonnegative(),
   withdrawals_frozen: z.boolean(),

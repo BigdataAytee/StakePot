@@ -1,0 +1,319 @@
+import { Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import type { Trade } from '@prisma/client';
+import Redis from 'ioredis';
+
+import { env } from '../config/env';
+import { logger } from '../logger';
+import { PrismaService } from '../prisma/prisma.service';
+import { RgBlockedError } from '../rg/rg.service';
+import { InsufficientFundsError } from '../wallet/wallet.service';
+import { TradeError, TradeService, type BuyInput, type SellInput } from './trade.service';
+import { EngineError } from '@stakeam/engine';
+
+/**
+ * Whether an error is a *refusal* — a user-meaningful "no" — rather than the
+ * platform failing.
+ *
+ * The distinction decides what the waiting caller is told. A refusal travels to
+ * them verbatim: "insufficient funds", "your stake limit", "market frozen" are
+ * all things the person can act on. Masking those behind "could not be
+ * processed" turns an answer into a support ticket. Anything else really is
+ * ours, and gets the generic message plus a loud log line.
+ */
+const isRefusal = (error: unknown): error is Error =>
+  error instanceof TradeError ||
+  error instanceof InsufficientFundsError ||
+  error instanceof RgBlockedError ||
+  error instanceof EngineError;
+
+/** One market's stream. All of its trades land here, in submission order. */
+const streamFor = (marketId: string): string => `stakeam:trades:{${marketId}}`;
+/** The set of markets with a stream, so the worker knows where to look. */
+const ACTIVE_MARKETS = 'stakeam:trades:active';
+/** Per-market lock, so exactly one consumer drains a market at a time. */
+const lockFor = (marketId: string): string => `stakeam:trades:lock:{${marketId}}`;
+const GROUP = 'trade-workers';
+
+export type QueuedRequest = ({ kind: 'buy' } & BuyInput) | ({ kind: 'sell' } & SellInput);
+
+export interface QueueOutcome {
+  readonly status: 'filled' | 'queued' | 'rejected';
+  readonly requestId: string;
+  readonly trade?: Trade;
+  readonly reason?: string;
+}
+
+/**
+ * §11's per-market ordered queue.
+ *
+ * "Every trade/stake/exit request is published to a message queue partitioned by
+ * `market_id`... All events for one market land in one partition, consumed in
+ * order by exactly one Trade Worker at a time. Within a market: strict sequence,
+ * no race conditions, no locks fighting. Across markets: unlimited parallelism."
+ *
+ * Redis Streams rather than Kafka, per §12: Kafka is the *scale* answer and is
+ * deliberately not installed. One stream per market gives the partitioning for
+ * free — a market's entries are in one place and read in ID order — and a short
+ * per-market lock gives "exactly one worker at a time" without workers needing
+ * to agree on ownership.
+ *
+ * **The queue is an accelerator, not a dependency.** If Redis is unreachable the
+ * submit path executes inline against the same `TradeService`, which is still
+ * correct: the row lock it takes serialises writers per market on its own. A
+ * platform that stops accepting money because a cache is down has traded one
+ * failure for a worse one.
+ *
+ * What the queue adds over the lock is §11's backpressure: a burst is absorbed
+ * as stream entries instead of as database connections held open waiting on a
+ * lock, which is the difference between a slow market and an outage on
+ * election night.
+ */
+@Injectable()
+export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
+  private redis: Redis | null = null;
+  private consumer: Redis | null = null;
+  private draining = false;
+  private timer: NodeJS.Timeout | null = null;
+  private readonly name = `worker-${process.pid}`;
+
+  constructor(
+    private readonly trades: TradeService,
+    private readonly prisma: PrismaService,
+  ) {}
+
+  async onModuleInit(): Promise<void> {
+    try {
+      this.redis = new Redis(env.REDIS_URL, { maxRetriesPerRequest: 2, lazyConnect: true });
+      this.consumer = this.redis.duplicate();
+      await this.redis.connect();
+      await this.consumer.connect();
+    } catch (error) {
+      logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'trade queue could not reach redis — trades will execute inline',
+      );
+      this.redis = null;
+      this.consumer = null;
+      return;
+    }
+
+    // Polled rather than blocking: one loop serves every market, and a market
+    // with nothing pending must not hold a connection open waiting for it.
+    this.timer = setInterval(() => void this.drainAll(), 50);
+    logger.info('trade queue ready — per-market streams');
+  }
+
+  /** Whether the queue is carrying trades, for the health endpoint. */
+  get enabled(): boolean {
+    return this.redis !== null;
+  }
+
+  /**
+   * Submit a trade.
+   *
+   * Waits briefly for the worker to execute it, because a trader pressing
+   * "Stake am" wants to know whether they got filled and at what price. If the
+   * queue is backed up the call returns `queued` rather than holding the
+   * connection — §11's "users see 'order placed' instantly (accepted into
+   * queue) and confirmation when executed".
+   */
+  async submit(request: QueuedRequest, waitMs = 5_000): Promise<QueueOutcome> {
+    const redis = this.redis;
+    if (redis === null) {
+      // Inline fallback. Same service, same row lock, same guarantees.
+      return this.executeInline(request);
+    }
+
+    // Idempotency (§11) before anything is enqueued: a retried submit must not
+    // add a second entry to the stream, even if the first is still pending.
+    const existing = await this.prisma.trade.findUnique({
+      where: { requestId: request.requestId },
+    });
+    if (existing !== null)
+      return { status: 'filled', requestId: request.requestId, trade: existing };
+
+    try {
+      await redis.xadd(streamFor(request.marketId), '*', 'payload', JSON.stringify(request));
+      await redis.sadd(ACTIVE_MARKETS, request.marketId);
+    } catch (error) {
+      logger.warn(
+        { error: error instanceof Error ? error.message : String(error) },
+        'could not enqueue trade — executing inline',
+      );
+      return this.executeInline(request);
+    }
+
+    // Nudge the loop rather than waiting for the next tick.
+    void this.drain(request.marketId);
+
+    const deadline = Date.now() + waitMs;
+    while (Date.now() < deadline) {
+      const filled = await this.prisma.trade.findUnique({
+        where: { requestId: request.requestId },
+      });
+      if (filled !== null) {
+        return { status: 'filled', requestId: request.requestId, trade: filled };
+      }
+      const rejection = await redis.get(rejectionKey(request.requestId)).catch(() => null);
+      if (rejection !== null) {
+        return { status: 'rejected', requestId: request.requestId, reason: rejection };
+      }
+      await sleep(25);
+    }
+
+    return { status: 'queued', requestId: request.requestId };
+  }
+
+  /** What happened to a submitted request, for a client that stopped waiting. */
+  async outcomeOf(requestId: string): Promise<QueueOutcome> {
+    const trade = await this.prisma.trade.findUnique({ where: { requestId } });
+    if (trade !== null) return { status: 'filled', requestId, trade };
+
+    const rejection = await this.redis?.get(rejectionKey(requestId)).catch(() => null);
+    if (rejection != null) return { status: 'rejected', requestId, reason: rejection };
+
+    return { status: 'queued', requestId };
+  }
+
+  private async executeInline(request: QueuedRequest): Promise<QueueOutcome> {
+    try {
+      const trade =
+        request.kind === 'buy' ? await this.trades.buy(request) : await this.trades.sell(request);
+      return { status: 'filled', requestId: request.requestId, trade };
+    } catch (error) {
+      if (isRefusal(error)) {
+        return { status: 'rejected', requestId: request.requestId, reason: error.message };
+      }
+      throw error;
+    }
+  }
+
+  /** Drain every market that has anything waiting. */
+  private async drainAll(): Promise<void> {
+    if (this.draining || this.redis === null) return;
+    this.draining = true;
+    try {
+      const markets = await this.redis.smembers(ACTIVE_MARKETS);
+      // Markets in parallel, entries within a market in order — §11 exactly.
+      await Promise.all(markets.map((marketId) => this.drain(marketId)));
+    } catch {
+      // A failed poll is the next tick's problem.
+    } finally {
+      this.draining = false;
+    }
+  }
+
+  /**
+   * Drain one market, in order, alone.
+   *
+   * The lock is what makes "exactly one Trade Worker at a time" true across
+   * several API nodes. Short-lived and self-expiring: a worker that dies
+   * mid-drain must not wedge a market until somebody notices.
+   */
+  private async drain(marketId: string): Promise<void> {
+    const redis = this.redis;
+    const consumer = this.consumer;
+    if (redis === null || consumer === null) return;
+
+    const lock = lockFor(marketId);
+    const held = await redis.set(lock, this.name, 'EX', 30, 'NX').catch(() => null);
+    if (held === null) return;
+
+    try {
+      await this.ensureGroup(marketId);
+
+      for (;;) {
+        const batch = (await consumer
+          .xreadgroup('GROUP', GROUP, this.name, 'COUNT', 20, 'STREAMS', streamFor(marketId), '>')
+          .catch(() => null)) as [string, [string, string[]][]][] | null;
+
+        const entries = batch?.[0]?.[1] ?? [];
+        if (entries.length === 0) break;
+
+        for (const [id, fields] of entries) {
+          await this.execute(marketId, id, fields);
+        }
+      }
+
+      // Nothing left: stop the poll loop from waking for this market.
+      const remaining = await redis.xlen(streamFor(marketId)).catch(() => 1);
+      if (remaining === 0) await redis.srem(ACTIVE_MARKETS, marketId).catch(() => undefined);
+    } finally {
+      await redis.del(lock).catch(() => undefined);
+    }
+  }
+
+  private async execute(marketId: string, id: string, fields: string[]): Promise<void> {
+    const consumer = this.consumer;
+    const redis = this.redis;
+    if (consumer === null || redis === null) return;
+
+    const index = fields.indexOf('payload');
+    const raw = index === -1 ? null : fields[index + 1];
+    if (raw === undefined || raw === null) {
+      await consumer.xack(streamFor(marketId), GROUP, id).catch(() => undefined);
+      return;
+    }
+
+    let request: QueuedRequest;
+    try {
+      request = JSON.parse(raw) as QueuedRequest;
+    } catch {
+      await consumer.xack(streamFor(marketId), GROUP, id).catch(() => undefined);
+      return;
+    }
+
+    try {
+      if (request.kind === 'buy') await this.trades.buy(request);
+      else await this.trades.sell(request);
+    } catch (error) {
+      if (isRefusal(error)) {
+        // A refusal is an answer, not a failure: the caller is waiting for it,
+        // and retrying it would refuse identically for ever.
+        await redis
+          .set(rejectionKey(request.requestId), error.message, 'EX', 300)
+          .catch(() => undefined);
+      } else {
+        // Anything else is ours. Acknowledged so one poisoned entry cannot
+        // block the market behind it, and logged loudly because a trade the
+        // platform dropped is a trade somebody is still waiting on.
+        logger.error(
+          {
+            marketId,
+            requestId: request.requestId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+          'trade worker failed to execute a queued trade',
+        );
+        await redis
+          .set(rejectionKey(request.requestId), 'that trade could not be processed', 'EX', 300)
+          .catch(() => undefined);
+      }
+    } finally {
+      // Trimmed as well as acknowledged: the stream is a work queue, not the
+      // record. `trades` is the record.
+      await consumer.xack(streamFor(marketId), GROUP, id).catch(() => undefined);
+      await redis.xdel(streamFor(marketId), id).catch(() => undefined);
+    }
+  }
+
+  private async ensureGroup(marketId: string): Promise<void> {
+    try {
+      await this.consumer?.xgroup('CREATE', streamFor(marketId), GROUP, '0', 'MKSTREAM');
+    } catch (error) {
+      // BUSYGROUP just means another worker created it first.
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes('BUSYGROUP')) throw error;
+    }
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.timer !== null) clearInterval(this.timer);
+    await this.consumer?.quit().catch(() => undefined);
+    await this.redis?.quit().catch(() => undefined);
+  }
+}
+
+const rejectionKey = (requestId: string): string => `stakeam:trades:rejected:${requestId}`;
+
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

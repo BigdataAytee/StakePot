@@ -68,6 +68,8 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   await prisma.platformConfig.updateMany({ where: { version: 1 }, data: { state: 'active' } });
   await prisma.approval.deleteMany();
   await prisma.prizeAward.deleteMany();
+  await prisma.abuseFlag.deleteMany();
+  await prisma.deviceFingerprint.deleteMany();
   await prisma.prizeRun.deleteMany();
   await prisma.leaderboardSnapshot.deleteMany();
 

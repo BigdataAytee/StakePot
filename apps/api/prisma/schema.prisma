@@ -187,6 +187,20 @@ enum OpportunitySource {
   seasonal
 }
 
+/// §6.5's abuse queue. `open` needs a reviewer; the other two are decisions a
+/// person made, kept so the queue is also a record of what was cleared.
+enum AbuseFlagState {
+  open
+  actioned
+  cleared
+}
+
+enum AbuseFlagKind {
+  wash_trading
+  stake_flood
+  multi_account
+}
+
 /// §2.8's two boards. They rank different people on purpose: profit rewards
 /// size and nerve, accuracy rewards being right.
 enum LeaderboardBoard {
@@ -310,6 +324,9 @@ model User {
   topCalls           TopCall[]
   leaderboardSnapshots LeaderboardSnapshot[]
   prizeAwards        PrizeAward[]
+  abuseFlags         AbuseFlag[]
+  abuseReviews       AbuseFlag[]        @relation("AbuseReviewer")
+  deviceFingerprints DeviceFingerprint[]
   opportunities      Opportunity[]
   proposedResolutions Resolution[]       @relation("ResolutionProposer")
   finalizedResolutions Resolution[]      @relation("ResolutionFinalizer")
@@ -1224,6 +1241,58 @@ model PrizeAward {
   @@unique([runId, userId])
   @@index([userId])
   @@map("prize_awards")
+}
+
+/// §6.5's abuse queue: "wash-trading flags, stake-flood alerts, multi-account
+/// clusters, each with evidence + freeze/clear."
+///
+/// Not in §3's data model, which stops at the controls themselves. A queue whose
+/// only state is a boolean on a user row cannot show a reviewer *why* an account
+/// was flagged, and a flag nobody can check is a flag nobody should act on.
+model AbuseFlag {
+  id        String         @id @default(cuid())
+  userId    String
+  kind      AbuseFlagKind
+  state     AbuseFlagState @default(open)
+  /// 0–1, so the queue can be ordered by how sure the rule was.
+  severity  Decimal        @db.Decimal(38, 18)
+  summary   String
+  /// The numbers the rule fired on. The reviewer sees the same arithmetic the
+  /// detector did, which is what makes a decision defensible.
+  evidenceJson Json
+  /// Stable identity for what was detected, so a sweep that runs hourly updates
+  /// an open flag rather than filing a new one every hour.
+  dedupeKey String         @unique
+  reviewedBy String?
+  reviewedAt DateTime?
+  note      String?
+  createdAt DateTime       @default(now())
+
+  user     User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviewer User? @relation("AbuseReviewer", fields: [reviewedBy], references: [id])
+
+  @@index([state, severity])
+  @@index([userId])
+  @@map("abuse_flags")
+}
+
+/// §2.1 and §2.7's farm-detection signal: which devices an account has used.
+///
+/// Deliberately a *hint*, never a gate. Fingerprints collide between honest
+/// people on the same handset model and browser, so this feeds a queue a human
+/// reads rather than a rule that blocks a signup.
+model DeviceFingerprint {
+  id          String   @id @default(cuid())
+  userId      String
+  fingerprint String
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, fingerprint])
+  @@index([fingerprint])
+  @@map("device_fingerprints")
 }
 
 model PlatformConfig {

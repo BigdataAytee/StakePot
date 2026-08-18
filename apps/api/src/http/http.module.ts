@@ -6,6 +6,7 @@ import { ApprovalsModule } from '../approvals/approvals.module';
 import { AuthModule } from '../auth/auth.module';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { CommunityLayerModule } from '../community-layer/community-layer.module';
+import { HardeningModule } from '../hardening/hardening.module';
 import { CommunityModule } from '../community/community.module';
 import { CreatorModule } from '../creator/creator.module';
 import { JwtGuard, OptionalJwtGuard } from '../auth/jwt.guard';
@@ -22,6 +23,7 @@ import { ResolutionModule } from '../resolution/resolution.module';
 import { TradeModule } from '../trade/trade.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { AccountController } from './account.controller';
+import { AbuseController, DeviceController } from './abuse.controller';
 import { AdminController } from './admin.controller';
 import { AuthController } from './auth.controller';
 import { StatusController } from './status.controller';
@@ -45,6 +47,7 @@ import { TradesController } from './trades.controller';
     CommunityLayerModule,
     CommunityModule,
     CreatorModule,
+    HardeningModule,
     LeaderboardModule,
     LedgerModule,
     MarketModule,
@@ -61,8 +64,10 @@ import { TradesController } from './trades.controller';
     }),
   ],
   controllers: [
+    AbuseController,
     AccountController,
     AdminController,
+    DeviceController,
     AuthController,
     StatusController,
     CommunityController,

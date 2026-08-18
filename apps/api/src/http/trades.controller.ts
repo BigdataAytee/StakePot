@@ -1,12 +1,22 @@
-import { BadRequestException, Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { ThreadService } from '../community-layer/thread.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { TradeService } from '../trade/trade.service';
+import { TradeQueueService } from '../trade/trade-queue.service';
 import { WalletService } from '../wallet/wallet.service';
+import { RateLimit, RateLimitGuard } from '../hardening/rate-limit.guard';
 
 /** A positive decimal amount as a string — money never crosses the wire as a float. */
 const DECIMAL = /^\d+(\.\d{1,18})?$/;
@@ -29,7 +39,7 @@ export class PlaceTradeDto {
 @Controller()
 export class TradesController {
   constructor(
-    private readonly trades: TradeService,
+    private readonly queue: TradeQueueService,
     private readonly wallet: WalletService,
     private readonly prisma: PrismaService,
     private readonly threads: ThreadService,
@@ -37,27 +47,45 @@ export class TradesController {
   ) {}
 
   @Post('trades')
-  @UseGuards(JwtGuard)
+  @UseGuards(JwtGuard, RateLimitGuard)
+  @RateLimit('trade')
   async place(@Req() request: RequestWithUser, @Body() body: PlaceTradeDto) {
     const user = request.user;
     if (user === undefined) throw new BadRequestException('no authenticated user');
 
-    const trade =
+    // §11's per-market queue. Ordered within a market, parallel across markets,
+    // and a burst is absorbed as stream entries rather than as held database
+    // connections. Falls back to inline execution — same service, same row
+    // lock, same guarantees — when Redis is away.
+    const outcome = await this.queue.submit(
       body.side === 'buy'
-        ? await this.trades.buy({
+        ? {
+            kind: 'buy',
             marketId: body.marketId,
             outcomeId: body.outcomeId,
             userId: user.userId,
             amount: body.amount,
             requestId: body.requestId,
-          })
-        : await this.trades.sell({
+          }
+        : {
+            kind: 'sell',
             marketId: body.marketId,
             outcomeId: body.outcomeId,
             userId: user.userId,
             shares: body.amount,
             requestId: body.requestId,
-          });
+          },
+    );
+
+    if (outcome.status === 'rejected') {
+      throw new BadRequestException(outcome.reason ?? 'trade refused');
+    }
+    if (outcome.status === 'queued' || outcome.trade === undefined) {
+      // §11: "users see 'order placed' instantly (accepted into queue) and
+      // confirmation when executed." 202, with the id to poll.
+      return { accepted: true, requestId: body.requestId };
+    }
+    const trade = outcome.trade;
 
     // §3's analytics table. Best-effort by construction — `record` swallows its
     // own failures — because a dashboard is never a reason a trade fails.
@@ -103,6 +131,34 @@ export class TradesController {
       cost: trade.cost.toString(),
       fee: trade.fee.toString(),
       priceAfter: trade.priceAfter.toString(),
+    };
+  }
+
+  /** What happened to a queued trade, for a client whose submit timed out. */
+  @Get('trades/:requestId/status')
+  @UseGuards(JwtGuard)
+  async tradeStatus(@Req() request: RequestWithUser, @Param('requestId') requestId: string) {
+    const outcome = await this.queue.outcomeOf(requestId);
+    // Only the requester's own trades: a request id is client-generated, and
+    // another account's ids are none of this one's business.
+    if (outcome.trade !== undefined && outcome.trade.userId !== request.user!.userId) {
+      throw new BadRequestException('not your trade');
+    }
+    return {
+      status: outcome.status,
+      ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
+      ...(outcome.trade === undefined
+        ? {}
+        : {
+            trade: {
+              id: outcome.trade.id,
+              side: outcome.trade.side,
+              shares: outcome.trade.shares.toString(),
+              cost: outcome.trade.cost.toString(),
+              fee: outcome.trade.fee.toString(),
+              priceAfter: outcome.trade.priceAfter.toString(),
+            },
+          }),
     };
   }
 

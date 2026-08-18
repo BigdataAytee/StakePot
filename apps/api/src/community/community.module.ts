@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { CreatorModule } from '../creator/creator.module';
+import { HardeningModule } from '../hardening/hardening.module';
 import { LeaderboardModule } from '../leaderboard/leaderboard.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -19,6 +20,7 @@ import { MarketVoidService } from './void.service';
     AnalyticsModule,
     CommunityQuestionModule,
     CreatorModule,
+    HardeningModule,
     LeaderboardModule,
     LedgerModule,
     NotificationsModule,

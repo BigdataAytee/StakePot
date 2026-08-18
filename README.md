@@ -30,7 +30,12 @@ moderation queue, and the app is now installable and works offline. Step 13 adds
 the engagement layer: weekly and all-time leaderboards on profit and accuracy at
 `/leaderboard`, streaks, a prize tool whose payouts need two signatures, a
 resolution-day recap card, and a typed analytics event taxonomy behind §6.8's
-dashboard.
+dashboard. Step 14 hardens it: per-user/IP rate limits, §11's per-market
+ordered trade queue on Redis Streams, an abuse queue with evidence-carrying
+flags, a six-hourly ledger audit that pages on any invariant violation, staff
+blocked from trading, Playwright journeys, a 10× load profile, and a written
+security review (`docs/security-review-phase0.md`). **The §8 build order is
+complete.**
 
 ## Quickstart
 

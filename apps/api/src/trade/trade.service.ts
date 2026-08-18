@@ -260,6 +260,31 @@ export class TradeService {
       );
     }
 
+    // §2.7: "staff blocked from trading entirely."
+    //
+    // Not a conflict on one market but on all of them: staff see the resolution
+    // queue, the drafts queue and the abuse flags before anybody else, and a
+    // resolver who holds a position anywhere is a resolver whose decisions can
+    // be questioned. Enforced here rather than at the endpoint because this is
+    // the one path a position can be opened through, so it holds for any
+    // endpoint added later.
+    if (userId !== undefined) {
+      const trader = await tx.user.findUnique({
+        where: { id: userId },
+        select: { role: true, status: true },
+      });
+      if (trader !== null && trader.role !== 'user') {
+        throw new TradeError(
+          'staff accounts cannot trade — the people who settle markets do not hold positions in them',
+        );
+      }
+      // A frozen account (§6.5's abuse queue) keeps its balance and loses the
+      // ability to add to a position.
+      if (trader !== null && trader.status !== 'active') {
+        throw new TradeError('this account is frozen — contact support');
+      }
+    }
+
     const exitFeeRate = await this.config.get('exit_fee_rate');
     return toEngineState(market, market.outcomes, exitFeeRate);
   }

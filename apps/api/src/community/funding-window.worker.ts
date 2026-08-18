@@ -5,6 +5,8 @@ import { env } from '../config/env';
 import { logger } from '../logger';
 import { NudgeService } from '../creator/nudge.service';
 import { OpportunityService } from '../creator/opportunity.service';
+import { AbuseService } from '../hardening/abuse.service';
+import { LedgerAuditService } from '../hardening/ledger-audit.service';
 import { LeaderboardService } from '../leaderboard/leaderboard.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResolutionFlowService } from '../resolution/resolution-flow.service';
@@ -35,7 +37,9 @@ type CloseKind =
   | 'sla-sweep'
   | 'nudge-sweep'
   | 'opportunity-sweep'
-  | 'leaderboard-sweep';
+  | 'leaderboard-sweep'
+  | 'abuse-sweep'
+  | 'ledger-audit';
 
 interface CloseJob {
   readonly marketId: string;
@@ -66,6 +70,8 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
     private readonly nudges: NudgeService,
     private readonly opportunities: OpportunityService,
     private readonly leaderboards: LeaderboardService,
+    private readonly abuse: AbuseService,
+    private readonly ledgerAudit: LedgerAuditService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -129,6 +135,15 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
         // changes several people's standings at once, and a board rebuilt from
         // the ledger cannot drift from it.
         return this.leaderboards.snapshotAll();
+      case 'abuse-sweep':
+        // §6.5's queue. Detection only — every freeze is a person's decision.
+        return this.abuse.sweep();
+      case 'ledger-audit': {
+        // §2.7's nightly invariant check. A violation here is arithmetic on our
+        // own rows failing, so it is red by definition and opens an incident.
+        const audit = await this.ledgerAudit.run();
+        return { clean: audit.clean, findings: audit.findings.length };
+      }
       case 'sla-sweep':
         // §2.12's "SLA timers with escalation". A breach is a state of the
         // queue, so it is swept rather than timed per ticket.
@@ -243,6 +258,21 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       'leaderboard-sweep',
       { every: 900_000 },
       { name: 'close', data: { marketId: '', kind: 'leaderboard-sweep' } },
+    );
+    // Hourly: a flag raised four hours after the fact is still actionable, and
+    // the scan is over a week of trades.
+    await this.queue?.upsertJobScheduler(
+      'abuse-sweep',
+      { every: 3_600_000 },
+      { name: 'close', data: { marketId: '', kind: 'abuse-sweep' } },
+    );
+    // §2.7 says nightly. Six-hourly instead: the check is cheap, and the gap
+    // between a broken invariant and somebody knowing about it is the window in
+    // which the damage compounds.
+    await this.queue?.upsertJobScheduler(
+      'ledger-audit',
+      { every: 21_600_000 },
+      { name: 'close', data: { marketId: '', kind: 'ledger-audit' } },
     );
 
     return windows.length + rounds.length + windowsOnResults.length;
