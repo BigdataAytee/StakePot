@@ -103,8 +103,13 @@ transform`: undeclared fields are a 400, not a silently-accepted extra.
    the election-night profile and its thresholds, but k6 is a system install
    absent from this environment and CI. It must run against staging before any
    real event.
-6. **E2E journeys are not in CI.** They run green locally against the full
-   stack; wiring servers into the CI workflow is a follow-up.
-7. **No dependency audit gate.** `pnpm audit` is not enforced in CI; the
-   manifest discipline (no unlisted packages) bounds exposure but does not
-   scan it.
+6. ~~**E2E journeys are not in CI.**~~ Closed: the `e2e` job boots the real
+   stack (Postgres, Redis, API, web) and drives the four journeys in Chromium,
+   keeping the Playwright report as an artifact when one fails.
+7. ~~**No dependency audit gate.**~~ Closed: the `audit` job fails the build on
+   high and critical advisories and reports the rest without blocking. Four
+   transitive highs were open when the gate went in — `postcss` and `sharp`
+   under `next`, `deepmerge-ts` under `prisma` — each pinned to a patched
+   floor through `pnpm.overrides` rather than by dropping the parent. The tree
+   is clean at every severity as of this review; the overrides are meant to be
+   removed as the parents catch up, not kept for ever.

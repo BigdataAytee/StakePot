@@ -76,3 +76,37 @@ export const STATE_LABEL: Record<string, string> = {
   resolved: 'RESOLVED',
   voided: 'VOID',
 };
+
+/**
+ * Why trading is closed, in the words that fit the state it is closed *for*.
+ *
+ * The ticket used to fall through to "the event has started" for anything it
+ * did not name, which told a `funding` market's visitor — a market still
+ * looking for its backers, days before the event — something flatly untrue.
+ * Every state that closes trading now says its own reason, because the whole
+ * point of the line is to tell somebody what they are waiting for.
+ */
+export function closedReason(state: string, fundingClosesAt: string | null = null): string {
+  switch (state) {
+    case 'resolved':
+      return 'This market has settled.';
+    case 'seeding':
+      return 'Sponsors are still filling the seed. Trading opens the moment the round fills.';
+    case 'draft':
+      return 'Waiting on the creator’s symmetric seed.';
+    case 'voided':
+      return 'This market voided — every stake was refunded in full.';
+    case 'funding':
+      return fundingClosesAt === null
+        ? 'Still gathering backers. Trading opens once it activates.'
+        : `Still gathering backers until ${dateTime(fundingClosesAt)}. Trading opens once it activates.`;
+    case 'frozen':
+      return 'Trading is frozen — the event has started.';
+    case 'pending_resolution':
+      return 'The event is over. Waiting on the official result.';
+    case 'dispute_window':
+      return 'The result is in. Payouts settle once the dispute window closes.';
+    default:
+      return 'Trading is closed on this market.';
+  }
+}

@@ -135,6 +135,78 @@ jobs:
       - name: Build
         run: pnpm build
 
+  e2e:
+    name: end-to-end journeys
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: stakeam
+          POSTGRES_PASSWORD: stakeam
+          POSTGRES_DB: stakeam
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U stakeam"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for Playwright
+        run: pnpm --filter @stakeam/web exec playwright install --with-deps chromium
+
+      - name: Build
+        run: pnpm build
+
+      - name: Migrate
+        run: |
+          pnpm --filter @stakeam/api exec prisma migrate deploy
+          psql "$DATABASE_URL" -c 'CREATE DATABASE stakeam_test;'
+          DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @stakeam/api exec prisma migrate deploy
+
+      # The journeys drive the real stack, so the real stack has to be up. The
+      # API writes to the *test* database because the fixtures go in through
+      # psql and the suite is free to churn it.
+      - name: Start the stack
+        run: |
+          DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @stakeam/api start &
+          pnpm --filter @stakeam/web start &
+          npx --yes wait-on -t 90000 http://localhost:3001/health http://localhost:3000
+
+      - name: Journeys
+        run: pnpm --filter @stakeam/web exec playwright test
+
+      - name: Keep the evidence when a journey fails
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report/
+          retention-days: 7
+
   docker:
     name: images build
     runs-on: ubuntu-latest
@@ -154,3 +226,26 @@ jobs:
           context: .
           file: apps/web/Dockerfile
           push: false
+
+  audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      # High and critical fail the build; moderate and low are reported and
+      # left to a human. A money platform should not merge a known-exploitable
+      # dependency, and should not be blocked from shipping by a low-severity
+      # advisory in a build tool either.
+      - name: Audit (high and critical)
+        run: pnpm audit --audit-level high
+      - name: Audit (full report, advisory only)
+        if: always()
+        run: pnpm audit || true

@@ -15,7 +15,7 @@ import { TradeSheet, type TradeIntent } from '@/components/trade-sheet';
 import { useMarketFeed } from '@/hooks/use-market-feed';
 import { api, type MarketDetail, type PricePoint, type SeedComposition } from '@/lib/api';
 import { recordView } from '@/lib/creator-api';
-import { STATE_LABEL, percent, untilFreeze } from '@/lib/format';
+import { STATE_LABEL, closedReason, percent, untilFreeze } from '@/lib/format';
 import { useLivePrices } from '@/store/live-prices';
 
 /**
@@ -205,15 +205,7 @@ export function TicketView({
         />
         {!tradingOpen && (
           <p className="mt-2 text-sm text-text-muted">
-            {initial.state === 'resolved'
-              ? 'This market has settled.'
-              : initial.state === 'seeding'
-                ? 'Sponsors are still filling the seed. Trading opens the moment the round fills.'
-                : initial.state === 'draft'
-                  ? 'Waiting on the creator’s symmetric seed.'
-                  : initial.state === 'voided'
-                    ? 'This market voided — every stake was refunded in full.'
-                    : 'Trading is frozen — the event has started.'}
+            {closedReason(initial.state, initial.fundingClosesAt)}
           </p>
         )}
       </div>
