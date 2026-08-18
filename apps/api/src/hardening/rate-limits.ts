@@ -29,8 +29,24 @@ export interface Budget {
 export interface LimitRule {
   /** Per authenticated account. */
   readonly perUser: Budget;
-  /** Per IP, which is what an unauthenticated or multi-account caller looks like. */
-  readonly perIp: Budget;
+  /**
+   * Per IP, which is what an unauthenticated or multi-account caller looks
+   * like — where an IP means anything at all.
+   *
+   * Optional, and deliberately absent on the authenticated money paths. Most
+   * Nigerian mobile traffic arrives through carrier-grade NAT, so an entire
+   * MTN or Airtel pool presents as a handful of addresses: an IP budget on
+   * trading does not throttle an attacker, it throttles Lagos. The 10× load
+   * run made this concrete — every trade came from one address and the per-IP
+   * budget capped the platform at 120 trades/minute, a quarter of the target
+   * peak, while the per-user budgets were barely touched.
+   *
+   * Where the caller is authenticated and the action costs them money, the
+   * account is the identity worth limiting. IP budgets stay on the paths where
+   * there is no account yet, which is exactly where credential stuffing and
+   * account farming live.
+   */
+  readonly perIp?: Budget;
   /** What the caller is told. Specific, because a bare 429 is unactionable. */
   readonly message: string;
 }
@@ -42,7 +58,9 @@ export const RATE_LIMITS: Readonly<Record<LimitClass, LimitRule>> = {
    */
   trade: {
     perUser: { points: 30, duration: 60, blockDuration: 60 },
-    perIp: { points: 120, duration: 60, blockDuration: 60 },
+    // No IP budget — see LimitRule.perIp. A shared carrier address is the
+    // normal case here, not the suspicious one, and every trade already
+    // carries a verified account with money behind it.
     message: 'You are trading faster than we allow. Give it a minute.',
   },
   /**
@@ -65,7 +83,8 @@ export const RATE_LIMITS: Readonly<Record<LimitClass, LimitRule>> = {
   },
   comment: {
     perUser: { points: 20, duration: 3_600, blockDuration: 300 },
-    perIp: { points: 60, duration: 3_600, blockDuration: 300 },
+    // Also authenticated, also NAT-prone: twenty a hour per account is the
+    // control, and a shared address should not silence a hostel.
     message: 'You are posting too fast.',
   },
   /**

@@ -56,13 +56,15 @@ export class RateLimitService implements OnModuleDestroy {
     }
   }
 
-  private limiterFor(limitClass: LimitClass, scope: 'user' | 'ip'): RateLimiterAbstract {
+  private limiterFor(limitClass: LimitClass, scope: 'user' | 'ip'): RateLimiterAbstract | null {
+    const rule = RATE_LIMITS[limitClass];
+    const budget = scope === 'user' ? rule.perUser : rule.perIp;
+    // A class can decline an IP budget entirely — see LimitRule.perIp.
+    if (budget === undefined) return null;
+
     const key = `${limitClass}:${scope}`;
     const existing = this.limiters.get(key);
     if (existing !== undefined) return existing;
-
-    const rule = RATE_LIMITS[limitClass];
-    const budget = scope === 'user' ? rule.perUser : rule.perIp;
     const options = {
       keyPrefix: `rl:${key}`,
       points: budget.points,
@@ -95,10 +97,13 @@ export class RateLimitService implements OnModuleDestroy {
 
     const checks: Promise<unknown>[] = [];
     if (params.userId !== undefined) {
-      checks.push(this.limiterFor(params.limitClass, 'user').consume(params.userId));
+      const byUser = this.limiterFor(params.limitClass, 'user');
+      if (byUser !== null) checks.push(byUser.consume(params.userId));
     }
+    // A class with no IP budget is limited by account alone.
     if (params.ip !== undefined && params.ip.length > 0) {
-      checks.push(this.limiterFor(params.limitClass, 'ip').consume(params.ip));
+      const byIp = this.limiterFor(params.limitClass, 'ip');
+      if (byIp !== null) checks.push(byIp.consume(params.ip));
     }
     if (checks.length === 0) return;
 
@@ -117,7 +122,10 @@ export class RateLimitService implements OnModuleDestroy {
 
   /** What is left, for a caller that wants to show it rather than be surprised. */
   async remaining(limitClass: LimitClass, userId: string): Promise<number> {
-    const result = await this.limiterFor(limitClass, 'user').get(userId);
+    // Every class has a per-user budget, so this limiter always exists; the
+    // null branch is the type system's, not a real state.
+    const limiter = this.limiterFor(limitClass, 'user');
+    const result = limiter === null ? null : await limiter.get(userId);
     return result === null
       ? RATE_LIMITS[limitClass].perUser.points
       : Math.max(0, result.remainingPoints);

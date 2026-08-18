@@ -1,16 +1,72 @@
 # Load testing — the 10× election-night profile
 
-**Status: written, not yet run. Pending a staging run.**
+**Status: run and passing on a development container. Still pending a staging
+run** — see "What this run does not tell you" below.
 
 §12 requires "load tests simulating election-night spikes (target: 10× normal
-peak) before every major event." The profile is written and committed at
-`scripts/load/peak.js`. It has never been executed: k6 is a system install, not
-an npm package, and it is absent from this development container and from CI.
-Running it against staging is a launch-blocking item, owned by whoever operates
-staging — see `docs/launch-checklist.md`.
+peak) before every major event." The profile lives at `scripts/load/peak.js`,
+its fixture at `scripts/load/seed-peak.sh`.
 
-Nothing in this document should be read as a performance claim. It describes an
-experiment that has not happened yet.
+## Results — 18 Aug 2026, development container
+
+Full 9-minute profile, 30 funded Tier 1 accounts, 3 hot markets.
+
+| Measure                        | Threshold | Result                   |
+| ------------------------------ | --------- | ------------------------ |
+| Trades accepted                | > 90%     | **100%** (3,534 / 3,534) |
+| Money path 5xx                 | 0         | **0**                    |
+| Trade latency p95              | < 800ms   | **64ms**                 |
+| Read latency p95               | < 300ms   | **9.6ms**                |
+| Checks                         | > 99%     | **100%** (25,068)        |
+| Ledger audit after the run     | clean     | **clean**                |
+| `pot − Σstaked` per hot market | 0         | **exactly 0**            |
+
+The last two lines matter more than the latencies. Three markets took 3,534
+concurrent trades through the §11 queue and the pot identity came out at
+**exactly zero difference** on all three — the ordering guarantee holding under
+ten times peak, measured rather than argued.
+
+## What the run found
+
+Running it was worth it twice over. Both of these were invisible to every unit
+test and to the walkthrough:
+
+**1. Markets bricked permanently after a few hundred trades.** Shares were
+stored at the money scale (18 dp). Every write truncated the share vector,
+moving `C(q)` by up to one quantum in a consistent direction — once per trade.
+The pot identity's tolerance bounds a _single_ round trip through storage, so
+after roughly 250 trades the accumulated drift exceeded it and the market began
+refusing every trade with `pot identity violated`. Permanently: the state that
+fails the check is the state on disk, so nothing after it could succeed either.
+The first run showed 85% of trades refused. Fixed by storing shares at 30 dp
+(migration `20240101000015_share_scale`), which pushes the same accumulation out
+to the order of 10^12 trades; pinned by
+`packages/engine/src/__tests__/storage-drift.test.ts`.
+
+**2. A per-IP trade limit of 120/minute throttled the platform to a quarter of
+target peak.** Every trade in the run came from one address, and the per-IP
+budget capped it long before the per-user budgets were touched. That is not a
+test artefact: most Nigerian mobile traffic arrives through carrier-grade NAT,
+so an entire MTN or Airtel pool presents as a handful of addresses. An IP budget
+on an authenticated money path does not throttle an attacker, it throttles
+Lagos. The IP budgets are gone from `trade` and `comment` — both authenticated,
+both NAT-prone — and remain on `auth`, where there is no account to key on yet
+and where credential stuffing actually lives.
+
+## What this run does not tell you
+
+- **It is a development container, not staging.** One process, one Postgres, one
+  Redis, no replicas, no load balancer, no network between tiers. The latency
+  numbers are a lower bound and should not be quoted as capacity.
+- **30 accounts, 3 markets.** Real election-night concurrency is thousands of
+  accounts; per-user rate limits and per-market queue contention both behave
+  differently at that shape.
+- **No sustained-hours run.** Nine minutes finds arithmetic drift; it does not
+  find leaks, connection exhaustion or disk growth.
+
+It must still run against staging before any real event.
+
+## The profile
 
 ## What "10× peak" means here
 
@@ -59,18 +115,27 @@ against real numbers once there are some — not the other way round.
 
 k6 is a system install: https://k6.io/docs/get-started/installation
 
-The script needs a seeded environment — hot markets and a pool of funded Tier 1
-accounts — passed in as JSON:
+`scripts/load/seed-peak.sh` builds the fixture — hot markets and a pool of
+funded Tier 1 accounts — and writes `tokens.json` and `markets.json` where the
+profile looks for them:
 
 ```bash
-# tokens.json:  ["eyJhbGciOi…", …]                    (funded Tier 1 bearers)
-# markets.json: [{"marketId":"…","outcomeIds":["…"]}] (the hot markets)
-
-API_URL=https://staging.stakeam.ng \
-TOKENS_FILE=./tokens.json \
-MARKETS_FILE=./markets.json \
-k6 run scripts/load/peak.js
+./scripts/dev/ensure-services.sh
+ACCOUNTS=30 ./scripts/load/seed-peak.sh
+API_URL=http://localhost:3001 k6 run scripts/load/peak.js
 ```
+
+Against staging, point both at it:
+
+```bash
+API_URL=https://staging.stakeam.ng ./scripts/load/seed-peak.sh
+API_URL=https://staging.stakeam.ng k6 run scripts/load/peak.js
+```
+
+**Re-seed before every run.** The API's integration suite resets the same test
+database, so a fixture from an earlier session may no longer exist — and a run
+against markets that have been deleted 404s every request while still reporting
+no 5xx. The profile's `trade was accepted` check exists to catch exactly that.
 
 Then, immediately after the run finishes:
 

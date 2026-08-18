@@ -89,20 +89,29 @@ transform`: undeclared fields are a 400, not a silently-accepted extra.
    them. Mitigated by the absence of HTML sinks and by 15-minute expiry, but
    the robust answer is httpOnly cookies + CSRF protection, which changes the
    session model and belongs with the licensed-phase auth hardening.
-2. **JWTs cannot be revoked mid-lifetime.** A frozen account is blocked from
-   trading (checked in-service, per request) but a stolen staff token keeps its
-   read access until expiry. Short expiry bounds this; a denylist would close it.
-3. **TOTP secrets are stored unencrypted** in `users.totpSecret`. A database
-   leak would compromise second factors along with first. They should be
-   encrypted at rest with a key the database never sees.
+2. ~~**JWTs cannot be revoked mid-lifetime.**~~ Closed: `TokenRevocationService`
+   denies a single `jti` (logging out) and holds a per-account cutoff that
+   invalidates every token issued before it (a freeze, a password change). The
+   guard consults it on every request; freezing an account now ends its live
+   sessions rather than only blocking its next trade. It fails **open** on a
+   Redis outage — the alternative is turning a cache outage into a total one —
+   which bounds the exposure at one token lifetime and logs loudly.
+3. ~~**TOTP secrets are stored unencrypted.**~~ Closed: sealed with AES-256-GCM
+   under `SECRETS_KEY`, which lives in the environment and never in Postgres, so
+   a database dump alone cannot open them. Versioned as `v1.<iv>.<tag>.<body>`
+   so a key rotation is possible later. Rows written before this are read as
+   plaintext and re-sealed the next time their owner proves the secret — a
+   migration would have needed the key, and refusing to read them would have
+   locked out everyone already enrolled.
 4. **Device fingerprints are client-asserted** and therefore spoofable. They
    are deliberately only a queue hint, never a gate — but a farm that knows
    this simply omits them. Server-side signals (IP clustering over time) would
    harden it.
-5. **The 10× load test has not been executed.** `scripts/load/peak.js` encodes
-   the election-night profile and its thresholds, but k6 is a system install
-   absent from this environment and CI. It must run against staging before any
-   real event.
+5. **The 10× load test has run, on a development container only.** Every
+   threshold met: 3,534 trades at 100% acceptance, no 5xx, trade p95 64ms, and
+   the pot identity exactly zero on all three hot markets afterwards. It found
+   two real defects — see `docs/loadtest.md`. It must still run against staging,
+   which has the tiers, replicas and concurrency this box does not.
 6. ~~**E2E journeys are not in CI.**~~ Closed: the `e2e` job boots the real
    stack (Postgres, Redis, API, web) and drives the four journeys in Chromium,
    keeping the Playwright report as an artifact when one fails.

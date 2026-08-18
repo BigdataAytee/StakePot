@@ -16,6 +16,16 @@ const schema = z.object({
   JWT_SECRET: z.string().min(32, 'JWT_SECRET must be at least 32 characters'),
   JWT_EXPIRES_IN: z.string().default('15m'),
 
+  /**
+   * Key for secrets stored encrypted at rest — TOTP seeds today (§2.11).
+   *
+   * Optional so a development environment without 2FA still boots; the code
+   * paths that need it fail loudly on use rather than silently storing
+   * plaintext. Required in production, and it must not be the JWT secret:
+   * rotating one should never force rotating the other.
+   */
+  SECRETS_KEY: z.string().min(32, 'SECRETS_KEY must be at least 32 characters').optional(),
+
   // Optional in development; the features that need them fail loudly on use.
   ANTHROPIC_API_KEY: z.string().optional(),
   SENTRY_DSN: z.string().optional(),

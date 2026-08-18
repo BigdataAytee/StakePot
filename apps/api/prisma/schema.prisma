@@ -441,7 +441,16 @@ model Outcome {
   /// insertion order: this number indexes into q[], and getting it wrong would
   /// silently price one outcome as another.
   ordinal           Int
-  sharesOutstanding Decimal @default(0) @db.Decimal(38, 18)
+  /// Shares are stored at a far finer scale than money (30 dp vs 18).
+  ///
+  /// `pot === C(q) − C(q0)` is checked against the *stored* q, so every write
+  /// that truncates q moves C(q) by up to one quantum — in one direction, and
+  /// once per trade. At 18 dp that error reached the invariant's tolerance
+  /// after a few hundred trades and the market then refused every subsequent
+  /// trade with "pot identity violated": permanently bricked by arithmetic, not
+  /// by a bug. Found by the 10× load run. At 30 dp the same drift needs on the
+  /// order of 10^12 trades, so it cannot accumulate within a market's life.
+  sharesOutstanding Decimal @default(0) @db.Decimal(60, 30)
   priceCurrent      Decimal @default(0) @db.Decimal(38, 18)
   /// Money staked on this outcome, net of early exits. Σ across a market's
   /// outcomes equals `markets.potTotal`.
@@ -473,7 +482,7 @@ model Trade {
   outcomeId  String
   userId     String
   side       TradeSide
-  shares     Decimal   @db.Decimal(38, 18)
+  shares     Decimal   @db.Decimal(60, 30)
   cost       Decimal   @db.Decimal(38, 18)
   fee        Decimal   @default(0) @db.Decimal(38, 18)
   priceAfter Decimal   @db.Decimal(38, 18)
@@ -494,7 +503,7 @@ model Position {
   userId      String
   marketId    String
   outcomeId   String
-  shares      Decimal @default(0) @db.Decimal(38, 18)
+  shares      Decimal @default(0) @db.Decimal(60, 30)
   avgPrice    Decimal @default(0) @db.Decimal(38, 18)
   realizedPnl Decimal @default(0) @db.Decimal(38, 18)
 

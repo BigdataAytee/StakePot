@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 
 import { money } from '@/lib/format';
-import { clearToken, useSession } from '@/lib/session';
+import { authed, clearToken, useSession } from '@/lib/session';
 
 /**
  * The signed-in header: who you are, what you have, where you can go.
@@ -17,7 +17,12 @@ export function AppHeader() {
   const { me, loading } = useSession();
   const router = useRouter();
 
-  function logOut() {
+  async function logOut() {
+    // Tell the API first: clearing the browser's copy alone leaves the token
+    // valid for its full life, so a session ended on a shared phone was not
+    // actually ended. Best-effort — a failed call must not trap somebody in a
+    // session they are trying to leave.
+    await authed('/auth/logout', {}).catch(() => undefined);
     clearToken();
     router.push('/');
     router.refresh();
@@ -64,7 +69,11 @@ export function AppHeader() {
               Verify to unlock more
             </Link>
           )}
-          <button type="button" onClick={logOut} className="font-mono text-xs text-text-muted">
+          <button
+            type="button"
+            onClick={() => void logOut()}
+            className="font-mono text-xs text-text-muted"
+          >
             Log out
           </button>
         </div>

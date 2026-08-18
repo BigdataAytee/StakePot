@@ -22,6 +22,19 @@ const havePinnedChromium = existsSync(chromium);
 
 export default defineConfig({
   testDir: './e2e',
+  /*
+   * Two viewports, because §5's Phase 2 gate is "full market runs on a phone"
+   * and the layouts are mobile-first in intent but were only ever looked at
+   * wide. A phone is the device this product is actually used on.
+   */
+  projects: [
+    { name: 'desktop', use: { viewport: { width: 1280, height: 720 } } },
+    {
+      name: 'phone',
+      // A mid-range Android at the size most Nigerian traffic arrives on.
+      use: { viewport: { width: 393, height: 851 }, isMobile: false, hasTouch: true },
+    },
+  ],
   timeout: 60_000,
   // The journeys share one database and build on each other's state within a
   // file, so files run one at a time.
