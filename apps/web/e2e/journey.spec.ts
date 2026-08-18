@@ -96,11 +96,64 @@ test('a new user signs up, stakes with a reason, and their badge lands on the th
     .fill('Osimhen is back, that changes everything');
   await page.getByRole('button', { name: 'Stake am' }).click();
 
+  // Wait for the confirmation before going anywhere. The sheet closes when the
+  // trade is *confirmed*, not when the request is sent — navigating on the
+  // click abandons an in-flight submit, which is a test measuring its own
+  // timing rather than the product.
+  await expect(
+    page.getByPlaceholder('One line. It goes on the thread with your position.'),
+  ).toBeHidden({ timeout: 30_000 });
+
   // The trade filled and the reason arrived on the thread wearing the badge —
   // §2.15a's whole design, observed from the outside.
   await page.goto(`/market/${marketId}`);
   await expect(page.getByText('Osimhen is back, that changes everything')).toBeVisible();
   await expect(page.getByText(/YES@\d+/)).toBeVisible();
+});
+
+test('a busy market says "confirming" instead of pretending the trade is done', async ({
+  page,
+}) => {
+  // §11: a market under load answers "accepted into queue", not "filled". That
+  // is still a 2xx, and a client that reads only the status code closes the
+  // sheet on a trade that has not happened — the balance does not move, the
+  // thread carries no take, and the only thing that changed is that the screen
+  // stopped saying anything. Here the trade really executes; only the answer is
+  // rewritten to the queued one, which is the case that cannot be provoked on
+  // demand against a quiet stack.
+  const account = await api<{ accessToken: string; userId: string }>('/auth/signup', {
+    email: `queued${stamp}@example.com`,
+    password: 'correct-horse-battery',
+    ageAttested: true,
+  });
+  sql(`UPDATE users SET tier = 1, "contactVerified" = true WHERE id = '${account.userId}'`);
+  await page.addInitScript((token) => {
+    window.localStorage.setItem('stakeam.token', String(token));
+  }, account.accessToken);
+
+  await page.route('**/trades', async (route) => {
+    const response = await route.fetch();
+    const body = (await response.json()) as { id?: string };
+    // Anything that is not a fill is left exactly as the API sent it.
+    if (body.id === undefined) return route.fulfill({ response });
+    const { requestId } = JSON.parse(route.request().postData() ?? '{}') as { requestId: string };
+    await route.fulfill({
+      status: 202,
+      contentType: 'application/json',
+      body: JSON.stringify({ status: 'queued', accepted: true, requestId }),
+    });
+  });
+
+  await page.goto(`/market/${marketId}`);
+  await page.getByRole('button', { name: /Buy Yes/i }).click();
+  await page.locator('input[inputmode="decimal"]').fill('1000');
+  await page.getByRole('button', { name: 'Stake am' }).click();
+
+  // It says what is actually happening…
+  await expect(page.getByRole('button', { name: /confirming/i })).toBeVisible();
+  // …and stands down only once the trade exists, found by polling §11's status
+  // endpoint rather than by assuming.
+  await expect(page.locator('input[inputmode="decimal"]')).toBeHidden({ timeout: 30_000 });
 });
 
 test('the leaderboard renders and explains itself to a signed-out visitor', async ({ page }) => {

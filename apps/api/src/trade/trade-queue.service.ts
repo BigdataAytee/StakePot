@@ -2,6 +2,7 @@ import { Injectable, type OnModuleDestroy, type OnModuleInit } from '@nestjs/com
 import type { Trade } from '@prisma/client';
 import Redis from 'ioredis';
 
+import { ThreadService } from '../community-layer/thread.service';
 import { env } from '../config/env';
 import { logger } from '../logger';
 import { PrismaService } from '../prisma/prisma.service';
@@ -34,7 +35,19 @@ const ACTIVE_MARKETS = 'stakeam:trades:active';
 const lockFor = (marketId: string): string => `stakeam:trades:lock:{${marketId}}`;
 const GROUP = 'trade-workers';
 
-export type QueuedRequest = ({ kind: 'buy' } & BuyInput) | ({ kind: 'sell' } & SellInput);
+/**
+ * A trade on its way to being executed.
+ *
+ * `reason` rides along with it rather than being posted by the caller after the
+ * fact: §2.15a's take has to carry the position the trade created, so it can
+ * only be written once the trade has been written — and a queued trade is
+ * written by the worker, minutes after the caller has gone. Posting it at the
+ * point of execution is the only place that is true for every path.
+ */
+export type QueuedRequest = (({ kind: 'buy' } & BuyInput) | ({ kind: 'sell' } & SellInput)) & {
+  /** §2.15a's optional one-line "why?", captured on the trade ticket. */
+  readonly reason?: string;
+};
 
 export interface QueueOutcome {
   readonly status: 'filled' | 'queued' | 'rejected';
@@ -81,6 +94,7 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
   constructor(
     private readonly trades: TradeService,
     private readonly prisma: PrismaService,
+    private readonly threads: ThreadService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -230,6 +244,7 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
     try {
       const trade =
         request.kind === 'buy' ? await this.trades.buy(request) : await this.trades.sell(request);
+      await this.postReason(request);
       return { status: 'filled', requestId: request.requestId, trade };
     } catch (error) {
       if (isRefusal(error)) {
@@ -317,6 +332,10 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
     try {
       if (request.kind === 'buy') await this.trades.buy(request);
       else await this.trades.sell(request);
+      // Before the announcement, not after: the announcement is what releases
+      // the waiting caller, and a caller released ahead of its own take reloads
+      // the market to find the thread without it.
+      await this.postReason(request);
       // Announce the fill so waiters never have to poll the database for it.
       await redis.set(filledKey(request.requestId), '1', 'EX', 300).catch(() => undefined);
     } catch (error) {
@@ -348,6 +367,27 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
       await consumer.xack(streamFor(marketId), GROUP, id).catch(() => undefined);
       await redis.xdel(streamFor(marketId), id).catch(() => undefined);
     }
+  }
+
+  /**
+   * §2.15a's reason prompt, posted the moment the trade it explains exists.
+   *
+   * Best-effort by construction: a take refused by the comment rules — a rate
+   * limit, a tripped word, an account that cannot comment — must never unwind a
+   * trade that has already settled. The stake is the commitment; the sentence
+   * beside it is not.
+   */
+  private async postReason(request: QueuedRequest): Promise<void> {
+    const text = request.reason?.trim() ?? '';
+    if (text.length === 0) return;
+    await this.threads
+      .post({
+        marketId: request.marketId,
+        userId: request.userId,
+        text,
+        fromTrade: true,
+      })
+      .catch(() => undefined);
   }
 
   private async ensureGroup(marketId: string): Promise<void> {

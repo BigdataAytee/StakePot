@@ -70,7 +70,21 @@ distinguished them by ref; the screen was not reading it.
 market rather than the busiest, so a stranger's first impression could be a pot
 of ₦0.
 
-**8. `pnpm start` ran a server the deployment never uses.** Next warns that
+**8. A queued trade lost its take, and the sheet said nothing.** §11's queue
+answers `202 accepted` when a market is busy rather than holding the connection
+— and the HTTP handler wrote §2.15a's reason only on the path where the trade
+had already filled, so a deferred trade's reason was dropped on the floor, for
+ever, precisely under the load that makes the queue defer. The take is now
+written by whoever executes the trade (inline or worker), immediately after the
+trade row and before the fill is announced, so it always carries the position
+that trade created. The sheet no longer treats `202` as a fill either: it says
+"Order placed — confirming…" and polls the status endpoint until the trade
+exists or the refusal does. Found by making a submit slow enough to lose the
+race — the e2e journey had been navigating on the click, which measured its own
+timing rather than the product, and went red on CI the first time a runner was
+slow.
+
+**9. `pnpm start` ran a server the deployment never uses.** Next warns that
 `next start` does not support `output: standalone` on every boot. That mismatch
 is how (1) survived.
 

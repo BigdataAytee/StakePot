@@ -9,6 +9,37 @@ import { API_URL } from '@/lib/api';
 import { exactMoney, kobo, percent } from '@/lib/format';
 import { usePublicConfig } from '@/lib/public-config';
 
+/**
+ * Wait for a queued trade to be executed, or to be refused.
+ *
+ * §11's queue answers "accepted" the moment a busy market's trade is safely on
+ * the stream, and the worker executes it a moment later. Somebody who has just
+ * committed money is owed the outcome, not an optimistic screen: this polls the
+ * status endpoint until the trade exists or the refusal does.
+ *
+ * It gives up after a minute and says so. Giving up is not the same as losing
+ * the trade — the queue still holds it and the wallet will show it — so the
+ * message says that rather than implying the money went nowhere.
+ */
+async function waitForFill(requestId: string, token: string): Promise<void> {
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const response = await fetch(`${API_URL}/trades/${requestId}/status`, {
+      headers: { authorization: `Bearer ${token}` },
+    }).catch(() => null);
+    if (response === null || !response.ok) continue;
+
+    const body = (await response.json().catch(() => null)) as {
+      status?: string;
+      reason?: string;
+    } | null;
+    if (body?.status === 'filled') return;
+    if (body?.status === 'rejected') throw new Error(body.reason ?? 'that trade was refused');
+  }
+  throw new Error('Still confirming — your trade is queued and will appear in your wallet.');
+}
+
 /** The quick chips §7.2d specifies for amount-first entry. */
 const AMOUNT_CHIPS = [500, 1000, 2000, 5000];
 
@@ -52,12 +83,15 @@ export function TradeSheet({
   const [reason, setReason] = useState('');
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
   const [submitting, setSubmitting] = useState(false);
+  /** The queue took it but has not executed it yet — §11's "order placed". */
+  const [queued, setQueued] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (intent === null) return;
     setSide(intent.side);
     setAmount('');
+    setQueued(false);
     setError(null);
   }, [intent]);
 
@@ -141,7 +175,12 @@ export function TradeSheet({
       return;
     }
 
+    // A retry must never double-fill (§11), and the id is also what the trade
+    // is polled by if the queue defers it.
+    const requestId = crypto.randomUUID();
+
     setSubmitting(true);
+    setQueued(false);
     setError(null);
     try {
       const response = await fetch(`${API_URL}/trades`, {
@@ -152,8 +191,7 @@ export function TradeSheet({
           outcomeId: outcome.id,
           side,
           amount,
-          // A retry must never double-fill (§11).
-          requestId: crypto.randomUUID(),
+          requestId,
           // §2.15a's reason prompt. Optional, one line, and it lands on the
           // thread carrying the position this trade just created.
           ...(reason.trim().length === 0 ? {} : { reason: reason.trim() }),
@@ -163,12 +201,25 @@ export function TradeSheet({
         const body = (await response.json().catch(() => ({}))) as { message?: string };
         throw new Error(body.message ?? `Trade failed (${response.status})`);
       }
+
+      // §11: a busy market answers "accepted into queue", not "filled". That is
+      // a 2xx, so a client reading only the status code closes the sheet on a
+      // trade that has not happened yet — the balance does not move, the thread
+      // does not carry the take, and the only thing that changed is that the
+      // screen stopped saying anything. Wait for the confirmation instead.
+      const body = (await response.json().catch(() => ({}))) as { status?: string };
+      if (body.status === 'queued') {
+        setQueued(true);
+        await waitForFill(requestId, token);
+      }
+
       onFilled();
       onClose();
     } catch (caught) {
       setError((caught as Error).message);
     } finally {
       setSubmitting(false);
+      setQueued(false);
     }
   }
 
@@ -346,11 +397,13 @@ export function TradeSheet({
             >
               {closed
                 ? `Trading is ${market.state === 'resolved' ? 'over' : 'frozen'}`
-                : submitting
-                  ? 'Placing…'
-                  : side === 'buy'
-                    ? 'Stake am'
-                    : 'Sell shares'}
+                : queued
+                  ? 'Order placed — confirming…'
+                  : submitting
+                    ? 'Placing…'
+                    : side === 'buy'
+                      ? 'Stake am'
+                      : 'Sell shares'}
             </button>
           </motion.div>
         </>

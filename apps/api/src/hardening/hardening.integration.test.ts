@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AnalyticsService } from '../analytics/analytics.service';
 import { AdminAuditService } from '../audit/admin-audit.service';
+import { ThreadService } from '../community-layer/thread.service';
 import { TokenRevocationService } from '../auth/token-revocation.service';
 import { AuthService } from '../auth/auth.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -68,7 +69,7 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
       { publish: async () => undefined } as unknown as PriceCacheService,
       new RgService(prisma, config),
     );
-    queue = new TradeQueueService(trades, prisma);
+    queue = new TradeQueueService(trades, prisma, new ThreadService(prisma, config));
     await queue.onModuleInit();
     abuse = new AbuseService(
       prisma,
@@ -276,6 +277,45 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
     expect(second.status).toBe('filled');
     expect(second.trade?.id).toBe(first.trade?.id);
     expect(await prisma.trade.count({ where: { requestId } })).toBe(1);
+  });
+
+  it('posts the trade’s reason even when the caller stops waiting', async () => {
+    // §2.15a's take used to be written by the HTTP handler *after* the queue
+    // returned a filled trade — so a trade the queue deferred (which is what a
+    // busy market does, which is when the argument matters most) answered
+    // "accepted" and dropped the reason on the floor for ever. The take belongs
+    // to whoever executes the trade.
+    const userId = await person('reasoned@example.com');
+    await prisma.user.update({ where: { id: userId }, data: { tier: 1 } });
+    const m = await market('Will the take survive the queue?');
+    const requestId = `reason-${userId}`;
+
+    // waitMs 0: submitted, then abandoned before the worker has run — exactly
+    // the caller that gets a 202.
+    const outcome = await queue.submit(
+      {
+        kind: 'buy',
+        marketId: m.id,
+        outcomeId: m.outcomes[0]!.id,
+        userId,
+        amount: '10000',
+        requestId,
+        reason: 'Osimhen is back, that changes everything',
+      },
+      0,
+    );
+    expect(outcome.status).toBe('queued');
+
+    await expect
+      .poll(async () => prisma.comment.count({ where: { marketId: m.id } }), { timeout: 15_000 })
+      .toBe(1);
+
+    const take = await prisma.comment.findFirstOrThrow({ where: { marketId: m.id } });
+    expect(take.text).toBe('Osimhen is back, that changes everything');
+    expect(take.fromTrade).toBe(true);
+    // And it carries the position the trade just created, which is the whole
+    // reason the take is written at execution time rather than at submission.
+    expect(take.positionSnapshot).toMatch(/YES@/i);
   });
 
   it('answers a late caller through the status lookup', async () => {
