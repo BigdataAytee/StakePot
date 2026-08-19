@@ -24,6 +24,12 @@ export const viewport: Viewport = {
   ],
 };
 
+/** The deployed commit, or an honest admission that nothing said. */
+function buildCommit(): string {
+  const commit = process.env['RENDER_GIT_COMMIT'] ?? process.env['GIT_COMMIT'] ?? '';
+  return commit.length === 0 ? 'unknown' : commit.slice(0, 7);
+}
+
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
   // Strings come from `messages/en-NG.json` rather than being inlined. There is
   // one locale today; the catalogue is the part that is hard to retrofit.
@@ -31,6 +37,15 @@ export default async function RootLayout({ children }: { children: React.ReactNo
 
   return (
     <html lang="en-NG" className={`${archivo.variable} ${spaceMono.variable}`}>
+      <head>
+        {/*
+          The build this page came from, for anyone holding a phone rather than
+          a terminal: view source and read one line. `/version` says the same
+          thing to curl. Both exist because a change that did not appear could
+          not be told from a deploy that did not happen.
+        */}
+        <meta name="build-commit" content={buildCommit()} />
+      </head>
       <body>
         <NextIntlClientProvider messages={messages}>
           {/* §2.12's session reality check sits above everything, on every screen. */}
