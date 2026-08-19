@@ -212,7 +212,7 @@ export function TradeSheet({
                   <button
                     type="button"
                     onClick={() => setSide(side === 'buy' ? 'sell' : 'buy')}
-                    className="rounded-sm border border-border p-1 text-text-muted hover:text-text"
+                    className="grid size-11 shrink-0 place-items-center rounded-md border border-border text-text-muted hover:text-text"
                     aria-label="Switch between buying and selling"
                   >
                     <ArrowUpDown size={14} />
@@ -223,7 +223,7 @@ export function TradeSheet({
                 type="button"
                 onClick={onClose}
                 aria-label="Close"
-                className="text-text-muted hover:text-text"
+                className="-mr-2 -mt-2 grid size-11 shrink-0 place-items-center rounded-md text-text-muted hover:text-text"
               >
                 <X size={18} />
               </button>
@@ -246,7 +246,7 @@ export function TradeSheet({
                     setMode(mode === 'amount' ? 'shares' : 'amount');
                     setAmount('');
                   }}
-                  className="text-xs font-semibold text-brand hover:underline"
+                  className="-mr-2 flex h-11 items-center px-2 text-xs font-semibold text-brand hover:underline"
                 >
                   {mode === 'amount' ? 'Enter shares' : 'Enter amount'}
                 </button>
@@ -271,7 +271,7 @@ export function TradeSheet({
                     type="button"
                     disabled={closed}
                     onClick={() => setAmount(String(chip))}
-                    className="flex-1 rounded-md border border-border bg-surface py-2 font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
+                    className="h-11 flex-1 rounded-md border border-border bg-surface font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
                   >
                     ₦{chip >= 1000 ? `${chip / 1000}k` : chip}
                   </button>
@@ -292,7 +292,7 @@ export function TradeSheet({
                       // A stepper cannot take you below nothing.
                       setAmount(next <= 0 ? '' : String(Math.round(next * 100) / 100));
                     }}
-                    className="flex-1 rounded-md border border-border bg-surface py-2 font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
+                    className="h-11 flex-1 rounded-md border border-border bg-surface font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
                   >
                     {step > 0 ? `+${step}` : step}
                   </button>
@@ -383,7 +383,7 @@ export function TradeSheet({
                   onChange={(event) => setReason(event.target.value)}
                   maxLength={500}
                   placeholder="One line. It goes on the thread with your position."
-                  className="mt-1.5 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
+                  className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm outline-none focus:border-brand"
                 />
               </div>
             )}
@@ -404,7 +404,7 @@ export function TradeSheet({
               type="button"
               onClick={() => void submit()}
               disabled={closed || submitting || preview === null || blocker?.hard === true}
-              className={`mt-4 w-full rounded-lg py-3 text-md font-bold text-paper transition-transform active:scale-press disabled:opacity-45 ${tone}`}
+              className={`mt-4 h-12 w-full rounded-lg text-md font-bold text-paper transition-transform active:scale-press disabled:opacity-45 ${tone}`}
             >
               {closed
                 ? `Trading is ${market.state === 'resolved' ? 'over' : 'frozen'}`

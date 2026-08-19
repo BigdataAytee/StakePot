@@ -1,23 +1,23 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-
+import { LivingNumber } from '@/components/living-number';
 import { percent } from '@/lib/format';
 import { useLivePrices } from '@/store/live-prices';
 
 /**
- * A percentage that shows which way it just moved.
+ * A market's live percentage, wherever one appears on a card or a list.
  *
- * The number itself is only half of what a reader wants from a live price —
- * the other half is the direction, and on a grid of forty cards nobody is
- * watching closely enough to catch a digit changing. So a tick tints the
- * figure for a beat: green if it went up, red if it went down, back to normal
- * after.
+ * This does one job: resolve an outcome's current price out of the live-price
+ * store, falling back to whatever the server rendered. The *appearance* of a
+ * changing number — counting between values rather than snapping, and the
+ * brief green/red tint — belongs to §7.4's living number, so it delegates
+ * there rather than reimplementing it.
  *
- * The tint is cleared on a timer rather than by the next tick, because a
- * market that moves once and then sits still would otherwise stay green until
- * something else happened to it — which would read as a standing claim about
- * the market rather than as a report of one change.
+ * It used to reimplement it, badly: it carried its own tint and then printed
+ * the new figure directly, so every price on the grid snapped. §7.4 is
+ * explicit that a price "animates by counting between values (never
+ * snapping)", and having two implementations of that is how one of them ends
+ * up not doing it.
  */
 export function LivePercent({
   marketId,
@@ -32,30 +32,7 @@ export function LivePercent({
   className?: string;
 }) {
   const live = useLivePrices((state) => state.markets[marketId]?.prices[outcomeId]);
-  const price = live ?? fallback;
-  const value = Math.round(percent(price));
+  const value = Math.round(percent(live ?? fallback));
 
-  const [direction, setDirection] = useState<'up' | 'down' | null>(null);
-  const previous = useRef<number | null>(null);
-
-  useEffect(() => {
-    const last = previous.current;
-    previous.current = value;
-    // The first render is not a move — there is nothing to have moved from.
-    if (last === null || last === value) return undefined;
-
-    setDirection(value > last ? 'up' : 'down');
-    const clear = setTimeout(() => setDirection(null), 600);
-    return () => clearTimeout(clear);
-  }, [value]);
-
-  return (
-    <span
-      className={`transition-colors duration-tick ${
-        direction === 'up' ? 'text-rise' : direction === 'down' ? 'text-fall' : ''
-      } ${className}`}
-    >
-      {value}%
-    </span>
-  );
+  return <LivingNumber value={value} suffix="%" className={className} />;
 }
