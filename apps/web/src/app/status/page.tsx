@@ -1,4 +1,5 @@
 import { API_URL } from '@/lib/api';
+import { PageShell } from '@/components/market/page-shell';
 
 export const dynamic = 'force-dynamic';
 
@@ -53,12 +54,12 @@ export default async function StatusPage() {
 
   if (view === null) {
     return (
-      <main className="mx-auto max-w-2xl px-4 py-10">
+      <PageShell width="narrow">
         <h1 className="text-xl font-black">Status</h1>
         <p className="mt-3 text-md text-fall">
           We could not reach the status service. That is itself a problem, and we are on it.
         </p>
-      </main>
+      </PageShell>
     );
   }
 
@@ -67,7 +68,7 @@ export default async function StatusPage() {
   const past = view.incidents.filter((incident) => incident.state === 'resolved');
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10">
+    <PageShell width="narrow">
       <h1 className="text-xl font-black">StakeAm status</h1>
       <p className={`mt-3 text-2xl font-black ${headline.tone}`}>{headline.text}</p>
       <p className="mt-1 font-mono text-sm text-text-muted">
@@ -117,7 +118,7 @@ export default async function StatusPage() {
           </div>
         )}
       </section>
-    </main>
+    </PageShell>
   );
 }
 

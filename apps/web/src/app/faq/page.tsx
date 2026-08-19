@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import { SiteFooter } from '@/components/site-footer';
+import { PageShell } from '@/components/market/page-shell';
 
 /**
  * The questions people actually ask before they stake.
@@ -80,7 +81,7 @@ export default function FaqPage() {
   };
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10">
+    <PageShell width="narrow">
       {/* Same source as the visible list below, so the two cannot disagree. */}
       <script
         type="application/ld+json"
@@ -124,6 +125,6 @@ export default function FaqPage() {
       </p>
 
       <SiteFooter />
-    </main>
+    </PageShell>
   );
 }

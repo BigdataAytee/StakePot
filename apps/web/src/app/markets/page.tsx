@@ -1,8 +1,8 @@
 import Link from 'next/link';
 
 import { api, type MarketSummary } from '@/lib/api';
-import { AppHeader } from '@/components/app-header';
 import { MarketCard } from '@/components/market-card';
+import { PageShell } from '@/components/market/page-shell';
 
 // Prices move; a cached shelf is a stale shelf.
 export const dynamic = 'force-dynamic';
@@ -73,9 +73,7 @@ export default async function MarketsPage({
   };
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
-      <AppHeader />
-
+    <PageShell>
       {unreachable && (
         <p className="rounded-md border border-border bg-surface-raised p-4 text-sm text-text-muted">
           Can&apos;t reach the markets service. Start it with{' '}
@@ -126,7 +124,7 @@ export default async function MarketsPage({
           markets={community}
         />
       )}
-    </main>
+    </PageShell>
   );
 }
 

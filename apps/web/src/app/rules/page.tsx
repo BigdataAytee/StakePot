@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { SiteFooter } from '@/components/site-footer';
+import { PageShell } from '@/components/market/page-shell';
 
 /**
  * §2.18 — "Legal pages in-app... linked from signup, footer, and every market's
@@ -18,7 +19,7 @@ export const metadata = {
 
 export default function RulesPage() {
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10">
+    <PageShell width="narrow">
       <Link href="/" className="font-mono text-xs text-text-muted underline">
         ← StakeAm
       </Link>
@@ -97,7 +98,7 @@ export default function RulesPage() {
         .
       </p>
       <SiteFooter />
-    </main>
+    </PageShell>
   );
 }
 

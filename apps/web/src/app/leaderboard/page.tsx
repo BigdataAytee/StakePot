@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
 import { API_URL } from '@/lib/api';
+import { PageShell } from '@/components/market/page-shell';
 
 /**
  * §2.8's leaderboards.
@@ -53,7 +54,7 @@ export default function LeaderboardPage() {
   }, [period, board]);
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-8">
+    <PageShell width="narrow">
       <header>
         <h1 className="flex items-center gap-2 text-xl font-black">
           <Trophy size={20} className="text-money" /> Leaderboard
@@ -151,6 +152,6 @@ export default function LeaderboardPage() {
           ))}
         </ol>
       )}
-    </main>
+    </PageShell>
   );
 }

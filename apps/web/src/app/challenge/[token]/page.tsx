@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { use, useEffect, useState } from 'react';
 
 import { community, sessionToken, type ChallengeView } from '@/lib/community-api';
+import { PageShell } from '@/components/market/page-shell';
 
 /**
  * §2.15d's challenge landing.
@@ -31,10 +32,10 @@ export default function ChallengeLanding({ params }: { params: Promise<{ token: 
   }, [token]);
 
   if (error !== null) {
-    return <main className="mx-auto max-w-lg px-4 py-16 text-sm text-fall">{error}</main>;
+    return <PageShell width="narrow">{error}</PageShell>;
   }
   if (challenge === null) {
-    return <main className="mx-auto max-w-lg px-4 py-16 text-sm text-text-muted">Loading…</main>;
+    return <PageShell width="narrow">Loading…</PageShell>;
   }
 
   const name =
@@ -42,7 +43,7 @@ export default function ChallengeLanding({ params }: { params: Promise<{ token: 
     (challenge.challenger.handle === null ? 'Someone' : `@${challenge.challenger.handle}`);
 
   return (
-    <main className="mx-auto flex min-h-screen max-w-lg flex-col justify-center px-4 py-12">
+    <PageShell width="narrow">
       <p className="font-mono text-xs uppercase tracking-widest text-text-muted">
         A challenge on StakeAm
       </p>
@@ -98,6 +99,6 @@ export default function ChallengeLanding({ params }: { params: Promise<{ token: 
       <p className="mt-10 text-center font-mono text-xs text-text-muted">
         Winners split the pot. No house, no house edge.
       </p>
-    </main>
+    </PageShell>
   );
 }

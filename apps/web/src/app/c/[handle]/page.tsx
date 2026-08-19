@@ -4,6 +4,7 @@ import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 
 import { creator, type PublicProfile } from '@/lib/creator-api';
+import { PageShell } from '@/components/market/page-shell';
 
 /**
  * §2.14c's public creator profile.
@@ -43,17 +44,17 @@ export default function CreatorProfilePage({ params }: { params: Promise<{ handl
   }
 
   if (error !== null) {
-    return <main className="mx-auto max-w-3xl px-4 py-8 text-sm text-fall">{error}</main>;
+    return <PageShell width="narrow">{error}</PageShell>;
   }
   if (profile === null) {
-    return <main className="mx-auto max-w-3xl px-4 py-8 text-sm text-text-muted">Loading…</main>;
+    return <PageShell width="narrow">Loading…</PageShell>;
   }
 
   const settled =
     profile.cleanResolutions + profile.disputedResolutions + profile.voidedAfterActivation;
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
+    <PageShell width="narrow">
       <header className="flex items-start justify-between gap-4">
         <div>
           <h1 className="flex items-center gap-2 text-xl font-black">
@@ -130,7 +131,7 @@ export default function CreatorProfilePage({ params }: { params: Promise<{ handl
           </ul>
         )}
       </section>
-    </main>
+    </PageShell>
   );
 }
 

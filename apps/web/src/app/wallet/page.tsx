@@ -1,12 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { Suspense, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
-import { MobileNav } from '@/components/market/mobile-nav';
-import { SiteHeader } from '@/components/market/site-header';
+import { PageShell } from '@/components/market/page-shell';
 import { dateTime, exactMoney, money } from '@/lib/format';
-import { PAGE_WIDTH } from '@/lib/layout';
 import { authed, getToken, useSession } from '@/lib/session';
 
 interface HistoryRow {
@@ -89,128 +87,92 @@ export default function WalletPage() {
 
   if (!loading && me === null) {
     return (
-      <>
-        <Header />
-        <main className={`px-4 py-8 sm:px-5 ${PAGE_WIDTH}`}>
-          <p className="text-base text-text-muted">
-            <Link href="/login" className="font-semibold text-brand underline">
-              Log in
-            </Link>{' '}
-            to see your wallet.
-          </p>
-        </main>
-        <Nav />
-      </>
+      <PageShell>
+        <p className="text-base text-text-muted">
+          <Link href="/login" className="font-semibold text-brand underline">
+            Log in
+          </Link>{' '}
+          to see your wallet.
+        </p>
+      </PageShell>
     );
   }
 
   return (
-    <>
-      <Header />
+    <PageShell>
+      <h1 className="text-xl font-bold">Wallet</h1>
 
-      <main className={`px-4 pb-[72px] pt-5 sm:px-5 md:pb-10 ${PAGE_WIDTH}`}>
-        <h1 className="text-xl font-bold">Wallet</h1>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <Balance
+          label="Available"
+          value={me === null ? '—' : money(me.available)}
+          note="Yours to stake or hold."
+          tone="money"
+        />
+        <Balance
+          label="In open markets"
+          value={me === null ? '—' : money(me.escrowed)}
+          note="Held in escrow until those markets settle."
+        />
+      </div>
 
-        <div className="mt-4 grid gap-3 sm:grid-cols-2">
-          <Balance
-            label="Available"
-            value={me === null ? '—' : money(me.available)}
-            note="Yours to stake or hold."
-            tone="money"
-          />
-          <Balance
-            label="In open markets"
-            value={me === null ? '—' : money(me.escrowed)}
-            note="Held in escrow until those markets settle."
-          />
+      <div className="mt-8 flex flex-wrap items-baseline justify-between gap-3">
+        <div>
+          <h2 className="text-md font-bold">History</h2>
+          <p className="text-sm text-text-muted">
+            Every money event on your account, straight from the ledger.
+          </p>
         </div>
+        <StatementButton />
+      </div>
 
-        <div className="mt-8 flex flex-wrap items-baseline justify-between gap-3">
-          <div>
-            <h2 className="text-md font-bold">History</h2>
-            <p className="text-sm text-text-muted">
-              Every money event on your account, straight from the ledger.
-            </p>
-          </div>
-          <StatementButton />
-        </div>
-
-        {/* §7.5's filter. One scrolling row on a phone, like the shelf's. */}
-        <div className="-mx-4 mt-3 flex gap-1.5 overflow-x-auto px-4 [-ms-overflow-style:none] [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
-          <FilterPill on={filter === 'all'} onClick={() => setFilter('all')}>
-            All
+      {/* §7.5's filter. One scrolling row on a phone, like the shelf's. */}
+      <div className="-mx-4 mt-3 flex gap-1.5 overflow-x-auto px-4 [-ms-overflow-style:none] [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
+        <FilterPill on={filter === 'all'} onClick={() => setFilter('all')}>
+          All
+        </FilterPill>
+        {FILTERS.map((option) => (
+          <FilterPill
+            key={option.key}
+            on={filter === option.key}
+            onClick={() => setFilter(option.key)}
+          >
+            {option.label}
           </FilterPill>
-          {FILTERS.map((option) => (
-            <FilterPill
-              key={option.key}
-              on={filter === option.key}
-              onClick={() => setFilter(option.key)}
-            >
-              {option.label}
-            </FilterPill>
+        ))}
+      </div>
+
+      {error !== null && (
+        <p role="alert" className="mt-3 rounded-md bg-fall-bg px-3 py-2 text-sm text-fall">
+          {error}
+        </p>
+      )}
+
+      {history === null && error === null && (
+        <p className="mt-4 text-sm text-text-muted">Loading…</p>
+      )}
+
+      {shown !== null && shown.length === 0 && (
+        <p className="mt-4 rounded-xl border border-dashed border-border p-8 text-center text-sm text-text-muted">
+          {history?.length === 0
+            ? 'Nothing here yet. Your first stake will show up the moment it fills.'
+            : 'No events of that kind yet.'}
+        </p>
+      )}
+
+      {shown !== null && shown.length > 0 && (
+        <ul className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border">
+          {shown.map((row) => (
+            <Row
+              key={row.id}
+              row={row}
+              open={openRow === row.id}
+              onToggle={() => setOpenRow(openRow === row.id ? null : row.id)}
+            />
           ))}
-        </div>
-
-        {error !== null && (
-          <p role="alert" className="mt-3 rounded-md bg-fall-bg px-3 py-2 text-sm text-fall">
-            {error}
-          </p>
-        )}
-
-        {history === null && error === null && (
-          <p className="mt-4 text-sm text-text-muted">Loading…</p>
-        )}
-
-        {shown !== null && shown.length === 0 && (
-          <p className="mt-4 rounded-xl border border-dashed border-border p-8 text-center text-sm text-text-muted">
-            {history?.length === 0
-              ? 'Nothing here yet. Your first stake will show up the moment it fills.'
-              : 'No events of that kind yet.'}
-          </p>
-        )}
-
-        {shown !== null && shown.length > 0 && (
-          <ul className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border">
-            {shown.map((row) => (
-              <Row
-                key={row.id}
-                row={row}
-                open={openRow === row.id}
-                onToggle={() => setOpenRow(openRow === row.id ? null : row.id)}
-              />
-            ))}
-          </ul>
-        )}
-      </main>
-
-      <Nav />
-    </>
-  );
-}
-
-/**
- * The page chrome, behind a suspense boundary.
- *
- * `SiteHeader` and `MobileNav` both call `useSearchParams()` — the header for
- * the search field, the nav for the watchlist tab's active state. Next cannot
- * prerender a page that reads the query string outside a boundary, so without
- * these the production build fails on `/wallet` even though the dev server is
- * perfectly happy. The fallbacks are sized to the real chrome so the page does
- * not jump when it hydrates.
- */
-function Header() {
-  return (
-    <Suspense fallback={<div className="h-[60px] border-b border-border" />}>
-      <SiteHeader />
-    </Suspense>
-  );
-}
-
-function Nav() {
-  return (
-    <Suspense>
-      <MobileNav />
-    </Suspense>
+        </ul>
+      )}
+    </PageShell>
   );
 }
 

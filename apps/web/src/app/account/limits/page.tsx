@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 
 import { API_URL } from '@/lib/api';
 import { exactMoney } from '@/lib/format';
+import { PageShell } from '@/components/market/page-shell';
 
 interface RgView {
   depositLimit: string | null;
@@ -82,15 +83,15 @@ export default function LimitsPage() {
 
   if (view === null) {
     return (
-      <main className="mx-auto max-w-2xl px-4 py-10">
+      <PageShell width="narrow">
         <h1 className="text-xl font-black">Your limits</h1>
         <p className="mt-3 text-sm text-text-muted">{error ?? 'Loading…'}</p>
-      </main>
+      </PageShell>
     );
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-8">
+    <PageShell width="narrow">
       <h1 className="text-xl font-black">Your limits</h1>
       <p className="mt-3 rounded-md border border-border bg-surface-raised px-4 py-3 text-md">
         {view.helpline}
@@ -235,7 +236,7 @@ export default function LimitsPage() {
         We check in after {view.realityCheckMinutes} minutes of continuous play, so you always know
         how long you have been here.
       </p>
-    </main>
+    </PageShell>
   );
 }
 

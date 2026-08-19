@@ -8,6 +8,7 @@ import { useFieldArray, useForm } from 'react-hook-form';
 import { z } from 'zod';
 
 import { BalanceMeter } from '@/components/balance-meter';
+import { PageShell, PageTitle } from '@/components/market/page-shell';
 import { API_URL } from '@/lib/api';
 import { TICKET_TEMPLATES, type TicketTemplate } from '@/lib/templates';
 
@@ -229,36 +230,35 @@ export default function CreatePage() {
 
   if (submitted !== null) {
     return (
-      <main className="mx-auto max-w-2xl px-4 py-10">
-        <h1 className="text-xl font-black">
-          {submitted.state === 'rejected' ? 'Not this one' : 'Sent for review'}
-        </h1>
-        <p className="mt-3 text-md text-text-muted">
-          {submitted.reason ??
-            'A reviewer checks every new market before it opens. You keep your bond either way unless you settle dishonestly.'}
-        </p>
-        <a
-          href="/"
-          className="mt-6 inline-block font-semibold text-rise underline underline-offset-2"
-        >
-          Back to markets
-        </a>
-      </main>
+      <PageShell width="narrow">
+        <div className="rounded-xl border border-border p-6">
+          <h1 className="text-xl font-bold">
+            {submitted.state === 'rejected' ? 'Not this one' : 'Sent for review'}
+          </h1>
+          <p className="mt-2 text-base text-text-muted">
+            {submitted.reason ??
+              'A reviewer checks every new market before it opens. You keep your bond either way unless you settle dishonestly.'}
+          </p>
+          <a
+            href="/"
+            className="mt-5 inline-block font-semibold text-brand underline underline-offset-2"
+          >
+            Back to markets
+          </a>
+        </div>
+      </PageShell>
     );
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-8">
-      <header className="mb-6">
-        <h1 className="text-xl font-black leading-tight">Talk your own</h1>
-        <p className="mt-2 text-md text-text-muted">
-          Open a market for your people to call. You put up a bond, you settle it against one named
-          source, and you earn a cut of the losing pool.
-        </p>
-      </header>
+    <PageShell width="narrow">
+      <PageTitle
+        title="Talk your own"
+        blurb="Open a market for your people to call. You put up a bond, you settle it against one named source, and you earn a cut of the losing pool."
+      />
 
       {opportunities.length > 0 && (
-        <section className="mb-8 rounded-md border border-money/40 bg-money/5 p-4">
+        <section className="mb-8 rounded-xl border border-rise/40 bg-rise-bg p-4">
           <h2 className="text-sm font-semibold">People are already asking</h2>
           <p className="mt-1 text-sm text-text-muted">
             Nobody has opened a market for these yet. The first one to does.
@@ -284,7 +284,7 @@ export default function CreatePage() {
         </section>
       )}
 
-      <section className="mb-8 rounded-md border border-border p-4">
+      <section className="mb-8 rounded-xl border border-border p-4">
         <h2 className="text-sm font-semibold">Say it how you would say it</h2>
         <p className="mt-1 text-sm text-text-muted">
           Type your question the way you would ask a friend. The co-pilot turns it into a proper
@@ -295,13 +295,13 @@ export default function CreatePage() {
           onChange={(event) => setIdea(event.target.value)}
           rows={2}
           placeholder="who go win the Surulere LGA chairmanship"
-          className="mt-3 w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-rise"
+          className="mt-3 w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-brand"
         />
         <button
           type="button"
           disabled={thinking || idea.trim().length < 10}
           onClick={() => void askCopilot()}
-          className="mt-2 rounded-md bg-rise px-4 py-2.5 font-bold text-paper transition-transform active:scale-press disabled:opacity-40"
+          className="mt-2 rounded-md bg-brand px-4 font-bold h-11 text-paper transition-transform active:scale-press disabled:opacity-40"
         >
           {thinking ? 'Thinking…' : 'Draft it for me'}
         </button>
@@ -318,10 +318,10 @@ export default function CreatePage() {
               type="button"
               onClick={() => applyTemplate(option)}
               aria-pressed={template?.id === option.id}
-              className={`rounded-md border px-3 py-2.5 text-left text-sm transition-colors ${
+              className={`rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
                 template?.id === option.id
-                  ? 'border-rise bg-rise/10'
-                  : 'border-border hover:border-rise'
+                  ? 'border-brand bg-brand/10'
+                  : 'border-border hover:border-brand'
               }`}
             >
               <span className="block font-semibold">{option.name}</span>
@@ -337,7 +337,7 @@ export default function CreatePage() {
             {...form.register('question')}
             rows={2}
             placeholder="Will the Super Eagles beat Ivory Coast on Saturday?"
-            className="w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-rise"
+            className="w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-brand"
           />
         </Field>
 
@@ -348,7 +348,7 @@ export default function CreatePage() {
               type="button"
               disabled={thinking}
               onClick={() => void checkBalance()}
-              className="rounded-sm border border-border px-3 py-1.5 text-sm disabled:opacity-40"
+              className="h-11 shrink-0 rounded-md border border-border px-3 text-sm font-semibold hover:border-text disabled:opacity-40"
             >
               {thinking ? 'Checking…' : 'Check the balance'}
             </button>
@@ -362,7 +362,7 @@ export default function CreatePage() {
             <button
               type="button"
               onClick={() => outcomes.append({ label: '', criteria: '' })}
-              className="flex items-center gap-1 text-sm text-rise"
+              className="flex items-center gap-1 text-sm font-semibold text-brand"
             >
               <Plus size={14} /> Add outcome
             </button>
@@ -374,12 +374,12 @@ export default function CreatePage() {
 
           <div className="mt-3 space-y-3">
             {outcomes.fields.map((field, index) => (
-              <div key={field.id} className="rounded-md border border-border p-3">
+              <div key={field.id} className="rounded-lg border border-border p-3">
                 <div className="flex items-center gap-2">
                   <input
                     {...form.register(`outcomes.${index}.label`)}
                     placeholder="YES"
-                    className="w-32 rounded-sm border border-border bg-surface px-2 py-1.5 font-semibold outline-none focus:border-rise"
+                    className="h-11 w-32 rounded-md border border-border bg-surface px-3 font-semibold outline-none focus:border-brand"
                   />
                   {outcomes.fields.length > 2 && (
                     <button
@@ -395,7 +395,7 @@ export default function CreatePage() {
                 <input
                   {...form.register(`outcomes.${index}.criteria`)}
                   placeholder="What exactly makes this the result?"
-                  className="mt-2 w-full rounded-sm border border-border bg-surface px-2 py-1.5 text-sm outline-none focus:border-rise"
+                  className="mt-2 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm outline-none focus:border-brand"
                 />
                 <p className="mt-1 text-sm text-fall">
                   {form.formState.errors.outcomes?.[index]?.criteria?.message}
@@ -409,7 +409,7 @@ export default function CreatePage() {
           <input
             {...form.register('sourceName')}
             placeholder="CBN official rate"
-            className="w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-rise"
+            className="h-11 w-full rounded-md border border-border bg-surface px-3 outline-none focus:border-brand"
           />
         </Field>
 
@@ -417,23 +417,23 @@ export default function CreatePage() {
           <input
             {...form.register('sourceUrl')}
             placeholder="https://www.cbn.gov.ng/rates/"
-            className="w-full rounded-md border border-border bg-surface px-3 py-2.5 font-mono text-sm outline-none focus:border-rise"
+            className="h-11 w-full rounded-md border border-border bg-surface px-3 font-mono text-sm outline-none focus:border-brand"
           />
         </Field>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Event date" error={form.formState.errors.eventDate?.message}>
             <input
               type="datetime-local"
               {...form.register('eventDate')}
-              className="w-full rounded-md border border-border bg-surface px-3 py-2.5 font-mono text-sm outline-none focus:border-rise"
+              className="h-11 w-full rounded-md border border-border bg-surface px-3 font-mono text-sm outline-none focus:border-brand"
             />
           </Field>
           <Field label="Voids after" error={form.formState.errors.voidDate?.message}>
             <input
               type="datetime-local"
               {...form.register('voidDate')}
-              className="w-full rounded-md border border-border bg-surface px-3 py-2.5 font-mono text-sm outline-none focus:border-rise"
+              className="h-11 w-full rounded-md border border-border bg-surface px-3 font-mono text-sm outline-none focus:border-brand"
             />
           </Field>
         </div>
@@ -448,7 +448,7 @@ export default function CreatePage() {
         <button
           type="submit"
           disabled={form.formState.isSubmitting}
-          className="w-full rounded-md bg-rise py-3.5 font-bold text-paper transition-transform active:scale-press disabled:opacity-40"
+          className="w-full rounded-md bg-brand py-3.5 font-bold text-paper transition-transform active:scale-press disabled:opacity-40"
         >
           {form.formState.isSubmitting ? 'Sending…' : 'Send for review'}
         </button>
@@ -458,7 +458,7 @@ export default function CreatePage() {
           when you settle it — or if it never gets off the ground.
         </p>
       </form>
-    </main>
+    </PageShell>
   );
 }
 
@@ -495,15 +495,15 @@ function ActivationPathChooser({
   return (
     <section>
       <h2 className="text-sm font-semibold">How should it open?</h2>
-      <div className="mt-2 grid grid-cols-2 gap-2">
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
         {options.map((option) => (
           <button
             key={option.id}
             type="button"
             onClick={() => onChange(option.id)}
             aria-pressed={value === option.id}
-            className={`rounded-md border px-3 py-2.5 text-left transition-colors ${
-              value === option.id ? 'border-rise bg-rise/10' : 'border-border hover:border-rise'
+            className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
+              value === option.id ? 'border-brand bg-brand/10' : 'border-border hover:border-brand'
             }`}
           >
             <span className="block text-sm font-semibold">{option.title}</span>

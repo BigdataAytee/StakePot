@@ -4,6 +4,7 @@ import { AlertTriangle, ArrowUpRight, Eye, Share2, TrendingUp, Users } from 'luc
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
 
+import { PageShell } from '@/components/market/page-shell';
 import { creator, type Nudge, type Standing, type StudioMarket } from '@/lib/creator-api';
 
 /**
@@ -48,18 +49,18 @@ export default function Studio() {
   );
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-8">
-      <header className="flex items-baseline justify-between">
+    <PageShell>
+      <header className="flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <h1 className="text-xl font-black">Your studio</h1>
-          <p className="mt-1 text-sm text-text-muted">
+          <h1 className="text-xl font-bold">Your studio</h1>
+          <p className="mt-1 text-base text-text-muted">
             What your markets are doing, and what would help them.
           </p>
         </div>
         {standing?.handle != null && (
           <Link
             href={`/c/${standing.handle}`}
-            className="flex items-center gap-1 font-mono text-sm text-rise underline underline-offset-2"
+            className="flex items-center gap-1 font-mono text-sm font-semibold text-brand underline underline-offset-2"
           >
             @{standing.handle} <ArrowUpRight size={14} />
           </Link>
@@ -69,7 +70,7 @@ export default function Studio() {
       {error !== null && <p className="mt-4 text-sm text-fall">{error}</p>}
 
       {standing !== null && standing.handle === null && (
-        <section className="mt-6 rounded-md border border-border p-4">
+        <section className="mt-6 rounded-xl border border-border p-4">
           <h2 className="font-bold">Pick a handle</h2>
           <p className="mt-1 text-sm text-text-muted">
             It goes on every market you open and every card anyone shares. Lowercase letters,
@@ -81,13 +82,13 @@ export default function Studio() {
               onChange={(event) => setHandle(event.target.value)}
               placeholder="tunde_01"
               aria-label="Your handle"
-              className="flex-1 rounded-sm border border-border bg-surface px-3 py-2 font-mono text-sm"
+              className="h-11 flex-1 rounded-md border border-border bg-surface px-3 font-mono text-sm outline-none focus:border-brand"
             />
             <button
               type="button"
               disabled={busy || handle.trim().length < 3}
               onClick={() => void claim()}
-              className="rounded-sm bg-rise px-4 py-2 text-sm font-bold text-paper disabled:opacity-40"
+              className="h-11 shrink-0 rounded-md bg-brand px-4 text-sm font-bold text-paper transition-transform active:scale-press disabled:opacity-40"
             >
               Claim it
             </button>
@@ -104,7 +105,7 @@ export default function Studio() {
             {urgent.map(({ market, nudge }) => (
               <li
                 key={`${market.id}-${nudge.kind}`}
-                className={`rounded-md border-l-2 p-3 ${
+                className={`rounded-lg border-l-2 p-3 ${
                   nudge.urgency === 'now' ? 'border-fall bg-fall/5' : 'border-money bg-money/5'
                 }`}
               >
@@ -119,7 +120,7 @@ export default function Studio() {
       )}
 
       {standing !== null && (
-        <section className="mt-6 rounded-md border border-border p-4">
+        <section className="mt-6 rounded-xl border border-border p-4">
           <div className="flex items-baseline justify-between">
             <h2 className="font-bold">
               Level {standing.level}
@@ -171,7 +172,7 @@ export default function Studio() {
         {markets.length === 0 ? (
           <p className="mt-2 text-sm text-text-muted">
             Nothing yet.{' '}
-            <Link href="/create" className="text-rise underline underline-offset-2">
+            <Link href="/create" className="font-semibold text-brand underline underline-offset-2">
               Open your first market
             </Link>
             .
@@ -179,7 +180,7 @@ export default function Studio() {
         ) : (
           <ul className="mt-2 space-y-3">
             {markets.map((market) => (
-              <li key={market.id} className="rounded-md border border-border p-4">
+              <li key={market.id} className="rounded-xl border border-border p-4">
                 <div className="flex items-baseline justify-between gap-3">
                   <Link href={`/market/${market.id}`} className="font-semibold">
                     {market.question}
@@ -245,7 +246,7 @@ export default function Studio() {
           <h2 className="text-sm font-bold uppercase tracking-wide text-text-muted">What closed</h2>
           <ul className="mt-2 space-y-3">
             {standing.autopsies.map((autopsy) => (
-              <li key={autopsy.marketId} className="rounded-md border border-border p-4">
+              <li key={autopsy.marketId} className="rounded-xl border border-border p-4">
                 <p className="font-semibold">{autopsy.question}</p>
                 <p className="mt-1 text-sm text-text-muted">{autopsy.summary}</p>
                 {autopsy.worked.map((line) => (
@@ -261,7 +262,7 @@ export default function Studio() {
           </ul>
         </section>
       )}
-    </main>
+    </PageShell>
   );
 }
 

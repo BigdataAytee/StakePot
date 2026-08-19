@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { SiteFooter } from '@/components/site-footer';
 
 import { API_URL } from '@/lib/api';
+import { PageShell } from '@/components/market/page-shell';
 
 interface Ticket {
   id: string;
@@ -82,7 +83,7 @@ export default function SupportPage() {
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-8">
+    <PageShell width="narrow">
       <h1 className="text-xl font-black">Support</h1>
       <p className="mt-2 text-md text-text-muted">
         Tell us what happened and we will come back to you. Payout questions get the fastest answer;
@@ -163,6 +164,6 @@ export default function SupportPage() {
         )}
       </section>
       <SiteFooter />
-    </main>
+    </PageShell>
   );
 }
