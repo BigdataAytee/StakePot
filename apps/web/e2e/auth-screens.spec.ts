@@ -13,6 +13,7 @@ import { resetAuthBudget } from './redis';
  * you could only fill blind.
  */
 const stamp = Date.now();
+const API = process.env['API_URL'] ?? 'http://localhost:3001';
 
 test.beforeAll(async () => {
   await resetAuthBudget();
@@ -92,8 +93,44 @@ test.describe('the auth screens', () => {
     await page.getByText('I am 18 or older').click();
     await page.getByRole('button', { name: 'Create account' }).click();
 
-    await expect(page).toHaveURL(/\/verify/, { timeout: 20_000 });
-    await expect(page.getByRole('heading', { name: /Confirm your contact/i })).toBeVisible();
+    // Straight into the product, and nothing asks them to prove anything on the
+    // way. Tier 0 has a spendable balance and both shelves.
+    await expect(page).toHaveURL(/\/markets/, { timeout: 20_000 });
+    await expect(page.getByText('Balance').first()).toBeVisible();
+    await expect(page.getByText(/verify/i)).toHaveCount(0);
+  });
+
+  test('a second signup on the same address is refused in plain words', async ({ page }) => {
+    const taken = `taken${stamp}@example.com`;
+
+    // Claim the address first, through the API, so this test is about what the
+    // screen says rather than about how the account got there.
+    const claimed = await fetch(`${API}/auth/signup`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ email: taken, password: 'correct-horse-battery', ageAttested: true }),
+    });
+    expect(claimed.ok).toBe(true);
+
+    await page.goto('/signup');
+    await page.getByLabel('Email or phone').fill(taken);
+    await page.getByLabel('Password', { exact: true }).fill('correct-horse-battery');
+    await page.getByText('I am 18 or older').click();
+    await page.getByRole('button', { name: 'Create account' }).click();
+
+    // What a person is told: what happened, and what to do about it.
+    await expect(page.getByText(/already uses that email/i)).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText(/log in instead/i)).toBeVisible();
+    await expect(page).toHaveURL(/\/signup/);
+
+    // And what they are not told. This screen used to show
+    // "Invalid `prisma.user.create()` invocation: Unique constraint failed on
+    // the fields: (`email`)" — unreadable to them, and a description of the
+    // schema to everybody else.
+    const shown = (await page.locator('body').innerText()).toLowerCase();
+    expect(shown).not.toContain('prisma');
+    expect(shown).not.toContain('unique constraint');
+    expect(shown).not.toContain('invocation');
   });
 
   test('login is reachable, usable, and admits it cannot reset a password yet', async ({

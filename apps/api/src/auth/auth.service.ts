@@ -1,6 +1,7 @@
 import { Decimal } from '@stakeam/engine';
 import { Injectable } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { Prisma } from '@prisma/client';
 import type { User } from '@prisma/client';
 import * as argon2 from 'argon2';
 import { randomUUID } from 'node:crypto';
@@ -76,7 +77,49 @@ export class AuthService {
     const pwHash = await argon2.hash(input.password, AuthService.ARGON2_OPTIONS);
     const starterBalance = await this.config.get('starter_balance_spc');
 
-    const user = await this.prisma.$transaction(async (tx) => {
+    const user = await this.createAccount(input, pwHash, starterBalance);
+
+    return this.tokensFor(user);
+  }
+
+  /**
+   * The account row and the money that comes with it, or a refusal a person can
+   * act on.
+   *
+   * §2.7's one-account-per-contact rule is a unique index, so the duplicate is
+   * caught by the database rather than by a lookup — a check-then-insert races
+   * two simultaneous signups and lets both through. What the database raises is
+   * `P2002`, and that has to be turned into a sentence before it goes anywhere
+   * near a person: "Unique constraint failed on the fields: (`email`)" is a
+   * query plan, not an answer, and it tells a stranger the schema besides.
+   */
+  private async createAccount(
+    input: SignupInput,
+    pwHash: string,
+    starterBalance: number,
+  ): Promise<User> {
+    try {
+      return await this.insertAccount(input, pwHash, starterBalance);
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const fields = (error.meta?.['target'] ?? []) as string[] | string;
+        const clashed = Array.isArray(fields) ? fields.join(', ') : String(fields);
+        throw new AuthError(
+          clashed.includes('phone')
+            ? 'an account already uses that phone number — log in instead, or use another number'
+            : 'an account already uses that email — log in instead, or use another address',
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async insertAccount(
+    input: SignupInput,
+    pwHash: string,
+    starterBalance: number,
+  ): Promise<User> {
+    return this.prisma.$transaction(async (tx) => {
       const created = await tx.user.create({
         data: {
           ...(input.email === undefined ? {} : { email: input.email.toLowerCase() }),
@@ -103,8 +146,6 @@ export class AuthService {
 
       return created;
     });
-
-    return this.tokensFor(user);
   }
 
   /**

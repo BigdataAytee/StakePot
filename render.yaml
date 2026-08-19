@@ -56,11 +56,11 @@ services:
     region: frankfurt
     plan: free
     healthCheckPath: /health
-    # Migrations run before the server starts rather than as a deploy hook,
-    # which needs a paid instance type. `prisma migrate deploy` takes a Postgres
-    # advisory lock, so two replicas starting together cannot race: the second
-    # waits and then finds nothing to apply.
-    dockerCommand: sh -c "pnpm --filter @stakeam/api exec prisma migrate deploy && node --enable-source-maps apps/api/dist/main.js"
+    # Render runs a start command without a shell, so `a && b` here is not two
+    # commands — it is one command whose name contains "&&", and the container
+    # exits 127 having run nothing. Both steps live in the script instead: it
+    # applies migrations, then execs the server. See apps/api/render-start.sh.
+    dockerCommand: sh /app/apps/api/render-start.sh
     envVars:
       - key: NODE_ENV
         value: production

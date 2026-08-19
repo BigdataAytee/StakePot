@@ -66,6 +66,16 @@ export class OtpService {
   }
 
   /**
+   * Throw a code away.
+   *
+   * For the case where the code was issued but could not be delivered: it is
+   * unusable, so it must not hold the resend cooldown against the next attempt.
+   */
+  async revoke(contact: string): Promise<void> {
+    await this.redis.del(OtpService.key(contact));
+  }
+
+  /**
    * Verify and consume. A correct code is single-use; a wrong one burns an
    * attempt, and the record is dropped once the cap is reached so a brute force
    * has to start over against a new code it cannot predict.

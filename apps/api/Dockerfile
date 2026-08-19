@@ -3,6 +3,14 @@
 FROM node:22-bookworm-slim AS base
 ENV PNPM_HOME=/pnpm
 ENV PATH=$PNPM_HOME:$PATH
+# Prisma probes for libssl to choose its engine, and on a slim image the probe
+# finds nothing and falls back to openssl-1.1.x — an engine this Debian does not
+# have. It warns rather than failing, so the image builds clean and then cannot
+# reach the database at boot. Installing openssl is what makes the probe answer
+# openssl-3.0.x, which is the truth here.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 RUN corepack enable
 WORKDIR /app
 

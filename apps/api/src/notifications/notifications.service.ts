@@ -33,12 +33,24 @@ export const NOTIFICATION_TYPES = {
   // §2.8's weekly prize. Email as well: money arriving is worth a record
   // somewhere the recipient can find again.
   prize: { title: 'You won a prize', channels: ['in_app', 'push', 'email'] },
-  // §2.1's Tier 1 gate. Every channel the contact could be: the code has to
-  // reach whichever of email or phone the person signed up with, and the in-app
-  // copy is what a support agent reads back when delivery failed.
+  /*
+   * §2.1's Tier 1 gate. Email and SMS only — deliberately **not** in-app.
+   *
+   * The point of the code is to prove control of the contact. Serving it to the
+   * signed-in session defeats that entirely: the inbox endpoint is authenticated
+   * by the very session trying to prove itself, so anyone who signed up with
+   * somebody else's address could read their own code out of the app and take
+   * Tier 1 — and with it the bonus, market creation, leaderboards and prize
+   * eligibility. A code that travels back down the channel it is verifying is
+   * not a second factor, it is a formality.
+   *
+   * It goes to whichever of email or phone the person signed up with. A support
+   * agent reading a live code back to a caller would be the same hole with a
+   * human in it, so that is not a use this supports either.
+   */
   contact_verification: {
     title: 'Your verification code',
-    channels: ['in_app', 'email', 'sms'],
+    channels: ['email', 'sms'],
   },
   rg_confirmation: {
     title: 'Your limits changed',
@@ -49,6 +61,12 @@ export const NOTIFICATION_TYPES = {
 } as const satisfies Record<string, { title: string; channels: readonly NotificationChannel[] }>;
 
 export type NotificationType = keyof typeof NOTIFICATION_TYPES;
+
+/** What a `notify` call actually managed to send, and what it did not. */
+export interface NotifyOutcome {
+  readonly delivered: readonly NotificationChannel[];
+  readonly failed: readonly { channel: NotificationChannel; failure: string }[];
+}
 
 export interface NotifyInput {
   readonly userId: string;
@@ -78,13 +96,24 @@ export class NotificationsService {
     private readonly sms: SmsSender,
   ) {}
 
-  async notify(input: NotifyInput): Promise<void> {
+  /**
+   * Send, and say what happened.
+   *
+   * The return value exists for the callers where delivery is the point rather
+   * than a courtesy — a verification code with nowhere to go is not a
+   * notification that failed quietly, it is a signup that cannot complete, and
+   * the person waiting deserves to be told that instead of "sent".
+   */
+  async notify(input: NotifyInput): Promise<NotifyOutcome> {
     const definition = NOTIFICATION_TYPES[input.type];
+    const delivered: NotificationChannel[] = [];
+    const failed: { channel: NotificationChannel; failure: string }[] = [];
+
     const user = await this.prisma.user.findUnique({
       where: { id: input.userId },
       select: { email: true, phone: true },
     });
-    if (user === null) return;
+    if (user === null) return { delivered, failed };
 
     const preferences = await this.prisma.notificationPreference.findMany({
       where: { userId: input.userId },
@@ -104,6 +133,9 @@ export class NotificationsService {
         phone: user.phone,
       });
 
+      if (failure === null) delivered.push(channel);
+      else failed.push({ channel, failure });
+
       await this.prisma.notification.create({
         data: {
           userId: input.userId,
@@ -118,6 +150,8 @@ export class NotificationsService {
         },
       });
     }
+
+    return { delivered, failed };
   }
 
   /** The in-app inbox. */

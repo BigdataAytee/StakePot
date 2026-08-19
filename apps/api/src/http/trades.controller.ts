@@ -12,7 +12,6 @@ import { IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'clas
 
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { AnalyticsService } from '../analytics/analytics.service';
-import { ThreadService } from '../community-layer/thread.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TradeQueueService } from '../trade/trade-queue.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -42,7 +41,6 @@ export class TradesController {
     private readonly queue: TradeQueueService,
     private readonly wallet: WalletService,
     private readonly prisma: PrismaService,
-    private readonly threads: ThreadService,
     private readonly analytics: AnalyticsService,
   ) {}
 
@@ -66,6 +64,7 @@ export class TradesController {
             userId: user.userId,
             amount: body.amount,
             requestId: body.requestId,
+            ...(body.reason === undefined ? {} : { reason: body.reason }),
           }
         : {
             kind: 'sell',
@@ -74,6 +73,7 @@ export class TradesController {
             userId: user.userId,
             shares: body.amount,
             requestId: body.requestId,
+            ...(body.reason === undefined ? {} : { reason: body.reason }),
           },
     );
 
@@ -82,8 +82,10 @@ export class TradesController {
     }
     if (outcome.status === 'queued' || outcome.trade === undefined) {
       // §11: "users see 'order placed' instantly (accepted into queue) and
-      // confirmation when executed." 202, with the id to poll.
-      return { accepted: true, requestId: body.requestId };
+      // confirmation when executed." The id is what the client polls with, and
+      // `status` is what tells it this is not a fill — a client that reads only
+      // the HTTP code sees 2xx and believes it is done.
+      return { status: 'queued' as const, accepted: true, requestId: body.requestId };
     }
     const trade = outcome.trade;
 
@@ -109,22 +111,14 @@ export class TradesController {
       }
     }
 
-    // The reason posts *after* the trade, so the badge it carries is the
-    // position the trade just created — which is the point of asking at trade
-    // time rather than in the thread. Best-effort: a rejected comment (rate
-    // limit, a tripped rule) must never unwind a settled trade.
-    if (body.reason !== undefined && body.reason.trim().length > 0) {
-      await this.threads
-        .post({
-          marketId: body.marketId,
-          userId: user.userId,
-          text: body.reason,
-          fromTrade: true,
-        })
-        .catch(() => undefined);
-    }
-
+    // §2.15a's reason is posted by whoever executes the trade — see
+    // TradeQueueService.postReason. It used to be posted here, which was right
+    // only for trades that filled while the caller waited: a trade the queue
+    // deferred returned 202 from the branch above and its take was dropped on
+    // the floor, silently, and precisely under the load that makes the queue
+    // defer in the first place.
     return {
+      status: 'filled' as const,
       id: trade.id,
       side: trade.side,
       shares: trade.shares.toString(),
