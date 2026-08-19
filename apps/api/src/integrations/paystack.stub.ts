@@ -14,6 +14,15 @@ import type {
  *
  * Every method throws. Do not soften these into no-ops or fixtures: a caller
  * that reaches here is trying to move real naira and must fail closed.
+ *
+ * **Whatever calls `initWithdrawal` must require a verified contact first**
+ * (§2.1 Tier 1), and KYC on top of it per `kyc_required_at`. That check does
+ * not live here — a payments client should not be deciding who is allowed to be
+ * paid — but it has to exist before this stub becomes real, and it is the only
+ * place contact verification is *mandatory*. Entry is deliberately free: Tier 0
+ * trades both shelves with its starter balance and is never sent to a code box
+ * on the way in. Money leaving is the boundary where knowing who somebody is
+ * stops being optional.
  */
 export class PaystackProvider implements PaymentsProvider {
   readonly name = 'paystack';

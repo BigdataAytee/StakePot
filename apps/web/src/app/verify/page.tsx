@@ -10,13 +10,17 @@ import { usePublicConfig } from '@/lib/public-config';
 import { authed, getToken, useSession } from '@/lib/session';
 
 /**
- * §2.1 Tier 1 — "confirm ownership of the signup email/phone (OTP or link).
- * Unlocks full signup bonus, market creation, leaderboards, and prize
- * eligibility."
+ * §2.1 Tier 1 — "confirm ownership of the signup email/phone (OTP or link)."
  *
- * The screen states what verifying is *for* rather than just demanding a code.
- * Tier 1 is the anti-farming gate, so the person being asked deserves to know
- * they are buying something with the thirty seconds.
+ * Reachable, never compulsory. Signup drops straight into the markets, because
+ * Tier 0 can already trade both shelves with its starter balance and a code box
+ * standing between somebody and the thing they signed up for reads as a wall
+ * whether or not it is one. What verification buys is money-shaped: the full
+ * bonus, taking a position in the argument, the leaderboard, prizes — and, when
+ * cashing out exists, getting money out at all.
+ *
+ * So the screen states what it is for and offers the way back to the markets in
+ * the same breath. Somebody who came here by accident should not feel trapped.
  */
 export default function VerifyPage() {
   const router = useRouter();
@@ -94,6 +98,9 @@ export default function VerifyPage() {
           ? 'We are sending you a six-digit code.'
           : `We sent a six-digit code to ${sentTo}.`}
       </p>
+      <p className="mt-2 text-sm text-text-muted">
+        Optional for now — you can stake on any market without it.
+      </p>
 
       <ul className="mt-4 flex flex-col gap-1.5 text-sm text-text-muted">
         <li>
@@ -103,8 +110,9 @@ export default function VerifyPage() {
           </span>{' '}
           on top of your starter balance
         </li>
-        <li>• Lets you open your own markets</li>
+        <li>• Lets you open your own markets and post your take on a thread</li>
         <li>• Puts you on the leaderboard and in prize draws</li>
+        <li>• Required before any money leaves your wallet</li>
       </ul>
 
       <form onSubmit={submit} className="mt-8 flex flex-col gap-4" noValidate>
@@ -151,11 +159,11 @@ export default function VerifyPage() {
       </form>
 
       <p className="mt-6 text-sm text-text-muted">
-        You can{' '}
+        Not now?{' '}
         <Link href="/markets" className="font-bold underline">
-          look around first
+          Go to the markets
         </Link>{' '}
-        — your starter balance already works.
+        — your starter balance already works, on both shelves.
       </p>
     </AuthShell>
   );

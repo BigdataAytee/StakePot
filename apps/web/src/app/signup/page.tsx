@@ -62,7 +62,12 @@ export default function SignupPage() {
       }
 
       setToken(payload.accessToken);
-      router.push('/verify');
+      // Into the product, not onto a checkpoint. §2.1's Tier 0 is "friction-free
+      // entry" — the starter balance is already spendable on both shelves, and
+      // a code box between somebody and the thing they just signed up for reads
+      // as a wall whether or not it is one. Verification is invited from the
+      // header and required where money leaves; it is not the price of entry.
+      router.push('/markets');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'that signup did not go through');
       setBusy(false);

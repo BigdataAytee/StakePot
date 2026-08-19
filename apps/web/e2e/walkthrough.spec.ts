@@ -104,8 +104,13 @@ test.describe('the walkthrough', () => {
     await page.getByRole('checkbox').check();
     await page.getByRole('button', { name: 'Create account' }).click();
 
-    // Tier 0 lands on verification, which is where Tier 1 is explained.
-    await expect(page).toHaveURL(/\/verify/, { timeout: 15_000 });
+    // Tier 0 lands in the markets with money to spend, not on a checkpoint.
+    await expect(page).toHaveURL(/\/markets/, { timeout: 15_000 });
+    await expect(page.getByText('Balance').first()).toBeVisible();
+
+    // Verification is one tap away when they want it, and says up front that
+    // it is optional until money leaves.
+    await page.getByRole('link', { name: /Verify to unlock more/i }).click();
     await expect(page.getByRole('heading', { name: /Confirm your contact/i })).toBeVisible();
     await capture(page, 'verify-prompt', testInfo);
   });
