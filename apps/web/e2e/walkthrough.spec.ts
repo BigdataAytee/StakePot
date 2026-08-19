@@ -145,7 +145,7 @@ test.describe('the walkthrough', () => {
 
     // Tier 0 lands in the markets with money to spend, and nothing on the way
     // in asks it to prove a contact.
-    await expect(page).toHaveURL(/\/markets/, { timeout: 15_000 });
+    await expect(page).toHaveURL(/localhost:3000\/?$/, { timeout: 15_000 });
     await expect(page.getByRole('link', { name: /your balance/i })).toBeVisible();
     await expect(page.getByText(/verify/i)).toHaveCount(0);
     await capture(page, 'markets-tier0', testInfo);
@@ -170,7 +170,7 @@ test.describe('the walkthrough', () => {
     await capture(page, 'verify-code', testInfo);
     await page.getByRole('button', { name: 'Verify' }).click();
 
-    await expect(page).toHaveURL(/\/markets/, { timeout: 15_000 });
+    await expect(page).toHaveURL(/localhost:3000\/?$/, { timeout: 15_000 });
 
     // Starter balance plus the verification bonus, visible in the header.
     const me = await get<{ tier: number; available: string }>('/auth/me', token);
@@ -181,20 +181,19 @@ test.describe('the walkthrough', () => {
     await capture(page, 'markets-signed-in', testInfo);
   });
 
-  test('4 · both shelves are on the markets screen, and switchable', async ({ page }, testInfo) => {
+  test('4 · both shelves are on the board, and switchable', async ({ page }, testInfo) => {
     await signIn(page, email, password);
-    await page.goto('/markets');
-    await expect(page.getByRole('heading', { name: 'Official', exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Community', exact: true })).toBeVisible();
+    await page.goto('/');
     await expect(page.getByText(/naira close below/i)).toBeVisible();
     await expect(page.getByText(/BBNaija eviction/i)).toBeVisible();
     await capture(page, 'shelves', testInfo);
 
-    const shelf = page.getByRole('navigation', { name: 'Shelf' });
+    // The shelf lives on the board's pill row now. `/markets` was a second,
+    // worse copy of this screen — headed sections of the same cards — and it
+    // 301s here, so the filtering it carried is asserted where it actually is.
+    const shelf = page.getByRole('group', { name: 'Shelf' });
 
-    // Community alone. Two stacked sections and no control meant that on a
-    // phone one full shelf pushed the other off the screen, and the second read
-    // as missing rather than as further down.
+    // Community alone.
     await shelf.getByRole('link', { name: /^Community/ }).click();
     await expect(page).toHaveURL(/shelf=community/);
     await expect(page.getByText(/BBNaija eviction/i)).toBeVisible();
@@ -216,29 +215,29 @@ test.describe('the walkthrough', () => {
 
   test('4b · the shelf chips carry counts and are reachable with a thumb', async ({ page }) => {
     await signIn(page, email, password);
-    await page.goto('/markets');
+    await page.goto('/');
 
-    const chips = page.getByRole('navigation', { name: 'Shelf' }).getByRole('link');
+    const chips = page.getByRole('group', { name: 'Shelf' }).getByRole('link');
     await expect(chips).toHaveCount(3);
 
     // A count is what makes an empty shelf answerable without tapping into it.
     for (const chip of await chips.all()) {
       await expect(chip).toHaveText(/\d+$/);
       const box = await chip.boundingBox();
-      expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+      expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
     }
 
     // Deep-linkable, and the selected chip says so to a screen reader.
-    await page.goto('/markets?shelf=community');
+    await page.goto('/?shelf=community');
     await expect(
-      page.getByRole('navigation', { name: 'Shelf' }).getByRole('link', { name: /^Community/ }),
-    ).toHaveAttribute('aria-current', 'page');
+      page.getByRole('group', { name: 'Shelf' }).getByRole('link', { name: /^Community/ }),
+    ).toHaveAttribute('aria-current', 'true');
 
     // A shelf name that means nothing falls back to showing everything rather
     // than to an empty screen.
-    await page.goto('/markets?shelf=nonsense');
-    await expect(page.getByRole('heading', { name: 'Official', exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Community', exact: true })).toBeVisible();
+    await page.goto('/?shelf=nonsense');
+    await expect(page.getByText(/naira close below/i)).toBeVisible();
+    await expect(page.getByText(/BBNaija eviction/i)).toBeVisible();
   });
 
   test('5 · the ticket shows the chart, the argument bar and the money', async ({

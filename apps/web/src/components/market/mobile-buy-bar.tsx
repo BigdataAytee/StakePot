@@ -54,11 +54,12 @@ export function MobileBuyBar({
               key={outcome.id}
               type="button"
               onClick={() => onBuy(outcome)}
+              aria-label={`Buy ${outcome.label} at ${kobo(livePrices[outcome.id] ?? outcome.price)}`}
               className={`flex-1 rounded-lg py-3 text-md font-bold text-paper transition-transform active:scale-press ${
                 no ? 'bg-fall' : 'bg-rise'
               }`}
             >
-              Buy {outcome.label} {kobo(livePrices[outcome.id] ?? outcome.price)}
+              Buy {outcome.label}
             </button>
           );
         })}

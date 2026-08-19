@@ -15,7 +15,9 @@ export function MarketFooter() {
     <footer className="mt-6 border-t border-border">
       <div className={`px-4 py-6 sm:px-5 text-sm text-text-muted ${PAGE_WIDTH}`}>
         <nav aria-label="Site" className="flex flex-wrap gap-x-5 gap-y-2">
-          <FooterLink href="/markets">All markets</FooterLink>
+          {/* No "All markets": the board *is* the front door, so the link
+              pointed at a second, worse copy of the page the reader was
+              already on. `/markets` now redirects here. */}
           <FooterLink href="/create">Open a market</FooterLink>
           <FooterLink href="/leaderboard">Leaderboard</FooterLink>
           <FooterLink href="/rules">Rules</FooterLink>

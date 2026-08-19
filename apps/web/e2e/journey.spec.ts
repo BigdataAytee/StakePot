@@ -3,7 +3,7 @@ import { execSync } from 'node:child_process';
 import { expect, test } from '@playwright/test';
 
 import { resetAuthBudget } from './redis';
-import { enterStake, stakeConfirmed, submitStake } from './trade';
+import { enterStake, signInFromTrade, stakeConfirmed, submitStake } from './trade';
 
 /**
  * §5.1 step 14's end-to-end user journeys, in the browser the users get.
@@ -182,6 +182,55 @@ test.describe('the queued path', () => {
     // endpoint rather than by assuming.
     await stakeConfirmed(page);
   });
+});
+
+/**
+ * The path a stranger actually takes.
+ *
+ * Signing in used to be the end of this story rather than a step in it: the
+ * sheet said "Sign in to trade." in red, the sentence did nothing, and pressing
+ * the primary button set the same dead string. Somebody who had read a
+ * question, picked a side and typed an amount had made three decisions and been
+ * given no way to act on any of them.
+ *
+ * The three decisions are what this asserts. Not that a login form appears —
+ * that the market, the side and the *amount* all survive the round trip, and
+ * that the trade then fills. Losing the amount is the failure that would look
+ * like success in a screenshot.
+ */
+test('a signed-out visitor can sign in from the trade sheet and finish the stake', async ({
+  page,
+}) => {
+  const email = `signin${stamp}@example.com`;
+  const password = 'correct-horse-battery';
+  const account = await api<{ userId: string }>('/auth/signup', {
+    email,
+    password,
+    ageAttested: true,
+  });
+  sql(`UPDATE users SET tier = 1, "contactVerified" = true WHERE id = '${account.userId}'`);
+
+  // Deliberately no token in this browser: this is a stranger.
+  await page.goto(`/market/${marketId}`);
+  await enterStake(page, { amount: '1500' });
+
+  // The dead end is now a door, and it says where it goes.
+  await signInFromTrade(page);
+
+  // It carries the way back with it rather than dumping them on the front page.
+  await expect(page).toHaveURL(/\/login\?next=/);
+  await page.getByLabel('Email or phone').fill(email);
+  await page.getByLabel('Password', { exact: true }).fill(password);
+  await page.getByRole('button', { name: 'Log in' }).click();
+
+  // Same market, sheet open, and the amount they had typed still in it.
+  await expect(page).toHaveURL(new RegExp(`/market/${marketId}`), { timeout: 20_000 });
+  await expect(page.locator('#trade-amount')).toHaveValue('1500', { timeout: 20_000 });
+
+  // And it goes through, which is the only proof that the restored state is
+  // real rather than decorative.
+  await submitStake(page);
+  await stakeConfirmed(page);
 });
 
 test('the leaderboard renders and explains itself to a signed-out visitor', async ({ page }) => {

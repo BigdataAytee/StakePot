@@ -3,7 +3,7 @@ import Link from 'next/link';
 import type { MarketSummary } from '@/lib/api';
 import { STATE_LABEL, money } from '@/lib/format';
 import { binaryPair } from '@/lib/home';
-import { LivePercent } from './live-percent';
+import { LiveChanceGauge, LivePercent } from './live-percent';
 import { MarketIcon } from './market-icon';
 import { SideButton } from './side-button';
 import { WatchStar } from './watch-star';
@@ -12,10 +12,9 @@ import { WatchStar } from './watch-star';
  * One market in the grid.
  *
  * Two body shapes, because two kinds of question read differently. A Yes/No
- * market has a single number that is the whole story, so it gets that number
- * at 21px and a pair of full-width buttons. A market with candidates has no
- * such number, so it lists the leaders with their own prices and their own way
- * in.
+ * market has a single number that is the whole story, so it gets that number as
+ * a dial and a pair of full-width buttons. A market with candidates has no such
+ * number, so it lists the leaders with their own prices and their own way in.
  *
  * The card is an `<article>` rather than one big `<a>`: a link may not contain
  * the outcome buttons, and a div with a click handler is not a link at all.
@@ -48,17 +47,13 @@ export function MarketCard({ market }: { market: MarketSummary }) {
         </h3>
 
         {binary !== null && (
-          <div className="ml-auto shrink-0 text-center">
-            <LivePercent
-              marketId={market.id}
-              outcomeId={binary[0].id}
-              fallback={binary[0].price}
-              className="block text-xl font-bold"
-            />
-            <div className="text-[9.5px] font-semibold tracking-[.04em] text-text-muted">
-              CHANCE
-            </div>
-          </div>
+          <LiveChanceGauge
+            marketId={market.id}
+            outcomeId={binary[0].id}
+            fallback={binary[0].price}
+            size={62}
+            className="ml-auto"
+          />
         )}
       </div>
 

@@ -26,9 +26,15 @@ const SHEET_AMOUNT = '#trade-amount';
 const PANEL_REASON = 'Why? One line, optional.';
 const SHEET_REASON = 'One line. It goes on the thread with your position.';
 
-/** Which surface this viewport is showing. Waits for one of them to arrive. */
+/**
+ * Which surface this viewport is showing. Waits for one of them to arrive.
+ *
+ * Keyed off the panel being rendered rather than off a "Buy" button existing:
+ * signed out, the panel's primary action reads "Sign in to stake", so a wait
+ * for `/^Buy /` waits forever on the exact journey that most needs testing.
+ */
 async function surface(page: Page): Promise<'panel' | 'sheet'> {
-  await expect(page.getByRole('button', { name: /^Buy /i }).first()).toBeVisible();
+  await page.locator('aside[aria-label^="Trade "]').first().waitFor({ state: 'attached' });
   return (await page.locator(PANEL_AMOUNT).isVisible()) ? 'panel' : 'sheet';
 }
 
@@ -69,9 +75,41 @@ export async function submitStake(page: Page): Promise<void> {
  * surface is waited on for the thing it actually does.
  */
 export async function stakeConfirmed(page: Page, timeout = 30_000): Promise<void> {
-  if (await page.locator(PANEL_AMOUNT).isVisible()) {
-    await expect(page.locator(PANEL_AMOUNT)).toHaveValue('', { timeout });
+  // The sheet first, because on a laptop both can be on screen at once — the
+  // panel sits in the right column while a sheet opened from a card or from a
+  // returning sign-in covers it. The panel's field is empty either way, so
+  // checking it first would pass instantly and prove nothing.
+  if (await page.locator(SHEET_AMOUNT).isVisible()) {
+    await expect(page.locator(SHEET_AMOUNT)).toBeHidden({ timeout });
     return;
   }
-  await expect(page.locator(SHEET_AMOUNT)).toBeHidden({ timeout });
+  await expect(page.locator(PANEL_AMOUNT)).toHaveValue('', { timeout });
+}
+
+/**
+ * Whichever of the two surfaces is on screen — see `surface` above.
+ *
+ * Decided by which amount field is *visible*, not by which element carries the
+ * label. Both surfaces are in the DOM on both viewports — the panel is hidden
+ * with `display:none` below 860px, the sheet simply is not mounted until it
+ * opens — and a label query matches hidden elements happily, so asking for the
+ * label alone finds two and fails on strictness.
+ */
+async function tradeSurface(page: Page) {
+  return (await page.locator(SHEET_AMOUNT).isVisible())
+    ? page.getByRole('dialog')
+    : page.locator('aside[aria-label^="Trade "]');
+}
+
+/**
+ * Take the sign-in route out of a trade, from either surface.
+ *
+ * Scoped rather than page-wide because the prompt and the button exist in both
+ * the panel and the sheet, and a bare `getByText` matches whichever is merely
+ * in the DOM as readily as the one the person is looking at.
+ */
+export async function signInFromTrade(page: Page): Promise<void> {
+  const scope = await tradeSurface(page);
+  await expect(scope.getByText(/You need an account to stake/)).toBeVisible();
+  await scope.getByRole('button', { name: 'Sign in to stake' }).click();
 }

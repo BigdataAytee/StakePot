@@ -73,6 +73,26 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   await prisma.prizeRun.deleteMany();
   await prisma.leaderboardSnapshot.deleteMany();
 
+  /*
+   * §2.18's two evidence tables, which cascade from `users`.
+   *
+   * They are append-only at the database level, so the cascade from the line
+   * below is a DELETE the trigger refuses — and it refuses it correctly: an
+   * access log a caller can erase is not a log. The fixture gets the same
+   * exception the ledger gets, and for the same reason.
+   *
+   * This did not surface when the rule landed, because no test had yet written
+   * a consent for a user to cascade into. It surfaced the moment a signup
+   * journey ran against this database, which is the honest lesson: a
+   * constraint on a table nothing writes to is a constraint nothing has
+   * tested.
+   */
+  for (const table of ['pii_access_log', 'consents']) {
+    await prisma.$executeRawUnsafe(`ALTER TABLE ${table} DISABLE TRIGGER ${table}_append_only`);
+    await prisma.$executeRawUnsafe(`DELETE FROM ${table}`);
+    await prisma.$executeRawUnsafe(`ALTER TABLE ${table} ENABLE TRIGGER ${table}_append_only`);
+  }
+
   await prisma.wallet.updateMany({ data: { available: 0, escrowed: 0 } });
   await prisma.user.deleteMany({ where: { status: { not: 'system' } } });
   await prisma.reconciliationRun.deleteMany();

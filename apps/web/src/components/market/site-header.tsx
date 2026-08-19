@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+import { AccountMenu } from '@/components/market/account-menu';
 import { money } from '@/lib/format';
 import { PAGE_WIDTH } from '@/lib/layout';
 import { useSession } from '@/lib/session';
@@ -218,27 +219,15 @@ function CashChip() {
   return (
     <div className="flex shrink-0 items-center gap-1">
       {/*
-        §2.18's account screen — sessions, consents, referrals. Reachable from
-        every screen, because the moment somebody wants it is the moment they
-        think something is wrong, and hunting for it is not what that moment
-        should involve.
+        Everything that is not one of the five tabs — the account screen, the
+        studio, the wizard, support, and the ops console for staff.
+
+        It used to be a bare link to `/account`, hidden below `sm`, which is the
+        breakpoint most of this traffic never reaches. So on a phone there was
+        no route at all to two thirds of the product. The menu is on every
+        width for that reason.
       */}
-      <Link
-        href="/account"
-        aria-label="Your account"
-        className="hidden size-9 items-center justify-center rounded-md text-text-muted hover:bg-chip hover:text-text sm:flex"
-      >
-        <svg viewBox="0 0 20 20" aria-hidden className="size-[18px]">
-          <circle cx="10" cy="6.5" r="3.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
-          <path
-            d="M3.8 17c.7-3.3 3.2-5 6.2-5s5.5 1.7 6.2 5"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-          />
-        </svg>
-      </Link>
+      <AccountMenu me={me} />
 
       {/*
         Named for screen readers, and for anything else that has to find it.

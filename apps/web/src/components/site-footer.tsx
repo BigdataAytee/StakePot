@@ -19,7 +19,7 @@ export function SiteFooter() {
     <footer className="mt-16 border-t border-border pt-8 text-sm">
       <nav aria-label="Site" className="flex flex-wrap gap-x-6 gap-y-3">
         <FooterLink href="/welcome">About</FooterLink>
-        <FooterLink href="/markets">Markets</FooterLink>
+        <FooterLink href="/create">Open a market</FooterLink>
         <FooterLink href="/leaderboard">Leaderboard</FooterLink>
         <FooterLink href="/rules">Rules</FooterLink>
         <FooterLink href="/faq">FAQ</FooterLink>

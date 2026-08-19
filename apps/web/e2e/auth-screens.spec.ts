@@ -95,7 +95,7 @@ test.describe('the auth screens', () => {
 
     // Straight into the product, and nothing asks them to prove anything on the
     // way. Tier 0 has a spendable balance and both shelves.
-    await expect(page).toHaveURL(/\/markets/, { timeout: 20_000 });
+    await expect(page).toHaveURL(/localhost:3000\/?$/, { timeout: 20_000 });
     await expect(page.getByRole('link', { name: /your balance/i })).toBeVisible();
     await expect(page.getByText(/verify/i)).toHaveCount(0);
   });

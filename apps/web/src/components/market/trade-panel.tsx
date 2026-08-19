@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { MarketDetail, OutcomeView } from '@/lib/api';
 import { closedReason, exactMoney, kobo, money, percent } from '@/lib/format';
 import { binaryPair } from '@/lib/home';
+import { rememberTrade, signInHref } from '@/lib/pending-trade';
 import { placeTrade } from '@/lib/place-trade';
 import { blockerFor, useTradeAllowance } from '@/lib/trade-allowance';
 import { usePublicConfig } from '@/lib/public-config';
@@ -87,12 +88,19 @@ export function TradePanel({
     setAmount(String(Math.round(((Number.isFinite(current) ? current : 0) + step) * 100) / 100));
   }
 
+  /** Same dead end the sheet had, and the same way out of it. */
+  function signIn(route: '/login' | '/signup'): void {
+    const pending = { marketId: market.id, outcomeId: outcome.id, amount };
+    rememberTrade(pending);
+    router.push(signInHref(pending, route));
+  }
+
   async function submit() {
-    if (preview === null) return;
     if (token === null) {
-      setError('Sign in to trade.');
+      signIn('/login');
       return;
     }
+    if (preview === null) return;
     setSubmitting(true);
     setQueued(false);
     setError(null);
@@ -119,7 +127,14 @@ export function TradePanel({
   }
 
   return (
-    <aside className="hidden rounded-xl bg-chip p-4 min-[860px]:sticky min-[860px]:top-[76px] min-[860px]:block">
+    <aside
+      // Named the same way the sheet is. They are the two halves of one
+      // control — the same trade, drawn for the screen that is asking — and
+      // anything reaching for "the trade surface" should not have to know
+      // which viewport it is on.
+      aria-label={`Trade ${outcome.label}`}
+      className="hidden rounded-xl bg-chip p-4 min-[860px]:sticky min-[860px]:top-[76px] min-[860px]:block"
+    >
       <p className="mb-2.5 text-[13.5px] font-semibold">{outcome.label}</p>
 
       {binary !== null && (
@@ -158,14 +173,26 @@ export function TradePanel({
             <label className="sr-only" htmlFor="panel-amount">
               How much are you putting in?
             </label>
-            <input
-              id="panel-amount"
-              inputMode="decimal"
-              value={amount}
-              onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
-              placeholder="₦0"
-              className="h-[42px] min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 font-mono text-lg font-semibold outline-none focus:border-brand"
-            />
+            <div className="relative min-w-0 flex-1">
+              <input
+                id="panel-amount"
+                inputMode="decimal"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
+                placeholder="₦0"
+                className="h-[42px] w-full rounded-lg border border-border bg-surface px-3 pr-9 font-mono text-lg font-semibold outline-none focus:border-brand"
+              />
+              {amount !== '' && (
+                <button
+                  type="button"
+                  onClick={() => setAmount('')}
+                  aria-label="Clear the amount"
+                  className="absolute right-0.5 top-1/2 grid size-9 -translate-y-1/2 place-items-center rounded-md text-text-muted hover:bg-chip hover:text-text"
+                >
+                  ×
+                </button>
+              )}
+            </div>
             {QUICK.map((step) => (
               <button
                 key={step}
@@ -225,19 +252,45 @@ export function TradePanel({
 
           {error !== null && <p className="mt-2 text-sm text-fall">{error}</p>}
 
+          {token === null && (
+            <p className="mt-2 rounded-md bg-surface px-3 py-2 text-sm text-text-muted">
+              You need an account to stake.{' '}
+              <button
+                type="button"
+                onClick={() => signIn('/login')}
+                className="font-bold text-brand underline"
+              >
+                Sign in
+              </button>{' '}
+              or{' '}
+              <button
+                type="button"
+                onClick={() => signIn('/signup')}
+                className="font-bold text-brand underline"
+              >
+                create one
+              </button>
+              . We&apos;ll bring you back here with this amount ready.
+            </p>
+          )}
+
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={submitting || preview === null || blocker?.hard === true}
+            disabled={
+              submitting || (token !== null && (preview === null || blocker?.hard === true))
+            }
             className={`mt-2 w-full rounded-lg py-3 text-md font-bold text-paper transition-transform active:scale-press disabled:opacity-45 ${tone}`}
           >
-            {queued
-              ? 'Order placed — confirming…'
-              : submitting
-                ? 'Placing…'
-                : preview === null
-                  ? `Buy ${outcome.label}`
-                  : `Buy ${outcome.label} · ${exactMoney(preview.total)}`}
+            {token === null
+              ? 'Sign in to stake'
+              : queued
+                ? 'Order placed — confirming…'
+                : submitting
+                  ? 'Placing…'
+                  : preview === null
+                    ? `Buy ${outcome.label}`
+                    : `Buy ${outcome.label} · ${exactMoney(preview.total)}`}
           </button>
         </>
       )}

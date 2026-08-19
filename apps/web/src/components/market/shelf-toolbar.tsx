@@ -23,7 +23,16 @@ const SHELVES = [
  * filtered view is a thing somebody can send to a friend and the back button
  * does what the back button is for.
  */
-export function ShelfToolbar({ shown, total }: { shown: number; total: number }) {
+export function ShelfToolbar({
+  shown,
+  total,
+  counts,
+}: {
+  shown: number;
+  total: number;
+  /** How many markets each shelf holds, before the shelf filter is applied. */
+  counts: Record<'all' | 'official' | 'community', number>;
+}) {
   const params = useSearchParams();
   const sort = params.get('sort') ?? SORTS[0].key;
   const shelf = params.get('shelf') ?? 'all';
@@ -50,6 +59,14 @@ export function ShelfToolbar({ shown, total }: { shown: number; total: number })
           {SHELVES.map((option) => (
             <Pill key={option.key} href={href('shelf', option.key)} on={option.key === shelf}>
               {option.label}
+              {/* The count answers the question the bare label makes you tap to
+                  find out. A chip reading "Community 0" is an answer; a chip
+                  reading "Community" that leads to an empty screen is a
+                  wasted trip. Carried over from the retired /markets page,
+                  which is where this originally earned its place. */}
+              <span className="ml-1 font-mono text-xs tabular-nums opacity-70">
+                {counts[option.key]}
+              </span>
             </Pill>
           ))}
         </span>

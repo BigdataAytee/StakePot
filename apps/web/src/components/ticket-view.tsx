@@ -7,7 +7,9 @@ import Link from 'next/link';
 
 import { ArgumentBar } from '@/components/argument-bar';
 import { LivingNumber } from '@/components/living-number';
-import { LivePercent } from '@/components/market/live-percent';
+import { LiveChanceGauge, LivePercent } from '@/components/market/live-percent';
+import { binaryPair } from '@/lib/home';
+import { takeTrade } from '@/lib/pending-trade';
 import { MarketIcon } from '@/components/market/market-icon';
 import { SiteHeader } from '@/components/market/site-header';
 import { ChallengeButton } from '@/components/market/challenge-button';
@@ -89,7 +91,12 @@ export function TicketView({
     // trading, drops the instruction rather than opening a ticket that cannot
     // be filled.
     if (outcome !== undefined && initial.state === 'active') {
-      setIntent({ outcome, side: 'buy' });
+      // If they were sent to sign in from a half-composed trade, the amount
+      // they had typed is waiting — put it back rather than making them decide
+      // it a second time.
+      const pending = takeTrade(initial.id);
+      const amount = pending?.outcomeId === outcome.id ? pending.amount : '';
+      setIntent({ outcome, side: 'buy', ...(amount === '' ? {} : { amount }) });
       setPicked(outcome.id);
     }
     router.replace(pathname, { scroll: false });
@@ -181,6 +188,8 @@ export function TicketView({
   const selected =
     initial.outcomes.find((row) => row.id === picked) ?? headline ?? initial.outcomes[0];
   const selectedPrice = selected === undefined ? 0 : percent(prices[selected.id] ?? selected.price);
+  /** The Yes side, when there is one — the dial's subject. */
+  const dial = binaryPair(initial)?.[0] ?? null;
 
   return (
     <>
@@ -196,13 +205,42 @@ export function TicketView({
           ← All markets
         </Link>
 
-        <div className="mb-1.5 flex items-start gap-3.5">
+        {/*
+          The question, then the things you can do to it.
+
+          On a phone the actions take their own line. In one row they were
+          three shrink-resistant controls against a `flex-1` heading with no
+          minimum, so the heading lost every time — at 390px the question wrapped
+          one word per line down a column about eight characters wide, which is
+          the least readable possible rendering of the single most important
+          sentence on the screen. `min-w-0` alone would not save it; the actions
+          have to leave the row.
+        */}
+        <div className="mb-1.5 flex flex-wrap items-start gap-x-3.5 gap-y-2.5">
           <MarketIcon id={initial.id} question={initial.question} size={56} radius={12} />
-          <h1 className="flex-1 text-xl font-bold leading-[1.25]">{initial.question}</h1>
-          <WatchStar marketId={initial.id} question={initial.question} size={34} />
-          <ShareSheet marketId={initial.id} question={initial.question} />
-          <ChallengeButton marketId={initial.id} />
+          <h1 className="min-w-0 flex-1 text-xl font-bold leading-[1.25]">{initial.question}</h1>
+          <div className="flex w-full items-center gap-2 sm:w-auto">
+            <WatchStar marketId={initial.id} question={initial.question} size={34} />
+            <ShareSheet marketId={initial.id} question={initial.question} />
+            <ChallengeButton marketId={initial.id} />
+          </div>
         </div>
+
+        {/* The headline probability, on the one screen where a reader has come
+            specifically to look at it. Only for Yes/No: a candidate market has
+            no single number to put on a dial, and picking the leader's would
+            invent a headline the question does not have. */}
+        {dial !== null && (
+          <div className="mb-1 flex justify-end min-[860px]:justify-start">
+            <LiveChanceGauge
+              marketId={initial.id}
+              outcomeId={dial.id}
+              fallback={dial.price}
+              size={90}
+              label={`${dial.label.toLowerCase()} chance`}
+            />
+          </div>
+        )}
 
         {/* §2.14c's byline. A community market is somebody's promise, so it
             carries their name and what their record has earned them. */}

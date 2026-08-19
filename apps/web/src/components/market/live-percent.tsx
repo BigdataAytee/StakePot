@@ -3,6 +3,7 @@
 import { LivingNumber } from '@/components/living-number';
 import { percent } from '@/lib/format';
 import { useLivePrices } from '@/store/live-prices';
+import { ChanceGauge } from './chance-gauge';
 
 /**
  * A market's live percentage, wherever one appears on a card or a list.
@@ -35,4 +36,40 @@ export function LivePercent({
   const value = Math.round(percent(live ?? fallback));
 
   return <LivingNumber value={value} suffix="%" className={className} />;
+}
+
+/**
+ * The same live figure, drawn as §7.2's dial instead of as digits.
+ *
+ * Split from `LivePercent` rather than bolted onto it with a `variant` prop:
+ * the two are read in different places for different reasons — a multi-outcome
+ * row wants a number it can align in a column, a binary card wants a shape — and
+ * a component that renders either depending on a flag is two components sharing
+ * a name.
+ */
+export function LiveChanceGauge({
+  marketId,
+  outcomeId,
+  fallback,
+  size,
+  label,
+  className,
+}: {
+  marketId: string;
+  outcomeId: string;
+  fallback: string;
+  size?: number;
+  label?: string;
+  className?: string;
+}) {
+  const live = useLivePrices((state) => state.markets[marketId]?.prices[outcomeId]);
+
+  return (
+    <ChanceGauge
+      value={percent(live ?? fallback)}
+      {...(size === undefined ? {} : { size })}
+      {...(label === undefined ? {} : { label })}
+      {...(className === undefined ? {} : { className })}
+    />
+  );
 }

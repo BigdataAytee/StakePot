@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { API_URL } from '@/lib/api';
 import { AuthShell } from '@/components/auth-shell';
 import { PasswordField } from '@/components/password-field';
+import { safeNext } from '@/lib/pending-trade';
 import { setToken } from '@/lib/session';
 
 /** §2.1 — "Login: password or OTP; JWT sessions." Password today. */
@@ -45,7 +46,18 @@ export default function LoginPage() {
       }
 
       setToken(payload.accessToken);
-      router.push('/markets');
+      /*
+       * Back where they came from, when they were sent here from somewhere.
+       *
+       * `?next=` is read off `window.location` inside the handler rather than
+       * with `useSearchParams`, which would drag this page into a Suspense
+       * boundary for a value only ever needed on submit. It goes through
+       * `safeNext` because it arrives from the query string: an unchecked
+       * redirect target on a login page is an open redirect, and the moment
+       * after authentication is exactly when somebody will follow it.
+       */
+      const next = safeNext(new URLSearchParams(window.location.search).get('next'));
+      router.push(next ?? '/');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'those details did not match');
       setBusy(false);

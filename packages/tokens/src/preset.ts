@@ -132,11 +132,21 @@ export const tailwindPreset: Partial<Config> = {
           '0%': { color: themed('fall').replace('<alpha-value>', '1') },
           '100%': { color: 'inherit' },
         },
+        // The trade sheet's amount field, acknowledging a quick-add chip.
+        // A chip adds to what is already there, so the only evidence a tap
+        // landed is that the digits changed — and digits changing by the same
+        // step twice looks a lot like nothing happening. This is the receipt.
+        'chip-tick': {
+          '0%': { transform: 'scale(1)' },
+          '35%': { transform: 'scale(1.018)' },
+          '100%': { transform: 'scale(1)' },
+        },
       },
       animation: {
         pulse: 'pulse 1.4s infinite',
         'tick-up': `tick-up ${motion.priceTickMs}ms ${motion.ease}`,
         'tick-down': `tick-down ${motion.priceTickMs}ms ${motion.ease}`,
+        'chip-tick': `chip-tick ${motion.priceTickMs}ms ${motion.ease}`,
       },
     },
   },

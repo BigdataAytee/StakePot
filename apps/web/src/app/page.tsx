@@ -116,7 +116,15 @@ export default async function MarketsHome({
         )}
 
         <Suspense fallback={<div className="h-[46px]" />}>
-          <ShelfToolbar shown={ordered.length} total={open.length} />
+          <ShelfToolbar
+            shown={ordered.length}
+            total={open.length}
+            counts={{
+              all: open.length,
+              official: open.filter((market) => market.shelf === 'official').length,
+              community: open.filter((market) => market.shelf === 'community').length,
+            }}
+          />
         </Suspense>
 
         <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-3.5 pb-10 pt-3.5">

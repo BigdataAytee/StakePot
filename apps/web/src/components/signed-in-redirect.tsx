@@ -18,7 +18,7 @@ export function SignedInRedirect() {
   const router = useRouter();
 
   useEffect(() => {
-    if (getToken() !== null) router.replace('/markets');
+    if (getToken() !== null) router.replace('/');
   }, [router]);
 
   return null;

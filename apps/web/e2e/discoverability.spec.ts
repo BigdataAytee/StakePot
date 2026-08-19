@@ -16,7 +16,6 @@ test.describe('discoverability', () => {
   test('every public page names itself in its title', async ({ page }) => {
     const pages: [string, RegExp][] = [
       ['/', /StakeAm/],
-      ['/markets', /^Markets · StakeAm$/],
       ['/leaderboard', /^Leaderboard · StakeAm$/],
       ['/rules', /^Rules · StakeAm$/],
       ['/faq', /^FAQ · StakeAm$/],
@@ -58,7 +57,7 @@ test.describe('discoverability', () => {
     expect(response.ok()).toBe(true);
     const body = await response.text();
 
-    for (const path of ['/markets', '/leaderboard', '/faq', '/privacy', '/rules']) {
+    for (const path of ['/leaderboard', '/faq', '/privacy', '/rules']) {
       expect(body, `${path} missing from the sitemap`).toContain(`${path}</loc>`);
     }
     // A market is what somebody actually searches for. Listing only the shelf
@@ -72,7 +71,9 @@ test.describe('discoverability', () => {
 
     await expect(page.getByRole('heading', { name: /nothing here/i })).toBeVisible();
     await page.getByRole('link', { name: 'Open markets' }).click();
-    await expect(page).toHaveURL(/\/markets/);
+    // The board is the front page now — `/markets` was a second copy of it and
+    // 301s here.
+    await expect(page).toHaveURL(/localhost:3000\/?$/);
   });
 
   test('the legal and help pages are reachable without typing a URL', async ({ page }) => {
@@ -119,7 +120,7 @@ test.describe('discoverability', () => {
   test('a shared market link previews as the question, with an image that has alt text', async ({
     page,
   }) => {
-    await page.goto('/markets');
+    await page.goto('/');
     const first = page.locator('a[href^="/market/"]').first();
     await expect(first).toBeVisible();
     await first.click();

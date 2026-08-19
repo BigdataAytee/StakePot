@@ -2,12 +2,14 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowUpDown, X } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
 import type { OutcomeView } from '@/lib/api';
 
 import { exactMoney, kobo, money, percent } from '@/lib/format';
 import { placeTrade } from '@/lib/place-trade';
+import { rememberTrade, signInHref } from '@/lib/pending-trade';
 import { blockerFor, useTradeAllowance } from '@/lib/trade-allowance';
 import { usePublicConfig } from '@/lib/public-config';
 import { costOfShares, quote } from '@/lib/trade-quote';
@@ -40,6 +42,12 @@ export interface TradeIntent {
   side: 'buy' | 'sell';
   /** Shares held, when selling. */
   held?: string;
+  /**
+   * Pre-filled amount, used to restore a trade somebody was composing before
+   * they were sent to sign in. Absent everywhere else, because a sheet that
+   * opens with a number already in it has made a decision on their behalf.
+   */
+  amount?: string;
 }
 
 /**
@@ -71,6 +79,7 @@ export function TradeSheet({
   onFilled: () => void;
 }) {
   const config = usePublicConfig();
+  const router = useRouter();
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
@@ -84,14 +93,25 @@ export function TradeSheet({
   /** The queue took it but has not executed it yet — §11's "order placed". */
   const [queued, setQueued] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Bumped on every chip press so the field can acknowledge it.
+   *
+   * A counter rather than a boolean: two presses of the same chip are two
+   * events, and a boolean that is already true cannot restart an animation —
+   * which is exactly the case where the feedback matters most, because the
+   * amount changed by the same step twice and the digits are the only other
+   * evidence.
+   */
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     if (intent === null) return;
     setSide(intent.side);
     setMode('amount');
-    setAmount('');
+    setAmount(intent.amount ?? '');
     setQueued(false);
     setError(null);
+    setTick(0);
   }, [intent]);
 
   const outcome = intent?.outcome ?? null;
@@ -142,10 +162,24 @@ export function TradeSheet({
           ? 'bg-fall'
           : 'bg-brand';
 
+  /**
+   * Leave for the sign-in screen, and leave a note.
+   *
+   * Both the sentence above the button and the button itself come here when
+   * there is no session, because a signed-out person pressing "Stake am" has
+   * said exactly what they want and deserves the flow rather than a refusal.
+   */
+  function signIn(route: '/login' | '/signup'): void {
+    if (outcome === null) return;
+    const pending = { marketId: market.id, outcomeId: outcome.id, amount };
+    rememberTrade(pending);
+    router.push(signInHref(pending, route));
+  }
+
   async function submit(): Promise<void> {
     if (outcome === null || preview === null) return;
     if (token === null) {
-      setError('Sign in to trade.');
+      signIn('/login');
       return;
     }
 
@@ -253,15 +287,36 @@ export function TradeSheet({
               )}
             </div>
 
-            <input
-              id="trade-amount"
-              inputMode="decimal"
-              value={amount}
-              onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
-              placeholder="0"
-              disabled={closed}
-              className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-3 font-mono text-xl tabular-nums outline-none focus:border-brand focus-visible:ring-1 focus-visible:ring-brand"
-            />
+            <div className="relative mt-1">
+              <input
+                id="trade-amount"
+                inputMode="decimal"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
+                placeholder="0"
+                disabled={closed}
+                // `key` on the tick restarts the flash: an animation already
+                // running does not replay, and the third tap of ₦500 is the
+                // one that most needs to look like it landed.
+                key={tick}
+                className={`w-full rounded-md border bg-surface px-3 py-3 pr-12 font-mono text-xl tabular-nums outline-none focus:border-brand focus-visible:ring-1 focus-visible:ring-brand ${
+                  tick > 0 ? 'motion-safe:animate-chip-tick border-brand' : 'border-border'
+                }`}
+              />
+              {amount !== '' && !closed && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAmount('');
+                    setTick(0);
+                  }}
+                  aria-label="Clear the amount"
+                  className="absolute right-1 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-md text-text-muted hover:bg-chip hover:text-text"
+                >
+                  <X size={16} />
+                </button>
+              )}
+            </div>
 
             {side === 'buy' && mode === 'amount' && (
               <div className="mt-2 flex gap-2">
@@ -270,10 +325,20 @@ export function TradeSheet({
                     key={chip}
                     type="button"
                     disabled={closed}
-                    onClick={() => setAmount(String(chip))}
+                    // Adds rather than replaces. A row of chips that each
+                    // overwrite the field can only ever express four amounts;
+                    // adding lets four chips reach any multiple of ₦500, which
+                    // is how people actually arrive at a number — ₦500 twice
+                    // and a ₦1k is ₦2,000, and nobody had to open a keyboard.
+                    onClick={() => {
+                      const current = Number.parseFloat(amount);
+                      const next = (Number.isFinite(current) ? current : 0) + chip;
+                      setAmount(String(Math.round(next * 100) / 100));
+                      setTick((count) => count + 1);
+                    }}
                     className="h-11 flex-1 rounded-md border border-border bg-surface font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
                   >
-                    ₦{chip >= 1000 ? `${chip / 1000}k` : chip}
+                    +₦{chip >= 1000 ? `${chip / 1000}k` : chip}
                   </button>
                 ))}
               </div>
@@ -400,21 +465,60 @@ export function TradeSheet({
 
             {error !== null && <p className="mt-3 text-sm text-fall">{error}</p>}
 
+            {/*
+              The signed-out prompt. It was a red sentence set by a failed
+              submit — the colour of a refusal, the behaviour of nothing at
+              all — so it read as an error the person had caused and offered
+              no way out of it. It is now stated before they press anything,
+              and both routes out of it are one tap.
+            */}
+            {token === null && !closed && (
+              <p className="mt-3 rounded-md bg-chip px-3 py-2.5 text-sm text-text-muted">
+                You need an account to stake.{' '}
+                <button
+                  type="button"
+                  onClick={() => signIn('/login')}
+                  className="font-bold text-brand underline"
+                >
+                  Sign in
+                </button>{' '}
+                or{' '}
+                <button
+                  type="button"
+                  onClick={() => signIn('/signup')}
+                  className="font-bold text-brand underline"
+                >
+                  create one
+                </button>
+                . We&apos;ll bring you back here with this amount ready.
+              </p>
+            )}
+
             <button
               type="button"
               onClick={() => void submit()}
-              disabled={closed || submitting || preview === null || blocker?.hard === true}
+              disabled={
+                closed ||
+                submitting ||
+                // Signed out, the button is a sign-in link in disguise, so it
+                // must not inherit the quote's disabled state: there is nothing
+                // to quote until they have an account, and a greyed-out button
+                // is how the old dead end looked.
+                (token !== null && (preview === null || blocker?.hard === true))
+              }
               className={`mt-4 h-12 w-full rounded-lg text-md font-bold text-paper transition-transform active:scale-press disabled:opacity-45 ${tone}`}
             >
               {closed
                 ? `Trading is ${market.state === 'resolved' ? 'over' : 'frozen'}`
-                : queued
-                  ? 'Order placed — confirming…'
-                  : submitting
-                    ? 'Placing…'
-                    : side === 'buy'
-                      ? 'Stake am'
-                      : 'Sell shares'}
+                : token === null
+                  ? 'Sign in to stake'
+                  : queued
+                    ? 'Order placed — confirming…'
+                    : submitting
+                      ? 'Placing…'
+                      : side === 'buy'
+                        ? 'Stake am'
+                        : 'Sell shares'}
             </button>
           </motion.div>
         </>

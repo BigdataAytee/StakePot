@@ -8,6 +8,7 @@ import { API_URL } from '@/lib/api';
 import { AuthShell } from '@/components/auth-shell';
 import { PasswordField } from '@/components/password-field';
 import { money } from '@/lib/format';
+import { safeNext } from '@/lib/pending-trade';
 import { setToken } from '@/lib/session';
 import { usePublicConfig } from '@/lib/public-config';
 
@@ -78,7 +79,18 @@ export default function SignupPage() {
       // a code box between somebody and the thing they just signed up for reads
       // as a wall whether or not it is one. Verification is invited from the
       // header and required where money leaves; it is not the price of entry.
-      router.push('/markets');
+      /*
+       * Back where they came from, when they were sent here from somewhere.
+       *
+       * `?next=` is read off `window.location` inside the handler rather than
+       * with `useSearchParams`, which would drag this page into a Suspense
+       * boundary for a value only ever needed on submit. It goes through
+       * `safeNext` because it arrives from the query string: an unchecked
+       * redirect target on a login page is an open redirect, and the moment
+       * after authentication is exactly when somebody will follow it.
+       */
+      const next = safeNext(new URLSearchParams(window.location.search).get('next'));
+      router.push(next ?? '/');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'that signup did not go through');
       setBusy(false);

@@ -19,12 +19,15 @@ export function LivingNumber({
   decimals = 0,
   suffix = '',
   className = '',
+  style,
   durationMs = 250,
 }: {
   value: number;
   decimals?: number;
   suffix?: string;
   className?: string;
+  /** For sizes a utility class cannot express — see the chance gauge. */
+  style?: React.CSSProperties;
   durationMs?: number;
 }) {
   const [shown, setShown] = useState(value);
@@ -68,6 +71,7 @@ export function LivingNumber({
   return (
     <span
       className={`font-mono tabular-nums transition-colors duration-tick ${tint} ${className}`}
+      style={style}
       aria-live="off"
     >
       {shown.toFixed(decimals)}
