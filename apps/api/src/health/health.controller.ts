@@ -26,12 +26,24 @@ export class HealthController {
 @Controller()
 export class RootController {
   @Get()
-  root(): { service: string; status: string; app: string; health: string } {
+  root(): { service: string; status: string; app: string; health: string; commit: string } {
     return {
       service: 'stakeam-api',
       status: 'This is the StakeAm API, not the app.',
       app: env.WEB_ORIGIN,
       health: '/health',
+      // Which build is actually answering. "The fix is not live" and "the fix
+      // did not work" look identical from outside, and telling them apart meant
+      // guessing from which responses had changed. Render sets
+      // RENDER_GIT_COMMIT on every deploy; a bare commit id names the tree
+      // without describing anything about it.
+      commit: commitId(),
     };
   }
+}
+
+/** The deployed commit, or an honest admission that nothing said. */
+function commitId(): string {
+  const commit = process.env['RENDER_GIT_COMMIT'] ?? process.env['GIT_COMMIT'] ?? '';
+  return commit.length === 0 ? 'unknown' : commit.slice(0, 7);
 }
