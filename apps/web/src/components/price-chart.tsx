@@ -2,6 +2,7 @@
 
 import {
   AreaSeries,
+  CandlestickSeries,
   LineSeries,
   createChart,
   createSeriesMarkers,
@@ -12,10 +13,11 @@ import {
 } from 'lightweight-charts';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { outcomeColour, semantic, type SemanticRole } from '@stakeam/tokens';
+import { outcomeColour, palette, semantic, type SemanticRole } from '@stakeam/tokens';
 
 import type { Annotation, OutcomeView, PricePoint } from '@/lib/api';
 import { percent } from '@/lib/format';
+import { bucketFor, toCandles } from '@/lib/candles';
 
 const TIMEFRAMES = ['1H', '6H', '1D', '1W', 'ALL'] as const;
 export type Timeframe = (typeof TIMEFRAMES)[number];
@@ -57,11 +59,22 @@ export function PriceChart({
 }) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
-  const seriesByOutcome = useRef(new Map<string, ISeriesApi<'Area'> | ISeriesApi<'Line'>>());
+  const seriesByOutcome = useRef(
+    new Map<string, ISeriesApi<'Area'> | ISeriesApi<'Line'> | ISeriesApi<'Candlestick'>>(),
+  );
   const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const [isolated, setIsolated] = useState<string | null>(null);
 
   const binary = outcomes.length === 2;
+
+  /**
+   * §7.2a's power-user toggle. Candles need one series to be about — a
+   * multi-line overlay of candlesticks is unreadable — so they are offered on
+   * binary markets and on an isolated candidate, and nowhere else.
+   */
+  const [style, setStyle] = useState<'area' | 'candles'>('area');
+  const candleable = binary || isolated !== null;
+  const candles = style === 'candles' && candleable;
   // Binary charts tell the story of the first outcome; the second is its mirror.
   const plotted = useMemo(() => (binary ? outcomes.slice(0, 1) : outcomes), [binary, outcomes]);
 
@@ -100,8 +113,30 @@ export function PriceChart({
       formatter: (p: number) => `${p.toFixed(1)}%`,
     };
 
-    const map = new Map<string, ISeriesApi<'Area'> | ISeriesApi<'Line'>>();
-    for (const outcome of plotted) {
+    const map = new Map<
+      string,
+      ISeriesApi<'Area'> | ISeriesApi<'Line'> | ISeriesApi<'Candlestick'>
+    >();
+
+    // Candles are about one outcome, so there is one series rather than a map
+    // of them — the target is the isolated candidate, or the binary market's
+    // headline side.
+    const target = isolated ?? plotted[0]?.id;
+    if (candles && target !== undefined) {
+      map.set(
+        target,
+        created.addSeries(CandlestickSeries, {
+          upColor: palette.green,
+          downColor: palette.red,
+          borderVisible: false,
+          wickUpColor: palette.green,
+          wickDownColor: palette.red,
+          priceFormat,
+        }),
+      );
+    }
+
+    for (const outcome of candles ? [] : plotted) {
       const colour = colourFor(outcome, theme);
       map.set(
         outcome.id,
@@ -137,8 +172,9 @@ export function PriceChart({
       seriesByOutcome.current = new Map();
       markers.current = null;
     };
-    // Rebuilt when the market's outcome set changes — that is a different chart.
-  }, [plotted, binary]);
+    // Rebuilt when the outcome set or the series style changes — either one is
+    // a different chart, not a redraw of this one.
+  }, [plotted, binary, candles, isolated]);
 
   useEffect(() => {
     const map = seriesByOutcome.current;
@@ -147,7 +183,23 @@ export function PriceChart({
     let earliest: number | null = null;
     let latest: number | null = null;
 
-    for (const outcome of plotted) {
+    if (candles) {
+      const target = isolated ?? plotted[0]?.id;
+      const series = target === undefined ? undefined : map.get(target);
+      if (series !== undefined) {
+        const data = toCandles(
+          points.filter((p) => p.outcomeId === target),
+          bucketFor(timeframe),
+        );
+        series.setData(data as Parameters<typeof series.setData>[0]);
+        if (data.length > 0) {
+          earliest = data[0]!.time;
+          latest = data[data.length - 1]!.time;
+        }
+      }
+    }
+
+    for (const outcome of candles ? [] : plotted) {
       const series = map.get(outcome.id);
       if (series === undefined) continue;
 
@@ -229,7 +281,7 @@ export function PriceChart({
       );
       chart.current?.timeScale().fitContent();
     }
-  }, [points, annotations, plotted, isolated]);
+  }, [points, annotations, plotted, isolated, candles, timeframe]);
 
   return (
     <div>
@@ -258,6 +310,22 @@ export function PriceChart({
             </button>
           ))}
         </div>
+
+        {/* §7.2a: "candlestick toggle for power users". Offered only where a
+            candle has one series to be about — a binary market, or a candidate
+            somebody has isolated. */}
+        {candleable && (
+          <button
+            type="button"
+            onClick={() => setStyle(style === 'area' ? 'candles' : 'area')}
+            aria-pressed={candles}
+            className={`rounded-sm px-2.5 py-1 font-mono text-xs transition-colors ${
+              candles ? 'bg-surface-raised text-text' : 'text-text-muted hover:text-text'
+            }`}
+          >
+            {candles ? 'Line' : 'Candles'}
+          </button>
+        )}
 
         {!binary && (
           <button

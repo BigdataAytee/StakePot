@@ -21,11 +21,16 @@ import {
   MinLength,
 } from 'class-validator';
 
+import { Decimal } from '@stakeam/engine';
+
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { TotpError, TotpService } from '../auth/totp.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RgBlockedError, RgService } from '../rg/rg.service';
+import { PlatformConfigService } from '../platform-config/platform-config.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { SupportError, SupportService } from '../support/support.service';
+import { checkTierCap } from '../trade/tier-cap';
 
 export class LimitsDto {
   @IsOptional() @IsNumberString() depositLimit?: string;
@@ -86,6 +91,8 @@ export class AccountController {
     private readonly support: SupportService,
     private readonly notifications: NotificationsService,
     private readonly totp: TotpService,
+    private readonly prisma: PrismaService,
+    private readonly config: PlatformConfigService,
   ) {}
 
   private me(request: RequestWithUser): { userId: string; role: UserRole } {
@@ -100,6 +107,54 @@ export class AccountController {
   @UseGuards(JwtGuard)
   async limits(@Req() request: RequestWithUser) {
     return this.rg.view(this.me(request).userId);
+  }
+
+  /**
+   * What this account may stake right now, and what is holding it back.
+   *
+   * §7.2d requires the Tier 0 cap and §2.12's limits to be visible *in the
+   * trade sheet*, not discovered by being refused after committing. That means
+   * one read the sheet can make before the person types an amount, answering
+   * the same question the trade path will answer — from the same rule
+   * (`checkTierCap`) and the same RG figures, so the screen and the engine
+   * cannot disagree.
+   */
+  @Get('trade-allowance')
+  @UseGuards(JwtGuard)
+  async tradeAllowance(@Req() request: RequestWithUser) {
+    const { userId } = this.me(request);
+
+    const [user, rg, capValue, wallets] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: userId }, select: { tier: true } }),
+      this.rg.view(userId),
+      this.config.get('tier0_stake_cap_spc'),
+      this.prisma.wallet.findMany({ where: { userId }, select: { escrowed: true } }),
+    ]);
+
+    const escrowed = wallets.reduce(
+      (total, row) => total.plus(new Decimal(row.escrowed.toString())),
+      new Decimal(0),
+    );
+    const tierCap = checkTierCap({
+      tier: user?.tier ?? 0,
+      escrowed,
+      amount: new Decimal(0),
+      cap: new Decimal(capValue.toString()),
+    });
+
+    return {
+      tier: user?.tier ?? 0,
+      escrowed: escrowed.toString(),
+      /** Null when uncapped — a verified account, or no cap configured. */
+      tierCapRemaining: tierCap.remaining === null ? null : tierCap.remaining.toString(),
+      selfExcluded: rg.selfExcluded,
+      cooloffUntil: rg.cooloffUntil,
+      stakeLimit: rg.effectiveStakeLimit,
+      stakedToday: rg.stakedToday,
+      lossLimit: rg.effectiveLossLimit,
+      lostToday: rg.lostToday,
+      helpline: rg.helpline,
+    };
   }
 
   @Post('limits')

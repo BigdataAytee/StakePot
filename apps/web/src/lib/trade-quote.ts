@@ -112,3 +112,37 @@ export function quote({
 
   return { shares, total: entered, gross: entered, fee: 0, priceAfter, estWin };
 }
+
+/**
+ * The other direction: what N shares cost.
+ *
+ * §7.2d's advanced mode enters shares rather than naira, and the closed form
+ * only runs money → shares. The inverse is the cost function itself:
+ * `cost = C(q + Δ·eᵢ) − C(q)`, which is the same curve read the other way, so
+ * the two modes cannot quote different prices for the same trade.
+ */
+export function costOfShares({
+  market,
+  outcome,
+  shares,
+}: {
+  market: QuoteMarket;
+  outcome: OutcomeView;
+  shares: string;
+}): number | null {
+  const wanted = Number.parseFloat(shares);
+  if (!Number.isFinite(wanted) || wanted <= 0) return null;
+
+  const liquidity = Number.parseFloat(market.liquidity);
+  if (!Number.isFinite(liquidity) || liquidity <= 0) return null;
+
+  const index = market.outcomes.findIndex((row) => row.id === outcome.id);
+  if (index === -1) return null;
+
+  const q = market.outcomes.map((row) => Number.parseFloat(row.shares));
+  const after = [...q];
+  after[index] = (after[index] ?? 0) + wanted;
+
+  const cost = costOf(after, liquidity) - costOf(q, liquidity);
+  return Number.isFinite(cost) && cost > 0 ? cost : null;
+}

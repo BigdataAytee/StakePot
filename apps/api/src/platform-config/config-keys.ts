@@ -13,6 +13,12 @@ export const CONFIG_SCHEMAS = {
   starter_balance_spc: z.number().nonnegative(),
   signup_bonus_spc: z.number().nonnegative(),
   tier0_expiry_days: z.number().int().positive(),
+  /**
+   * The most an unverified (Tier 0) account may hold at risk across all open
+   * markets — §2.1's "starter-balance trading capped at Tier 0". Verifying a
+   * contact lifts it entirely.
+   */
+  tier0_stake_cap_spc: z.number().nonnegative(),
   kyc_required_at: z.enum(['deposit', 'withdrawal']),
 
   // Contact verification (§2.1)

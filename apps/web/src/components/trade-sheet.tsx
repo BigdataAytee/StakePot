@@ -6,13 +6,17 @@ import { useEffect, useMemo, useState } from 'react';
 
 import type { OutcomeView } from '@/lib/api';
 
-import { exactMoney, kobo, percent } from '@/lib/format';
+import { exactMoney, kobo, money, percent } from '@/lib/format';
 import { placeTrade } from '@/lib/place-trade';
+import { blockerFor, useTradeAllowance } from '@/lib/trade-allowance';
 import { usePublicConfig } from '@/lib/public-config';
-import { quote } from '@/lib/trade-quote';
+import { costOfShares, quote } from '@/lib/trade-quote';
 
 /** The quick chips §7.2d specifies for amount-first entry. */
 const AMOUNT_CHIPS = [500, 1000, 2000, 5000];
+
+/** §7.2d's shares-entry steppers, for the advanced mode. */
+const SHARE_STEPS = [-100, -10, 10, 100];
 
 /**
  * What the sheet needs to quote a trade.
@@ -70,6 +74,12 @@ export function TradeSheet({
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
+  /**
+   * §7.2d's advanced toggle. Amount-first is the default because "how much am
+   * I putting in" is the question this audience is actually answering; shares
+   * -first is for the reader who is pricing the position instead.
+   */
+  const [mode, setMode] = useState<'amount' | 'shares'>('amount');
   const [submitting, setSubmitting] = useState(false);
   /** The queue took it but has not executed it yet — §11's "order placed". */
   const [queued, setQueued] = useState(false);
@@ -78,6 +88,7 @@ export function TradeSheet({
   useEffect(() => {
     if (intent === null) return;
     setSide(intent.side);
+    setMode('amount');
     setAmount('');
     setQueued(false);
     setError(null);
@@ -91,22 +102,33 @@ export function TradeSheet({
    * Δ = L·ln((e^(m/L) − 1 + p)/p). The API recomputes everything server-side —
    * this never decides what a trade costs, only what the sheet says it will.
    */
-  const preview = useMemo(
-    () =>
-      outcome === null
-        ? null
-        : quote({
-            market,
-            outcome,
-            side,
-            amount,
-            price,
-            exitFeeRate: config?.exitFeeRate ?? 0,
-          }),
-    [amount, price, side, market, outcome, config],
-  );
+  const preview = useMemo(() => {
+    if (outcome === null) return null;
+    // In shares mode the typed figure is a share count, so it is converted to
+    // its cost first and then priced by the same quote as everything else —
+    // one curve, read from whichever end the reader is holding.
+    const asMoney =
+      side === 'buy' && mode === 'shares'
+        ? (costOfShares({ market, outcome, shares: amount })?.toString() ?? '')
+        : amount;
+
+    return quote({
+      market,
+      outcome,
+      side,
+      amount: asMoney,
+      price,
+      exitFeeRate: config?.exitFeeRate ?? 0,
+    });
+  }, [amount, mode, price, side, market, outcome, config]);
 
   const closed = market.state !== 'active';
+
+  // §7.2d/§2.12: what the account may stake, read when the sheet opens so it
+  // can be said before they commit rather than after the API refuses.
+  const allowance = useTradeAllowance(intent === null ? 0 : 1);
+  // Selling reduces exposure, so no cap or stake limit can bind it.
+  const blocker = side === 'sell' ? null : blockerFor(allowance, amount, money);
 
   // Yes is green, No is red, and anything else is the primary blue — the
   // reference's three cases. A candidate in a multi-outcome market is the
@@ -207,21 +229,41 @@ export function TradeSheet({
               </button>
             </div>
 
-            <label className="block">
-              <span className="text-sm text-text-muted">
-                {side === 'buy' ? 'How much are you putting in?' : 'How many shares?'}
-              </span>
-              <input
-                inputMode="decimal"
-                value={amount}
-                onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
-                placeholder="0"
-                disabled={closed}
-                className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-3 font-mono text-xl tabular-nums outline-none focus:border-brand focus-visible:ring-1 focus-visible:ring-brand"
-              />
-            </label>
+            <div className="flex items-baseline justify-between gap-3">
+              <label className="text-sm text-text-muted" htmlFor="trade-amount">
+                {side === 'sell'
+                  ? 'How many shares?'
+                  : mode === 'shares'
+                    ? 'How many shares?'
+                    : 'How much are you putting in?'}
+              </label>
+              {/* §7.2d's advanced toggle. Selling is already shares-first, so
+                  it has nothing to switch between. */}
+              {side === 'buy' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode(mode === 'amount' ? 'shares' : 'amount');
+                    setAmount('');
+                  }}
+                  className="text-xs font-semibold text-brand hover:underline"
+                >
+                  {mode === 'amount' ? 'Enter shares' : 'Enter amount'}
+                </button>
+              )}
+            </div>
 
-            {side === 'buy' && (
+            <input
+              id="trade-amount"
+              inputMode="decimal"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
+              placeholder="0"
+              disabled={closed}
+              className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-3 font-mono text-xl tabular-nums outline-none focus:border-brand focus-visible:ring-1 focus-visible:ring-brand"
+            />
+
+            {side === 'buy' && mode === 'amount' && (
               <div className="mt-2 flex gap-2">
                 {AMOUNT_CHIPS.map((chip) => (
                   <button
@@ -237,20 +279,52 @@ export function TradeSheet({
               </div>
             )}
 
-            {side === 'sell' && intent.held !== undefined && (
+            {side === 'buy' && mode === 'shares' && (
               <div className="mt-2 flex gap-2">
-                {[0.25, 0.5, 1].map((fraction) => (
+                {SHARE_STEPS.map((step) => (
                   <button
-                    key={fraction}
+                    key={step}
                     type="button"
-                    onClick={() =>
-                      setAmount((Number.parseFloat(intent.held!) * fraction).toFixed(6))
-                    }
+                    disabled={closed}
+                    onClick={() => {
+                      const current = Number.parseFloat(amount);
+                      const next = (Number.isFinite(current) ? current : 0) + step;
+                      // A stepper cannot take you below nothing.
+                      setAmount(next <= 0 ? '' : String(Math.round(next * 100) / 100));
+                    }}
                     className="flex-1 rounded-md border border-border bg-surface py-2 font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
                   >
-                    {fraction === 1 ? 'All' : `${fraction * 100}%`}
+                    {step > 0 ? `+${step}` : step}
                   </button>
                 ))}
+              </div>
+            )}
+
+            {/* §7.2d: "slider or chips for partial/full exit". A slider,
+                because a position is a continuous quantity and 25/50/100 are
+                three of the infinitely many exits somebody might want. */}
+            {side === 'sell' && intent.held !== undefined && (
+              <div className="mt-3">
+                <input
+                  type="range"
+                  min={0}
+                  max={Number.parseFloat(intent.held)}
+                  step={Number.parseFloat(intent.held) / 100}
+                  value={Number.parseFloat(amount) || 0}
+                  onChange={(event) => setAmount(event.target.value)}
+                  aria-label="How much of this position to sell"
+                  className="w-full accent-fall"
+                />
+                <div className="mt-1 flex justify-between text-xs text-text-muted">
+                  <span>0</span>
+                  <button
+                    type="button"
+                    onClick={() => setAmount(intent.held as string)}
+                    className="font-semibold text-brand hover:underline"
+                  >
+                    Sell all {Number.parseFloat(intent.held).toFixed(2)}
+                  </button>
+                </div>
               </div>
             )}
 
@@ -314,12 +388,22 @@ export function TradeSheet({
               </div>
             )}
 
+            {blocker !== null && (
+              <p
+                className={`mt-3 rounded-md px-3 py-2 text-sm ${
+                  blocker.hard ? 'bg-fall-bg text-fall' : 'bg-chip text-text-muted'
+                }`}
+              >
+                {blocker.message}
+              </p>
+            )}
+
             {error !== null && <p className="mt-3 text-sm text-fall">{error}</p>}
 
             <button
               type="button"
               onClick={() => void submit()}
-              disabled={closed || submitting || preview === null}
+              disabled={closed || submitting || preview === null || blocker?.hard === true}
               className={`mt-4 w-full rounded-lg py-3 text-md font-bold text-paper transition-transform active:scale-press disabled:opacity-45 ${tone}`}
             >
               {closed

@@ -10,6 +10,7 @@ import { PlatformConfigService } from '../platform-config/platform-config.servic
 import { PrismaService } from '../prisma/prisma.service';
 import { PriceCacheService } from '../realtime/price-cache.service';
 import { RgService } from '../rg/rg.service';
+import { checkTierCap } from './tier-cap';
 import { WalletService } from '../wallet/wallet.service';
 
 export class TradeError extends Error {
@@ -87,6 +88,36 @@ export class TradeService {
       .catch(() => undefined);
   }
 
+  /**
+   * How much an unverified account is allowed to have at risk.
+   *
+   * Measured against escrow rather than against this one trade: the cap is on
+   * exposure, not on ticket size, or ten trades of a tenth the size would walk
+   * straight through it. Tier 1 and above are uncapped — proving a contact is
+   * exactly what lifts it, which is the incentive §2.1 is built around.
+   */
+  private async assertWithinTierCap(tx: Tx, userId: string, amount: Decimal): Promise<void> {
+    const user = await tx.user.findUnique({ where: { id: userId }, select: { tier: true } });
+    if (user === null) return;
+    const cap = new Decimal((await this.config.get('tier0_stake_cap_spc')).toString());
+
+    // Read through the transaction, not through the wallet service: this runs
+    // inside the per-market lock, and a balance fetched outside it could be
+    // stale by the time the cap is compared against it.
+    const wallets = await tx.wallet.findMany({ where: { userId }, select: { escrowed: true } });
+    const escrowed = wallets.reduce(
+      (total, row) => total.plus(new Decimal(row.escrowed.toString())),
+      new Decimal(0),
+    );
+
+    if (!checkTierCap({ tier: user.tier, escrowed, amount, cap }).allowed) {
+      throw new TradeError(
+        `unverified accounts can hold up to ${cap.toString()} SPC across open markets — ` +
+          `you have ${escrowed.toString()} at stake. Verify your email or phone to lift this.`,
+      );
+    }
+  }
+
   async buy(input: BuyInput): Promise<Trade> {
     const amount = new Decimal(input.amount);
     if (amount.lte(0)) throw new TradeError('amount must be greater than zero');
@@ -102,6 +133,12 @@ export class TradeService {
       // path money can leave a user's balance through, so a self-exclusion that
       // holds here holds everywhere, including on any endpoint added later.
       await this.rg.assertMayStake(input.userId, amount);
+
+      // §2.1's "starter-balance trading capped at Tier 0" — the fraud control
+      // that keeps a farm of unverified accounts from putting real weight on a
+      // market. Checked in the same place and for the same reason as the RG
+      // limits above: this is the only path stake can leave a balance through.
+      await this.assertWithinTierCap(tx, input.userId, amount);
 
       // Escrow first: a trade the user cannot fund must not move the market.
       await this.wallet.escrow({

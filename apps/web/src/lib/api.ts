@@ -54,6 +54,16 @@ export interface MarketDetail extends MarketSummary {
   creator: CreatorByline | null;
   /** What the winners split. Null while the market is still open. */
   distributed: string | null;
+  /** §2.6's proposed resolution, once somebody has proposed one. */
+  resolution: {
+    proposedOutcomeId: string | null;
+    evidenceUrl: string | null;
+    proposedAt: string;
+    finalOutcomeId: string | null;
+    finalizedAt: string | null;
+  } | null;
+  /** When the 48h dispute window shuts. Null until a resolution is proposed. */
+  disputeClosesAt: string | null;
 }
 
 export interface SponsorView {

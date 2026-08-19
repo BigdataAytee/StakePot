@@ -4,9 +4,10 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
 import type { MarketDetail, OutcomeView } from '@/lib/api';
-import { closedReason, exactMoney, kobo, percent } from '@/lib/format';
+import { closedReason, exactMoney, kobo, money, percent } from '@/lib/format';
 import { binaryPair } from '@/lib/home';
 import { placeTrade } from '@/lib/place-trade';
+import { blockerFor, useTradeAllowance } from '@/lib/trade-allowance';
 import { usePublicConfig } from '@/lib/public-config';
 import { getToken } from '@/lib/session';
 import { quote } from '@/lib/trade-quote';
@@ -69,6 +70,11 @@ export function TradePanel({
       }),
     [market, outcome, amount, price, config],
   );
+
+  // §7.2d/§2.12: the same limits the sheet surfaces, on the panel that does
+  // the same job on a laptop.
+  const allowance = useTradeAllowance();
+  const blocker = blockerFor(allowance, amount, money);
 
   const tone = /^yes$/i.test(outcome.label)
     ? 'bg-rise'
@@ -207,12 +213,22 @@ export function TradePanel({
             className="mt-2.5 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
           />
 
+          {blocker !== null && (
+            <p
+              className={`mt-2 rounded-md px-3 py-2 text-sm ${
+                blocker.hard ? 'bg-fall-bg text-fall' : 'bg-surface text-text-muted'
+              }`}
+            >
+              {blocker.message}
+            </p>
+          )}
+
           {error !== null && <p className="mt-2 text-sm text-fall">{error}</p>}
 
           <button
             type="button"
             onClick={() => void submit()}
-            disabled={submitting || preview === null}
+            disabled={submitting || preview === null || blocker?.hard === true}
             className={`mt-2 w-full rounded-lg py-3 text-md font-bold text-paper transition-transform active:scale-press disabled:opacity-45 ${tone}`}
           >
             {queued

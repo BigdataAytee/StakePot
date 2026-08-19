@@ -1,4 +1,7 @@
-import { Controller, Get, NotFoundException, Param, Query } from '@nestjs/common';
+import { Controller, Get, NotFoundException, Param, Query, Req, UseGuards } from '@nestjs/common';
+import { Decimal } from '@stakeam/engine';
+
+import { OptionalJwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { Prisma } from '@prisma/client';
 import { subHours } from 'date-fns';
 
@@ -91,7 +94,7 @@ export class MarketsController {
     });
     if (market === null) throw new NotFoundException('market not found');
 
-    const [annotations, traders, volume, cached] = await Promise.all([
+    const [annotations, traders, volume, cached, proposal] = await Promise.all([
       this.prisma.marketAnnotation.findMany({
         where: { marketId: id },
         orderBy: { ts: 'asc' },
@@ -113,6 +116,13 @@ export class MarketsController {
         _sum: { cost: true },
       }),
       this.prices.read(id),
+      // §7.2f: the ticket has to show what has been proposed and how long is
+      // left to argue with it. The newest row wins — a re-proposal after a
+      // successful dispute supersedes the one it replaced.
+      this.prisma.resolution.findFirst({
+        where: { marketId: id },
+        orderBy: { proposedAt: 'desc' },
+      }),
     ]);
 
     const creatorProfile =
@@ -143,6 +153,18 @@ export class MarketsController {
         ts: a.ts.toISOString(),
       })),
       traderCount: traders.length,
+      /** §2.6's proposed resolution, and §7.2f's dispute-window countdown. */
+      resolution:
+        proposal === null
+          ? null
+          : {
+              proposedOutcomeId: proposal.proposedOutcomeId,
+              evidenceUrl: proposal.evidenceUrl,
+              proposedAt: proposal.proposedAt.toISOString(),
+              finalOutcomeId: proposal.finalOutcomeId,
+              finalizedAt: proposal.finalizedAt?.toISOString() ?? null,
+            },
+      disputeClosesAt: market.disputeClosesAt?.toISOString() ?? null,
       volume24h: (volume._sum.cost ?? 0).toString(),
       /** Null while a market is open; what the winners split once it settled. */
       distributed:
@@ -161,6 +183,82 @@ export class MarketsController {
               followerCount: creatorProfile?.followerCount ?? 0,
               cleanResolutions: creatorProfile?.cleanResolutions ?? 0,
             },
+    };
+  }
+
+  /**
+   * §7.2g's receipt: what the pot became, and what it became for you.
+   *
+   * Built from the ledger rather than recomputed, which is the whole point.
+   * The receipt is the artifact a winner screenshots, so the number on it has
+   * to be the number that actually landed in their balance — a second
+   * calculation of the payout is a second chance to disagree with the books.
+   *
+   * The market half is public: anyone reading a resolved market should see the
+   * pot, the fee and the per-share value. Only `you` needs a session, and it
+   * is null without one.
+   */
+  @Get(':id/receipt')
+  @UseGuards(OptionalJwtGuard)
+  async receipt(@Param('id') id: string, @Req() request: RequestWithUser) {
+    const market = await this.prisma.market.findUnique({
+      where: { id },
+      include: { outcomes: { orderBy: { ordinal: 'asc' } } },
+    });
+    if (market === null) throw new NotFoundException('market not found');
+    if (market.state !== 'resolved') return null;
+
+    const [paid, fees] = await Promise.all([
+      this.prisma.ledgerEntry.aggregate({
+        where: { marketId: id, type: 'payout', fundClass: 'user_available' },
+        _sum: { amount: true },
+      }),
+      this.prisma.ledgerEntry.aggregate({
+        where: { marketId: id, type: { in: ['fee_platform', 'fee_creator'] } },
+        _sum: { amount: true },
+      }),
+    ]);
+
+    const distributed = new Decimal((paid._sum.amount ?? 0).toString());
+    const fee = new Decimal((fees._sum.amount ?? 0).toString()).abs();
+    const won = market.outcomes.find((row) => row.id === market.resolvedOutcomeId);
+    const winningShares = new Decimal((won?.sharesOutstanding ?? 0).toString());
+
+    const userId = request.user?.userId;
+    let you = null;
+    if (userId !== undefined) {
+      const [position, received] = await Promise.all([
+        // A resolved market always names a winning outcome; the guard is for
+        // the type, not for a case that happens.
+        market.resolvedOutcomeId === null
+          ? null
+          : this.prisma.position.findFirst({
+              where: { userId, marketId: id, outcomeId: market.resolvedOutcomeId },
+            }),
+        this.prisma.ledgerEntry.aggregate({
+          where: { userId, marketId: id, type: 'payout', fundClass: 'user_available' },
+          _sum: { amount: true },
+        }),
+      ]);
+      const payout = new Decimal((received._sum.amount ?? 0).toString());
+      // Someone who held nothing on the winning side still gets a line — "you
+      // were on the other side of this" is information, and a blank space is
+      // not.
+      you = {
+        shares: (position?.shares ?? 0).toString(),
+        payout: payout.toString(),
+        won: payout.gt(0),
+      };
+    }
+
+    return {
+      outcomeLabel: won?.label ?? null,
+      distributed: distributed.toString(),
+      fee: fee.toString(),
+      // What one winning share turned out to be worth — §2.3's pot/q_win.
+      perShare: winningShares.gt(0) ? distributed.div(winningShares).toString() : '0',
+      winningShares: winningShares.toString(),
+      you,
     };
   }
 

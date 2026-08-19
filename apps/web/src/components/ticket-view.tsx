@@ -10,13 +10,18 @@ import { LivingNumber } from '@/components/living-number';
 import { LivePercent } from '@/components/market/live-percent';
 import { MarketIcon } from '@/components/market/market-icon';
 import { SiteHeader } from '@/components/market/site-header';
+import { ChallengeButton } from '@/components/market/challenge-button';
+import { FundingActivation } from '@/components/market/funding-activation';
 import { MobileBuyBar } from '@/components/market/mobile-buy-bar';
+import { ResolutionStatus } from '@/components/market/resolution-status';
+import { ResolvedReceipt } from '@/components/market/resolved-receipt';
 import { TradePanel } from '@/components/market/trade-panel';
 import { WatchStar } from '@/components/market/watch-star';
 import { PriceChart, type Timeframe } from '@/components/price-chart';
 import { RulesCard } from '@/components/rules-card';
 import { SeedPanel } from '@/components/seed-panel';
 import { ShareSheet } from '@/components/share-sheet';
+import { Sparkline } from '@/components/sparkline';
 import { TakeThread } from '@/components/take-thread';
 import { TradeSheet, type TradeIntent } from '@/components/trade-sheet';
 import { useMarketFeed } from '@/hooks/use-market-feed';
@@ -166,6 +171,13 @@ export function TicketView({
 
   const tradingOpen = initial.state === 'active';
 
+  // §7.2e: a market still gathering backers has no price history worth
+  // reading, so the chart area becomes the activation view instead.
+  const funding = initial.state === 'funding' || initial.state === 'seeding';
+  // §7.2c's pot-growth sparkline. The history endpoint already returns the pot
+  // beside each price snapshot, so this costs no extra request.
+  const potSeries = history.map((point) => point.pot);
+
   const selected =
     initial.outcomes.find((row) => row.id === picked) ?? headline ?? initial.outcomes[0];
   const selectedPrice = selected === undefined ? 0 : percent(prices[selected.id] ?? selected.price);
@@ -189,6 +201,7 @@ export function TicketView({
           <h1 className="flex-1 text-xl font-bold leading-[1.25]">{initial.question}</h1>
           <WatchStar marketId={initial.id} question={initial.question} size={34} />
           <ShareSheet marketId={initial.id} question={initial.question} />
+          <ChallengeButton marketId={initial.id} />
         </div>
 
         {/* §2.14c's byline. A community market is somebody's promise, so it
@@ -210,8 +223,11 @@ export function TicketView({
         )}
 
         <div className="mb-4 mt-2.5 flex flex-wrap gap-[18px] text-sm text-text-muted">
-          <span>
-            <b className="text-text">{money(live?.pot ?? initial.pot)}</b> pot
+          <span className="flex items-center gap-1.5">
+            <span>
+              <b className="text-text">{money(live?.pot ?? initial.pot)}</b> pot
+            </span>
+            <Sparkline points={potSeries} width={48} height={14} />
           </span>
           <span>
             <b className="text-text">{money(initial.volume24h)}</b> 24h vol.
@@ -242,25 +258,32 @@ export function TicketView({
             chart a readable width. */}
         <div className="grid items-start gap-[22px] min-[860px]:grid-cols-[1fr_330px]">
           <div>
-            <div className="rounded-xl border border-border p-4">
-              <div className="mb-1 flex flex-wrap items-baseline gap-2.5">
-                <span className="text-base font-semibold text-text-muted">{selected?.label}</span>
-                <LivingNumber value={selectedPrice} suffix="%" className="text-2xl font-bold" />
-              </div>
+            {funding ? (
+              <FundingActivation market={initial} composition={composition} />
+            ) : (
+              <div className="rounded-xl border border-border p-4">
+                <div className="mb-1 flex flex-wrap items-baseline gap-2.5">
+                  <span className="text-base font-semibold text-text-muted">{selected?.label}</span>
+                  <LivingNumber value={selectedPrice} suffix="%" className="text-2xl font-bold" />
+                </div>
 
-              <PriceChart
-                points={history}
-                outcomes={initial.outcomes}
-                annotations={initial.annotations}
-                timeframe={timeframe}
-                onTimeframeChange={setTimeframe}
-              />
+                <PriceChart
+                  points={history}
+                  outcomes={initial.outcomes}
+                  annotations={initial.annotations}
+                  timeframe={timeframe}
+                  onTimeframeChange={setTimeframe}
+                />
 
-              {/* The argument bar: who is winning, as one shape. */}
-              <div className="mt-4">
-                <ArgumentBar segments={segments} showLabels={initial.outcomes.length === 2} />
+                {/* The argument bar: who is winning, as one shape. */}
+                <div className="mt-4">
+                  <ArgumentBar segments={segments} showLabels={initial.outcomes.length === 2} />
+                </div>
               </div>
-            </div>
+            )}
+
+            <ResolvedReceipt market={initial} />
+            <ResolutionStatus market={initial} />
 
             <div className="mt-4 overflow-hidden rounded-xl border border-border">
               <div className="flex border-b border-border px-3.5 py-2.5 text-sm font-semibold text-text-muted">

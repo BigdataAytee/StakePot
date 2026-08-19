@@ -22,14 +22,14 @@ _Audited: 2026-08-19, branch `claude/plugin-ktnja5`. Paths are from the repo roo
 
 | Block                                             | Implemented | Partial | Missing |
 | ------------------------------------------------- | ----------- | ------- | ------- |
-| A · Ticket View (§7.2)                            | 7           | 6       | 4       |
+| A · Ticket View (§7.2)                            | 27          | 0       | 0       |
 | B · Wallet (§7.5)                                 | 5           | 2       | 1       |
 | C · Community shelf (§2.4, §2.14a)                | 9           | 2       | 1       |
-| D · Resolution & disputes (§2.6)                  | 6           | 2       | 1       |
+| D · Resolution & disputes (§2.6)                  | 9           | 0       | 0       |
 | E · Admin platform (§6)                           | 9           | 5       | 3       |
 | F · Company layer (§2.11–13)                      | 12          | 3       | 2       |
 | G · Creator platform (§2.14)                      | 10          | 2       | 2       |
-| H · Community threads (§2.15)                     | 6           | 1       | 5       |
+| H · Community threads (§2.15)                     | 7           | 0       | 5       |
 | I · Engagement (§2.8)                             | 5           | 1       | 1       |
 | J · Landing, routing, fintech (§7.6, §7.1, §2.16) | 8           | 3       | 3       |
 
@@ -46,38 +46,48 @@ once it has resolved, and what the trade sheet tells you about your own limits.
 The market detail page. Currently `apps/web/src/components/ticket-view.tsx`,
 laid out per `docs/design-reference.html`'s `#detail`.
 
-| §    | Feature                                                                | Status          | Evidence / gap                                                                                                                                                                                                  |
-| ---- | ---------------------------------------------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 7.2a | Area probability chart, 0–100%                                         | **IMPLEMENTED** | `components/price-chart.tsx` (lightweight-charts)                                                                                                                                                               |
-| 7.2a | Timeframes 1H · 6H · 1D · 1W · ALL                                     | **IMPLEMENTED** | `price-chart.tsx:20` `TIMEFRAMES`                                                                                                                                                                               |
-| 7.2a | Event annotations pinned on the chart                                  | **IMPLEMENTED** | `price-chart.tsx`, fed by `market_annotations` via `GET /markets/:id`                                                                                                                                           |
-| 7.2a | Multi-outcome overlay, tap to isolate                                  | **IMPLEMENTED** | `price-chart.tsx:62` `isolated` state                                                                                                                                                                           |
-| 7.2a | Live points appended over WebSocket                                    | **IMPLEMENTED** | `hooks/use-market-feed.ts`, `store/live-prices.ts`                                                                                                                                                              |
-| 7.2a | **Candlestick toggle for power users**                                 | **MISSING**     | Only the area series is created. Spec calls it optional-but-present                                                                                                                                             |
-| 7.2b | Argument bar, synced to last point                                     | **IMPLEMENTED** | `components/argument-bar.tsx`, rendered in the chart box                                                                                                                                                        |
-| 7.2c | Money strip: pot, 24h volume, traders, fee                             | **PARTIAL**     | Now the `dstats` row in `ticket-view.tsx`; `money-strip.tsx` was removed in the redesign. **Missing: the pot-growth sparkline** the spec asks for beside the pot                                                |
-| 7.2d | Bottom-sheet Trade Ticket                                              | **IMPLEMENTED** | `components/trade-sheet.tsx`, opened from grid and ticket                                                                                                                                                       |
-| 7.2d | Priced outcome buttons (`Buy YES 62k`)                                 | **IMPLEMENTED** | `components/market/side-button.tsx`, `market-card.tsx`                                                                                                                                                          |
-| 7.2d | Amount-first entry with ₦500/1k/2k/5k chips                            | **IMPLEMENTED** | `trade-sheet.tsx` `AMOUNT_CHIPS`                                                                                                                                                                                |
-| 7.2d | Live figures: price, shares, total, est. to win, slippage              | **IMPLEMENTED** | `lib/trade-quote.ts`, rendered in sheet and `market/trade-panel.tsx`                                                                                                                                            |
-| 7.2d | One-tap side-flip arrow                                                | **IMPLEMENTED** | `trade-sheet.tsx` `ArrowUpDown` control                                                                                                                                                                         |
-| 7.2d | **Advanced toggle → shares-entry with −100/−10/+10/+100**              | **MISSING**     | Amount-entry only; no advanced mode                                                                                                                                                                             |
-| 7.2d | Selling through the same sheet                                         | **PARTIAL**     | Opens from `position-panel.tsx` with side pre-set to Sell and quotes the exact refund. **Missing: the slider** — only 25/50/100% chips                                                                          |
-| 7.2d | **Tier 0 starter-balance cap surfaced inline**                         | **MISSING**     | No tier check in the sheet; refusal only comes back from the API after submit                                                                                                                                   |
-| 7.2d | **RG limit warnings surfaced inline (§2.12)**                          | **MISSING**     | RG service exists server-side; the sheet never consults it before submit                                                                                                                                        |
-| 7.2d | Sheet behaviours: drag-to-dismiss, disabled-with-reason                | **IMPLEMENTED** | `trade-sheet.tsx` drag handlers; `closedReason()`                                                                                                                                                               |
-| 7.2e | **Community FUNDING state: activation view replacing the chart**       | **PARTIAL**     | `components/seed-panel.tsx` shows seed composition and the deadline. **Missing: both-side progress meters (amount + backers), countdown, share-to-fill** — and it sits below the chart rather than replacing it |
-| 7.2e | Activation moment permanently annotated                                | **IMPLEMENTED** | `activation` annotation type written by the lifecycle job                                                                                                                                                       |
-| 7.2f | Take thread with position badges                                       | **IMPLEMENTED** | `components/take-thread.tsx`                                                                                                                                                                                    |
-| 7.2f | Rules card (criteria, source, dates, freeze)                           | **IMPLEMENTED** | `components/rules-card.tsx`                                                                                                                                                                                     |
-| 7.2f | **Resolution status: proposed outcome + evidence + dispute countdown** | **MISSING**     | Nothing on the ticket renders the proposed resolution or the 48h countdown                                                                                                                                      |
-| 7.2f | Share button                                                           | **IMPLEMENTED** | `components/share-sheet.tsx`                                                                                                                                                                                    |
-| 7.2f | **Challenge button on the ticket**                                     | **PARTIAL**     | The link works end-to-end (`/challenge/[token]`, `community-layer/challenge.service.ts`) but there is **no button on the ticket to mint one**                                                                   |
-| 7.2g | **Resolved state: receipt panel with payout math**                     | **MISSING**     | Resolved markets show a state label. No pot/fee/per-share/your-result receipt — `@vercel/og` renders one for sharing (`app/api/result/[id]/route.tsx`) but the in-app panel does not exist                      |
-| 7.2g | Chart freezes with a final ✓ annotation                                | **IMPLEMENTED** | `resolution` annotation type                                                                                                                                                                                    |
-| 7.2g | Thread receipts light up at resolution                                 | **IMPLEMENTED** | `take-thread.tsx` keeps badges permanently                                                                                                                                                                      |
+| §    | Feature                                                                | Status          | Evidence / gap                                                                                                                                                                   |
+| ---- | ---------------------------------------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 7.2a | Area probability chart, 0–100%                                         | **IMPLEMENTED** | `components/price-chart.tsx` (lightweight-charts)                                                                                                                                |
+| 7.2a | Timeframes 1H · 6H · 1D · 1W · ALL                                     | **IMPLEMENTED** | `price-chart.tsx:20` `TIMEFRAMES`                                                                                                                                                |
+| 7.2a | Event annotations pinned on the chart                                  | **IMPLEMENTED** | `price-chart.tsx`, fed by `market_annotations` via `GET /markets/:id`                                                                                                            |
+| 7.2a | Multi-outcome overlay, tap to isolate                                  | **IMPLEMENTED** | `price-chart.tsx:62` `isolated` state                                                                                                                                            |
+| 7.2a | Live points appended over WebSocket                                    | **IMPLEMENTED** | `hooks/use-market-feed.ts`, `store/live-prices.ts`                                                                                                                               |
+| 7.2a | **Candlestick toggle for power users**                                 | **IMPLEMENTED** | `price-chart.tsx` candles toggle; OHLC buckets in `lib/candles.ts` (7 tests)                                                                                                     |
+| 7.2b | Argument bar, synced to last point                                     | **IMPLEMENTED** | `components/argument-bar.tsx`, rendered in the chart box                                                                                                                         |
+| 7.2c | Money strip: pot, 24h volume, traders, fee                             | **IMPLEMENTED** | `ticket-view.tsx` stats row, with the pot-growth sparkline drawn from the pot column `history` already returns                                                                   |
+| 7.2d | Bottom-sheet Trade Ticket                                              | **IMPLEMENTED** | `components/trade-sheet.tsx`, opened from grid and ticket                                                                                                                        |
+| 7.2d | Priced outcome buttons (`Buy YES 62k`)                                 | **IMPLEMENTED** | `components/market/side-button.tsx`, `market-card.tsx`                                                                                                                           |
+| 7.2d | Amount-first entry with ₦500/1k/2k/5k chips                            | **IMPLEMENTED** | `trade-sheet.tsx` `AMOUNT_CHIPS`                                                                                                                                                 |
+| 7.2d | Live figures: price, shares, total, est. to win, slippage              | **IMPLEMENTED** | `lib/trade-quote.ts`, rendered in sheet and `market/trade-panel.tsx`                                                                                                             |
+| 7.2d | One-tap side-flip arrow                                                | **IMPLEMENTED** | `trade-sheet.tsx` `ArrowUpDown` control                                                                                                                                          |
+| 7.2d | **Advanced toggle → shares-entry with −100/−10/+10/+100**              | **IMPLEMENTED** | `trade-sheet.tsx` mode toggle; inverse quote `costOfShares` in `lib/trade-quote.ts`                                                                                              |
+| 7.2d | Selling through the same sheet                                         | **IMPLEMENTED** | `trade-sheet.tsx` — slider for partial exits, exact refund quoted before confirm                                                                                                 |
+| 7.2d | **Tier 0 starter-balance cap surfaced inline**                         | **IMPLEMENTED** | `lib/trade-allowance.ts` + `GET /account/trade-allowance`. The cap itself did not exist server-side and was built: `trade/tier-cap.ts` (8 tests), enforced in `trade.service.ts` |
+| 7.2d | **RG limit warnings surfaced inline (§2.12)**                          | **IMPLEMENTED** | `blockerFor()` reads the same RG figures `assertMayStake` enforces                                                                                                               |
+| 7.2d | Sheet behaviours: drag-to-dismiss, disabled-with-reason                | **IMPLEMENTED** | `trade-sheet.tsx` drag handlers; `closedReason()`                                                                                                                                |
+| 7.2e | **Community FUNDING state: activation view replacing the chart**       | **IMPLEMENTED** | `market/funding-activation.tsx` — per-side and backer meters, countdown, seed composition, share-to-fill; replaces the chart box                                                 |
+| 7.2e | Activation moment permanently annotated                                | **IMPLEMENTED** | `activation` annotation type written by the lifecycle job                                                                                                                        |
+| 7.2f | Take thread with position badges                                       | **IMPLEMENTED** | `components/take-thread.tsx`                                                                                                                                                     |
+| 7.2f | Rules card (criteria, source, dates, freeze)                           | **IMPLEMENTED** | `components/rules-card.tsx`                                                                                                                                                      |
+| 7.2f | **Resolution status: proposed outcome + evidence + dispute countdown** | **IMPLEMENTED** | `market/resolution-status.tsx`; detail endpoint now returns `resolution` + `disputeClosesAt`                                                                                     |
+| 7.2f | Share button                                                           | **IMPLEMENTED** | `components/share-sheet.tsx`                                                                                                                                                     |
+| 7.2f | **Challenge button on the ticket**                                     | **IMPLEMENTED** | `market/challenge-button.tsx`, minting through the existing service                                                                                                              |
+| 7.2g | **Resolved state: receipt panel with payout math**                     | **IMPLEMENTED** | `market/resolved-receipt.tsx` + `GET /markets/:id/receipt`, read from the ledger so it cannot disagree with the books                                                            |
+| 7.2g | Chart freezes with a final ✓ annotation                                | **IMPLEMENTED** | `resolution` annotation type                                                                                                                                                     |
+| 7.2g | Thread receipts light up at resolution                                 | **IMPLEMENTED** | `take-thread.tsx` keeps badges permanently                                                                                                                                       |
 
-**Block A verdict:** the chart, the trade sheet and the thread are solid. The
+> **Built 2026-08-19.** Every row above is now IMPLEMENTED. One thing was built
+> outside §7.2 to get there, deliberately: §7.2d requires the Tier 0 cap to be
+> shown in the sheet, and **no such cap existed anywhere in the API** — §2.1
+> names it as a fraud control but nothing enforced it. A warning about a limit
+> that does not exist is worse than no warning, so the rule was built first
+> (`apps/api/src/trade/tier-cap.ts`, 8 tests, enforced in the one path stake
+> leaves a balance through) and only then surfaced. That is a §2.1 addition
+> reached through a §7.2 requirement, and it is called out here rather than
+> buried in the diff.
+
+**Block A verdict (before this build):** the chart, the trade sheet and the thread are solid. The
 gaps cluster in the two states that are not "market is open and I want to buy":
 **funding** and **resolved**. Plus the sheet does not know about the user's own
 limits, which is a spec requirement and a real refusal-after-submit annoyance.
@@ -122,17 +132,17 @@ limits, which is a spec requirement and a real refusal-after-submit annoyance.
 
 ## Block D · Resolution & disputes (§2.6)
 
-| §   | Feature                                           | Status          | Evidence / gap                                                                                                       |
-| --- | ------------------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------- |
-| 2.6 | Propose resolution (creator/staff) with evidence  | **IMPLEMENTED** | `apps/api/src/resolution/resolution-flow.service.ts`                                                                 |
-| 2.6 | 48h dispute window state + timer                  | **IMPLEMENTED** | `resolution-flow.service.ts`, `disputeClosesAt` column                                                               |
-| 2.6 | Dispute filing with named-source evidence         | **IMPLEMENTED** | `disputes` table, admin decision flow                                                                                |
-| 2.6 | Resolver review → final resolution → payout batch | **IMPLEMENTED** | `trade/resolution.service.ts`, chunked resumable payouts                                                             |
-| 2.6 | Bonds refunded/forfeited on outcome               | **IMPLEMENTED** | Approvals-gated                                                                                                      |
-| 2.6 | Void path at every state, full refund, zero fees  | **IMPLEMENTED** | `resolution-flow.integration.test.ts`                                                                                |
-| 2.6 | Immutable resolution log                          | **IMPLEMENTED** | `admin_audit`, append-only                                                                                           |
-| 2.6 | **User-facing dispute filing UI**                 | **PARTIAL**     | Endpoint exists; **no screen** lets a participant file one — admin can decide disputes nobody can raise from the app |
-| 2.6 | **Dispute-window countdown on the ticket**        | **MISSING**     | See Block A §7.2f                                                                                                    |
+| §   | Feature                                           | Status          | Evidence / gap                                                                              |
+| --- | ------------------------------------------------- | --------------- | ------------------------------------------------------------------------------------------- |
+| 2.6 | Propose resolution (creator/staff) with evidence  | **IMPLEMENTED** | `apps/api/src/resolution/resolution-flow.service.ts`                                        |
+| 2.6 | 48h dispute window state + timer                  | **IMPLEMENTED** | `resolution-flow.service.ts`, `disputeClosesAt` column                                      |
+| 2.6 | Dispute filing with named-source evidence         | **IMPLEMENTED** | `disputes` table, admin decision flow                                                       |
+| 2.6 | Resolver review → final resolution → payout batch | **IMPLEMENTED** | `trade/resolution.service.ts`, chunked resumable payouts                                    |
+| 2.6 | Bonds refunded/forfeited on outcome               | **IMPLEMENTED** | Approvals-gated                                                                             |
+| 2.6 | Void path at every state, full refund, zero fees  | **IMPLEMENTED** | `resolution-flow.integration.test.ts`                                                       |
+| 2.6 | Immutable resolution log                          | **IMPLEMENTED** | `admin_audit`, append-only                                                                  |
+| 2.6 | **User-facing dispute filing UI**                 | **IMPLEMENTED** | `market/resolution-status.tsx` posts to the existing `POST /community/markets/:id/disputes` |
+| 2.6 | **Dispute-window countdown on the ticket**        | **IMPLEMENTED** | `market/resolution-status.tsx`                                                              |
 
 ---
 
@@ -215,7 +225,7 @@ limits, which is a spec requirement and a real refusal-after-submit annoyance.
 | 2.15a | Reason prompt at trade time feeding the thread                     | **IMPLEMENTED** | `trade-sheet.tsx`, `trade-panel.tsx`                                     |
 | 2.15a | Tier 1 + eligibility gate on commenting                            | **IMPLEMENTED** | Threads controller guard                                                 |
 | 2.15d | Challenge links                                                    | **IMPLEMENTED** | `community-layer/challenge.service.ts`, `app/challenge/[token]/page.tsx` |
-| 2.15d | **Challenge mint button on the ticket**                            | **PARTIAL**     | See Block A                                                              |
+| 2.15d | **Challenge mint button on the ticket**                            | **IMPLEMENTED** | `market/challenge-button.tsx` — see Block A                              |
 | 2.15e | Moderation queue + tipster auto-flags                              | **IMPLEMENTED** | `app/admin/moderation/page.tsx`                                          |
 | 2.15b | **Forecasting reputation: accuracy, calibration, category titles** | **MISSING**     | `reputation` table exists; nothing computes or displays it               |
 | 2.15b | **Weekly Top Calls**                                               | **MISSING**     | `top_calls` table exists; no job, no screen                              |
