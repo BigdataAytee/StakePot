@@ -10,7 +10,7 @@ import { CommunityLayerModule } from './community-layer/community-layer.module';
 import { CommunityModule } from './community/community.module';
 import { CreatorModule } from './creator/creator.module';
 import { HardeningModule } from './hardening/hardening.module';
-import { HealthController } from './health/health.controller';
+import { HealthController, RootController } from './health/health.controller';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { LedgerModule } from './ledger/ledger.module';
 import { MarketModule } from './market/market.module';
@@ -56,6 +56,6 @@ import { WalletModule } from './wallet/wallet.module';
     RealtimeModule,
     HttpModule,
   ],
-  controllers: [HealthController, MetricsController],
+  controllers: [RootController, HealthController, MetricsController],
 })
 export class AppModule {}
