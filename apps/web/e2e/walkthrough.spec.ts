@@ -104,13 +104,16 @@ test.describe('the walkthrough', () => {
     await page.getByRole('checkbox').check();
     await page.getByRole('button', { name: 'Create account' }).click();
 
-    // Tier 0 lands in the markets with money to spend, not on a checkpoint.
+    // Tier 0 lands in the markets with money to spend, and nothing on the way
+    // in asks it to prove a contact.
     await expect(page).toHaveURL(/\/markets/, { timeout: 15_000 });
     await expect(page.getByText('Balance').first()).toBeVisible();
+    await expect(page.getByText(/verify/i)).toHaveCount(0);
+    await capture(page, 'markets-tier0', testInfo);
 
-    // Verification is one tap away when they want it, and says up front that
-    // it is optional until money leaves.
-    await page.getByRole('link', { name: /Verify to unlock more/i }).click();
+    // The screen still exists for anyone who goes looking; it is just never
+    // put in front of them.
+    await page.goto('/verify');
     await expect(page.getByRole('heading', { name: /Confirm your contact/i })).toBeVisible();
     await capture(page, 'verify-prompt', testInfo);
   });

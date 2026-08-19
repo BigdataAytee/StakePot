@@ -64,11 +64,6 @@ export function AppHeader() {
               {money(me.escrowed)} in open markets
             </span>
           )}
-          {!me.contactVerified && (
-            <Link href="/verify" className="font-mono text-xs text-rise underline">
-              Verify to unlock more
-            </Link>
-          )}
           <button
             type="button"
             onClick={() => void logOut()}

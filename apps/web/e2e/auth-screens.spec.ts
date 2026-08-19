@@ -93,16 +93,11 @@ test.describe('the auth screens', () => {
     await page.getByText('I am 18 or older').click();
     await page.getByRole('button', { name: 'Create account' }).click();
 
-    // Straight into the product. Tier 0 has a spendable balance and both
-    // shelves; a code box between somebody and what they signed up for reads as
-    // a wall whether or not it is one.
+    // Straight into the product, and nothing asks them to prove anything on the
+    // way. Tier 0 has a spendable balance and both shelves.
     await expect(page).toHaveURL(/\/markets/, { timeout: 20_000 });
     await expect(page.getByText('Balance').first()).toBeVisible();
-
-    // Verification is invited, not imposed — and reachable when they want it.
-    await page.getByRole('link', { name: /Verify to unlock more/i }).click();
-    await expect(page.getByRole('heading', { name: /Confirm your contact/i })).toBeVisible();
-    await expect(page.getByText(/you can stake on any market without it/i)).toBeVisible();
+    await expect(page.getByText(/verify/i)).toHaveCount(0);
   });
 
   test('a second signup on the same address is refused in plain words', async ({ page }) => {
