@@ -71,9 +71,30 @@ jobs:
             "select count(*) from markets" | tee /tmp/count
           test "$(cat /tmp/count)" -ge 6 || { echo "::error::fewer than six markets after seeding"; exit 1; }
 
+      # Promotes an existing account to staff. Optional: skipped when the secret
+      # is absent, so the seed does not depend on it.
+      #
+      # The address is a secret rather than a literal because this repository is
+      # public and it is somebody's personal email. It promotes an account, it
+      # does not create one — sign up through the app first, and the script says
+      # so plainly if it finds nobody.
+      - name: Promote the first admin
+        if: steps.guard.outputs.ready == 'true' && secrets.ADMIN_EMAIL != ''
+        env:
+          PGPASSWORD_URL: ${{ secrets.PROD_DATABASE_URL }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+        run: |
+          psql "$PGPASSWORD_URL" -v ON_ERROR_STOP=1 \
+            -v email="'$ADMIN_EMAIL'" -v role="'admin'" \
+            -f scripts/deploy/promote-admin.sql
+
       - name: What the live API returns
         if: steps.guard.outputs.ready == 'true'
         run: |
           body=$(curl -sS -m 90 https://stakeam-api.onrender.com/markets)
-          echo "markets from the API: $(echo "$body" | grep -o '"id"' | wc -l)"
-          echo "$body" | head -c 300; echo
+          # Count markets, not every `id` in the payload: each market carries its
+          # outcomes, so counting `"id"` reported eighteen for six markets and
+          # would have been believed next time.
+          echo "markets from the API: $(echo "$body" | grep -o '"shelf":' | wc -l)"
+          echo "questions:"
+          echo "$body" | grep -o '"question":"[^"]*"' | sed 's/"question":"/  · /; s/"$//'
