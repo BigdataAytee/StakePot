@@ -71,6 +71,25 @@ pnpm dev                      # web on :3000, api on :3001
 | `pnpm typecheck`  | tsc across the workspace                |
 | `pnpm migrate`    | `prisma migrate deploy`                 |
 
+## A fresh deployment
+
+Migrations build the schema and nothing else — no markets, no staff. That is on
+purpose (a migration that invents tradeable questions runs on every deploy), and
+it means a newly deployed StakeAm shows "Nothing open here yet" on both shelves
+until somebody opens the catalogue:
+
+```bash
+# Six markets across both shelves, with real sources and future dates.
+psql "$DATABASE_URL" -f scripts/deploy/seed-markets.sql
+
+# Then sign up through the app and promote that account to staff.
+psql "$DATABASE_URL" -v email="'you@example.com'" -v role="'admin'" \
+  -f scripts/deploy/promote-admin.sql
+```
+
+Both are idempotent. Read `scripts/deploy/seed-markets.sql` before running it —
+those questions become the first thing anybody sees.
+
 ## Rules that are not negotiable
 
 - **Floats are forbidden in the ledger.** Every money and share quantity is a
