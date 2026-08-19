@@ -98,7 +98,21 @@ export default function DraftsQueue() {
               }`}
             >
               <div className="flex items-baseline justify-between gap-3">
-                <h2 className="text-md font-bold">{draft.question}</h2>
+                <h2 className="text-md font-bold">
+                  {/*
+                    §6.2: "first-time creators always flagged for human
+                    review". The flag was filed on every draft and shown on
+                    none, which made the rule true in the database and
+                    invisible at the desk where it has to change what somebody
+                    does. These sort to the top of the queue too.
+                  */}
+                  {draft.firstMarket && (
+                    <span className="mr-2 rounded-full bg-money/15 px-2 py-0.5 align-middle text-xs font-bold uppercase tracking-wide text-money">
+                      First market
+                    </span>
+                  )}
+                  {draft.question}
+                </h2>
                 <span className="whitespace-nowrap font-mono text-xs text-text-muted">
                   {draft.slot ?? draft.source} · score{' '}
                   <span className="text-money">{draft.score.toFixed(2)}</span>

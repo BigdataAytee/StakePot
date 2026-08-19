@@ -7,6 +7,7 @@ import { PlatformConfigService } from '../platform-config/platform-config.servic
 import { PrismaService } from '../prisma/prisma.service';
 import { QuestionEngineUnavailableError } from './anthropic-question-model';
 import {
+  byQueuePriority,
   CATALOGUE_SLOTS,
   CATALOGUE_SLOT_NAMES,
   draftScore,
@@ -427,12 +428,7 @@ export class QuestionEngineService {
       take: params.limit ?? 50,
     });
 
-    return drafts
-      .map((draft) => this.describeDraft(draft))
-      .sort((a, b) => {
-        if (a.state !== b.state) return a.state === 'suggested' ? -1 : 1;
-        return b.score - a.score;
-      });
+    return drafts.map((draft) => this.describeDraft(draft)).sort(byQueuePriority);
   }
 
   private describeDraft(draft: MarketDraft) {
@@ -512,12 +508,22 @@ export class QuestionEngineService {
     state: 'suggested' | 'rejected',
   ) {
     // §2.9: "First-time creators always route to human review."
-    const finalState = params.isFirstMarket && state === 'suggested' ? 'suggested' : state;
-
+    //
+    // Which every community submission already does — `suggested` means "in the
+    // queue", and staff open the market from there. The line that used to sit
+    // here read `isFirstMarket && state === 'suggested' ? 'suggested' : state`,
+    // which is `state` on both branches: it looked like it enforced the rule
+    // and enforced nothing. Deleting it changes no behaviour, which is exactly
+    // the point — the routing was never what was missing.
+    //
+    // What was missing is the second half of §6.2: "first-time creators always
+    // *flagged* for human review". The flag is filed below and the queue now
+    // sorts on it, so a reviewer sees whose first market this is instead of it
+    // sitting fourteenth by score behind a known creator's fourth.
     if (params.isFirstMarket) {
       logger.info(
         { creatorId: params.creatorId },
-        'first market from this creator — routed to human review regardless of score',
+        'first market from this creator — flagged at the top of the review queue',
       );
     }
 
@@ -542,7 +548,7 @@ export class QuestionEngineService {
           creatorId: params.creatorId,
           activationPath: params.activationPath ?? 'organic',
         } as Prisma.InputJsonValue,
-        state: finalState,
+        state,
       },
     });
   }

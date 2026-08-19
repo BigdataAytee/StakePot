@@ -178,3 +178,31 @@ export function duplicateOf(
   }
   return worst;
 }
+
+/** What the queue's order depends on. Anything else about a draft is display. */
+export interface QueuePosition {
+  state: 'suggested' | 'rejected' | string;
+  firstMarket: boolean;
+  score: number;
+}
+
+/**
+ * §6.2's queue order: open work first, first-time creators next, then score.
+ *
+ * The first-market rung is the one worth arguing about, because it deliberately
+ * outranks the engine's own confidence. A high score means the model liked the
+ * question; the creators it is least entitled to be confident about are the
+ * ones it has never seen settle anything. §2.9 says first-time creators are
+ * "always flagged for human review", and a flag that does not move the row is
+ * not a flag — it is a field.
+ *
+ * Pure, so the ordering is testable without a database. It was previously
+ * inline in the service, next to a first-market conditional that read
+ * `isFirstMarket && state === 'suggested' ? 'suggested' : state` — the same
+ * value on both branches, so the rule was enforced nowhere.
+ */
+export function byQueuePriority(a: QueuePosition, b: QueuePosition): number {
+  if (a.state !== b.state) return a.state === 'suggested' ? -1 : 1;
+  if (a.firstMarket !== b.firstMarket) return a.firstMarket ? -1 : 1;
+  return b.score - a.score;
+}
