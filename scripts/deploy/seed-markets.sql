@@ -19,6 +19,23 @@
 --
 -- Read them before you run this. These become the first thing anybody sees.
 
+-- Stop at the first error rather than ploughing on. Without this, psql reports
+-- each failure and carries on to the next statement, so a run that inserted
+-- nothing looks a lot like a run that worked — which is how a seed came to be
+-- "run" against a database that stayed empty.
+\set ON_ERROR_STOP on
+
+-- The questions contain ₦ and typographic quotes. A client whose encoding is
+-- not UTF-8 — a Windows console at its default code page, most commonly —
+-- refuses those bytes and every INSERT below fails with them. Declaring it here
+-- means the file carries its own requirement rather than depending on whoever
+-- runs it.
+SET client_encoding = 'UTF8';
+
+-- All six or none. A half-seeded catalogue is worse than an empty one: the
+-- shelves look stocked and the missing markets are invisible.
+BEGIN;
+
 INSERT INTO markets
   (id, shelf, question, "sourceName", "sourceUrl", "criteriaJson", "edgeCasesJson",
    "eventDate", "voidDate", "liquidityParam", "feeBps", state, "activationPath",
@@ -85,4 +102,8 @@ VALUES
   ('launch-epl-nigerian-no',      'launch-epl-nigerian',     'No',  1, 0, 0.5, 0, false)
 ON CONFLICT (id) DO NOTHING;
 
+COMMIT;
+
+-- What is now on the shelves. If this prints nothing, nothing was inserted.
 SELECT shelf, count(*) AS markets FROM markets WHERE state = 'active' GROUP BY shelf;
+SELECT count(*) AS total_markets FROM markets;

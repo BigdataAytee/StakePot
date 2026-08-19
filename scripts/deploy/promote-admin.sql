@@ -15,6 +15,9 @@
 -- so a single admin account cannot settle a market alone — that is the point of
 -- the rule and promoting yourself twice does not get round it.
 
+\set ON_ERROR_STOP on
+SET client_encoding = 'UTF8';
+
 UPDATE users SET role = :role::"UserRole" WHERE email = :email;
 
 SELECT
