@@ -11,10 +11,20 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { UserRole } from '@prisma/client';
-import { IsBoolean, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { subHours } from 'date-fns';
 
 import { signReserves } from '../admin/reserves-export';
+import { mask } from '../auth/pii';
+import { PiiAccessService } from '../audit/pii-access.service';
 import { SolvencyService } from '../admin/solvency.service';
 import { ApprovalError, ApprovalsService, type Actor } from '../approvals/approvals.service';
 import { APPROVAL_ACTIONS, APPROVAL_ACTION_TYPES } from '../approvals/approval-actions';
@@ -98,6 +108,21 @@ export class LedgerQueryDto {
  * are split so that the person who proposes a result is never the person who
  * confirms it.
  */
+/**
+ * Revealing PII is an action with a reason, not a query parameter.
+ *
+ * `fields` is explicit so that "I needed to check their email" cannot quietly
+ * also hand over a phone number — the log then records what was actually
+ * exposed rather than what the endpoint happened to return.
+ */
+export class RevealDto {
+  @IsArray()
+  @IsIn(['email', 'phone'], { each: true })
+  fields!: ('email' | 'phone')[];
+
+  @IsString() @MinLength(10) @MaxLength(300) reason!: string;
+}
+
 @Controller('admin')
 export class AdminController {
   constructor(
@@ -111,6 +136,7 @@ export class AdminController {
     private readonly engine: QuestionEngineService,
     private readonly official: OfficialMarketService,
     private readonly audit: AdminAuditService,
+    private readonly pii: PiiAccessService,
   ) {}
 
   private actor(request: RequestWithUser): Actor {
@@ -675,15 +701,31 @@ export class AdminController {
     return { id: ticket.id, state: ticket.state };
   }
 
+  /**
+   * A member's account, with their contact details masked (§2.11).
+   *
+   * This screen used to print everybody's email and phone number to everybody
+   * who opened it. Most PII exposure is not a stolen database — it is a
+   * support console that hands out contact details as a side effect of
+   * answering "is this the right account", which a masked value answers just
+   * as well. Revealing is a second, logged call.
+   */
   @Get('users/:id')
   @UseGuards(JwtGuard, RolesGuard)
   @Roles('trust_safety', 'finance', 'admin')
   async user(@Param('id') userId: string) {
-    const user = await this.prisma.user.findUnique({
+    const found = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, email: true, phone: true, tier: true, role: true, status: true },
     });
-    if (user === null) throw new NotFoundException('no such user');
+    if (found === null) throw new NotFoundException('no such user');
+
+    const user = {
+      ...found,
+      email: mask('email', found.email),
+      phone: mask('phone', found.phone),
+      masked: true,
+    };
 
     const derived = await this.ledger.deriveBalance(userId, 'SPC');
     const wallet = await this.prisma.wallet.findUnique({
@@ -701,6 +743,61 @@ export class AdminController {
         escrowed: wallet?.escrowed.toString() ?? '0',
       },
     };
+  }
+
+  /**
+   * Reveal a member's contact details, on the record (§2.11).
+   *
+   * The reason is mandatory and stored. Not because a determined insider
+   * cannot type a plausible one, but because it makes every access a
+   * deliberate act with a name attached — and because a review of one agent's
+   * reasons over a month is where the pattern shows up.
+   *
+   * The log is written before the value is returned. If the trail cannot be
+   * written, the access does not happen: a best-effort log is optional exactly
+   * when the database is unhealthy, which is when it matters most.
+   */
+  @Post('users/:id/reveal')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('trust_safety', 'admin')
+  async reveal(
+    @Req() request: RequestWithUser,
+    @Param('id') userId: string,
+    @Body() body: RevealDto,
+  ) {
+    const actor = this.actor(request);
+    const found = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, phone: true },
+    });
+    if (found === null) throw new NotFoundException('no such user');
+
+    await this.pii.record({
+      staffId: actor.userId,
+      subjectId: userId,
+      fields: body.fields,
+      reason: body.reason,
+      ip: actor.ip,
+    });
+
+    return {
+      email: body.fields.includes('email') ? found.email : undefined,
+      phone: body.fields.includes('phone') ? found.phone : undefined,
+    };
+  }
+
+  /** Who has looked at this account, and why. Shown beside the account. */
+  @Get('users/:id/access-log')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('trust_safety', 'admin')
+  async accessLog(@Param('id') userId: string) {
+    const rows = await this.pii.forSubject(userId);
+    return rows.map((row) => ({
+      staffId: row.staffId,
+      fields: row.fields,
+      reason: row.reason,
+      at: row.createdAt.toISOString(),
+    }));
   }
 
   /** Rulebook and workflow refusals are 400s with the sentence, not stack traces. */

@@ -25,6 +25,13 @@ import { WalletModule } from '../wallet/wallet.module';
 import { AccountController } from './account.controller';
 import { AbuseController, DeviceController } from './abuse.controller';
 import { AdminController } from './admin.controller';
+import {
+  ConfigConsoleController,
+  CreatorsDeskController,
+  GrowthController,
+  LifecycleController,
+  SystemRoomController,
+} from './admin-ops.controller';
 import { AuthController } from './auth.controller';
 import { PublicConfigController } from './public-config.controller';
 import { StatusController } from './status.controller';
@@ -69,7 +76,12 @@ import { TradesController } from './trades.controller';
     AbuseController,
     AccountController,
     AdminController,
+    ConfigConsoleController,
+    CreatorsDeskController,
     DeviceController,
+    GrowthController,
+    LifecycleController,
+    SystemRoomController,
     AuthController,
     PublicConfigController,
     StatusController,
