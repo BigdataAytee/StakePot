@@ -45,6 +45,10 @@ async function capture(page: Page, name: string, info: TestInfo): Promise<void> 
   await page.screenshot({
     path: join(SHOTS, info.project.name, `${String(shot).padStart(2, '0')}-${name}.png`),
     fullPage: true,
+    // Settle first. Caught mid-transition, the shelf chips photographed with
+    // two of them part-green, which reads as two selected shelves — a
+    // documentation image that says something the product does not.
+    animations: 'disabled',
   });
 }
 
@@ -142,7 +146,7 @@ test.describe('the walkthrough', () => {
     await capture(page, 'markets-signed-in', testInfo);
   });
 
-  test('4 · both shelves are on the markets screen', async ({ page }, testInfo) => {
+  test('4 · both shelves are on the markets screen, and switchable', async ({ page }, testInfo) => {
     await signIn(page, email, password);
     await page.goto('/markets');
     await expect(page.getByRole('heading', { name: 'Official', exact: true })).toBeVisible();
@@ -150,6 +154,56 @@ test.describe('the walkthrough', () => {
     await expect(page.getByText(/naira close below/i)).toBeVisible();
     await expect(page.getByText(/BBNaija eviction/i)).toBeVisible();
     await capture(page, 'shelves', testInfo);
+
+    const shelf = page.getByRole('navigation', { name: 'Shelf' });
+
+    // Community alone. Two stacked sections and no control meant that on a
+    // phone one full shelf pushed the other off the screen, and the second read
+    // as missing rather than as further down.
+    await shelf.getByRole('link', { name: /^Community/ }).click();
+    await expect(page).toHaveURL(/shelf=community/);
+    await expect(page.getByText(/BBNaija eviction/i)).toBeVisible();
+    await expect(page.getByText(/naira close below/i)).toHaveCount(0);
+    await capture(page, 'shelf-community', testInfo);
+
+    // Official alone.
+    await shelf.getByRole('link', { name: /^Official/ }).click();
+    await expect(page).toHaveURL(/shelf=official/);
+    await expect(page.getByText(/naira close below/i)).toBeVisible();
+    await expect(page.getByText(/BBNaija eviction/i)).toHaveCount(0);
+
+    // And back to everything. The choice is in the URL, so it can be linked and
+    // survives a reload.
+    await shelf.getByRole('link', { name: /^All/ }).click();
+    await expect(page.getByText(/naira close below/i)).toBeVisible();
+    await expect(page.getByText(/BBNaija eviction/i)).toBeVisible();
+  });
+
+  test('4b · the shelf chips carry counts and are reachable with a thumb', async ({ page }) => {
+    await signIn(page, email, password);
+    await page.goto('/markets');
+
+    const chips = page.getByRole('navigation', { name: 'Shelf' }).getByRole('link');
+    await expect(chips).toHaveCount(3);
+
+    // A count is what makes an empty shelf answerable without tapping into it.
+    for (const chip of await chips.all()) {
+      await expect(chip).toHaveText(/\d+$/);
+      const box = await chip.boundingBox();
+      expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+    }
+
+    // Deep-linkable, and the selected chip says so to a screen reader.
+    await page.goto('/markets?shelf=community');
+    await expect(
+      page.getByRole('navigation', { name: 'Shelf' }).getByRole('link', { name: /^Community/ }),
+    ).toHaveAttribute('aria-current', 'page');
+
+    // A shelf name that means nothing falls back to showing everything rather
+    // than to an empty screen.
+    await page.goto('/markets?shelf=nonsense');
+    await expect(page.getByRole('heading', { name: 'Official', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Community', exact: true })).toBeVisible();
   });
 
   test('5 · the ticket shows the chart, the argument bar and the money', async ({

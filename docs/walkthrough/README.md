@@ -26,7 +26,7 @@ these images cannot drift from a passing suite without the suite going red.
 | 01    | Landing                | §7.6's front door: hero, live market at real prices, how-it-works, trust block, CTA |
 | 02    | Signup                 | §2.1 Tier 0 — one contact field, password, age attestation                          |
 | 03–04 | Verification           | Tier 1 by real OTP, read from the notification the API actually sent                |
-| 05–06 | Markets                | Both shelves; balance in the header                                                 |
+| 05–08 | Markets                | Both shelves, the shelf chips, and one shelf on its own; balance in the header      |
 | 07    | Ticket                 | Chart, argument bar, money strip, priced buttons                                    |
 | 08    | Trade sheet (buy)      | Amount-first entry, shares, est. to win                                             |
 | 09    | Position               | What you hold, marked to market                                                     |
@@ -128,7 +128,16 @@ and answered generically. §2.7's one-account-per-contact clash is turned into a
 sentence with a next step: "an account already uses that email — log in
 instead, or use another address."
 
-**12. `pnpm start` ran a server the deployment never uses.** Next warns that
+**12. There was no way to choose a shelf.** §7.1's two shelves were two stacked
+sections and nothing else — fine on a desktop, wrong on the phone this product
+is used on, where one full shelf of cards pushes the other clean off the screen
+and the second reads as missing rather than as further down. There are chips
+now: All · Official · Community, each carrying a count, so an empty shelf
+answers for itself instead of making you tap to find out. The choice lives in
+the URL, so a shelf is linkable and survives a reload, and the page stays a
+server component.
+
+**13. `pnpm start` ran a server the deployment never uses.** Next warns that
 `next start` does not support `output: standalone` on every boot. That mismatch
 is how (1) survived.
 
