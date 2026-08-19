@@ -1,5 +1,7 @@
 import Link from 'next/link';
 
+import { SiteFooter } from '@/components/site-footer';
+
 import { api, type MarketSummary } from '@/lib/api';
 import { ArgumentBar } from '@/components/argument-bar';
 import { MarketCard } from '@/components/market-card';
@@ -185,22 +187,15 @@ export default async function LandingPage() {
         </Link>
       </section>
 
-      <footer className="border-t border-border py-8 text-sm text-text-muted">
-        <p>18+. Play responsibly — StakeAm is entertainment, not income.</p>
-        <p className="mt-2">
-          <Link href="/rules" className="underline">
-            Rules
-          </Link>{' '}
-          ·{' '}
-          <Link href="/support" className="underline">
-            Support
-          </Link>{' '}
-          ·{' '}
-          <Link href="/status" className="underline">
-            Status
-          </Link>
-        </p>
-      </footer>
+      {/*
+        One footer, shared. This page had its own three links and the legal
+        pages had none, so the FAQ and the privacy policy were reachable only by
+        typing the URL — which is the same as not existing.
+      */}
+      <p className="mt-16 text-sm text-text-muted">
+        Play responsibly — StakeAm is entertainment, not income.
+      </p>
+      <SiteFooter />
     </main>
   );
 }

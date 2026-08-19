@@ -33,6 +33,15 @@ const HEADLINE: Record<StatusView['status'], { text: string; tone: string }> = {
  * published alongside the uptime because §2.10's reconciliation is the number
  * people actually want when they are worried.
  */
+/**
+ * Its own title and description, so a tab, a search result and a pasted
+ * link each say which page this is rather than just naming the product.
+ */
+export const metadata = {
+  title: 'Status',
+  description: 'Whether StakeAm is up, and what happened if it was not.',
+};
+
 export default async function StatusPage() {
   let view: StatusView | null = null;
   try {

@@ -143,6 +143,11 @@ services:
       # fails while the page still renders.
       - key: NEXT_PUBLIC_API_URL
         value: https://stakeam-api.onrender.com
+      # This service's own address. Feeds robots.txt, the sitemap and every
+      # Open Graph tag, all of which have to be absolute. Same build-time
+      # inlining as the line above, so it is wrong until a rebuild if changed.
+      - key: NEXT_PUBLIC_SITE_URL
+        value: https://stakeam-web.onrender.com
       - key: NEXT_PUBLIC_SENTRY_DSN
         sync: false
 # ---------------------------------------------------------------------------

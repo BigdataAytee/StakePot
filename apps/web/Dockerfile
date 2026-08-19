@@ -27,6 +27,13 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ARG NEXT_PUBLIC_API_URL=http://localhost:3001
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 
+# The site's own origin, for the same reason and with the same trap: every Open
+# Graph tag, the sitemap and robots.txt need an absolute URL, and a wrong one
+# here means shared links preview against somewhere that is not this site while
+# every page still renders perfectly.
+ARG NEXT_PUBLIC_SITE_URL=http://localhost:3000
+ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
+
 COPY tsconfig.base.json ./
 COPY packages/tokens packages/tokens
 COPY apps/web apps/web

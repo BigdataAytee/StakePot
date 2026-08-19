@@ -37,6 +37,16 @@ const isView = (value: string | undefined): value is View =>
  * The choice lives in the URL rather than in component state, so a shelf can be
  * linked to and survives a reload, and the page stays a server component.
  */
+/**
+ * Its own title and description, so a tab, a search result and a pasted
+ * link each say which page this is rather than just naming the product.
+ */
+export const metadata = {
+  title: 'Markets',
+  description:
+    'Every open market on StakeAm, official and community — live prices, pot sizes and time to freeze.',
+};
+
 export default async function MarketsPage({
   searchParams,
 }: {
