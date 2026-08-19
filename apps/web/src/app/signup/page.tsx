@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { API_URL } from '@/lib/api';
 import { AuthShell } from '@/components/auth-shell';
@@ -23,6 +23,14 @@ import { usePublicConfig } from '@/lib/public-config';
 export default function SignupPage() {
   const router = useRouter();
   const config = usePublicConfig();
+  // §2.17: `?ref=CODE` off a shared link. Read once, on the client, because
+  // the whole page is client-rendered and a Suspense boundary for one query
+  // parameter would cost more than it saves.
+  const [referralCode, setReferralCode] = useState('');
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get('ref');
+    if (code !== null) setReferralCode(code.trim().toUpperCase());
+  }, []);
   const [contact, setContact] = useState('');
   const [password, setPassword] = useState('');
   const [ageAttested, setAgeAttested] = useState(false);
@@ -44,6 +52,9 @@ export default function SignupPage() {
           ...(looksLikeEmail ? { email: contact.trim() } : { phone: contact.trim() }),
           password,
           ageAttested,
+          // A wrong code is ignored server-side rather than refused — a bad
+          // link must never be the reason somebody cannot open an account.
+          ...(referralCode.trim().length === 0 ? {} : { referralCode: referralCode.trim() }),
         }),
       });
 
@@ -113,6 +124,14 @@ export default function SignupPage() {
           minLength={10}
           hint="At least 10 characters."
         />
+
+        {referralCode !== '' && (
+          <p className="rounded-md border border-rise/40 bg-rise-bg px-3 py-2 text-sm">
+            You were invited with code <span className="font-mono font-bold">{referralCode}</span>.
+            Whoever sent it is paid once you verify your contact and place a first stake — nothing
+            comes out of your balance.
+          </p>
+        )}
 
         {/*
           A 16px checkbox gating the only button on the screen is the kind of

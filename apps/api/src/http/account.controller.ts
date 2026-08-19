@@ -28,9 +28,19 @@ import { TotpError, TotpService } from '../auth/totp.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RgBlockedError, RgService } from '../rg/rg.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
+import { ConsentService, type ConsentDocument } from '../account/consent.service';
+import { FreezeService } from '../account/freeze.service';
+import { ReferralService } from '../account/referral.service';
+import { SessionsService } from '../account/sessions.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SupportError, SupportService } from '../support/support.service';
 import { checkTierCap } from '../trade/tier-cap';
+
+/** §2.18: accepting a document, or withdrawing marketing consent. */
+export class ConsentDto {
+  @IsIn(['terms', 'privacy', 'rules', 'marketing']) document!: ConsentDocument;
+  @IsOptional() @IsBoolean() accepted?: boolean;
+}
 
 export class LimitsDto {
   @IsOptional() @IsNumberString() depositLimit?: string;
@@ -93,6 +103,10 @@ export class AccountController {
     private readonly totp: TotpService,
     private readonly prisma: PrismaService,
     private readonly config: PlatformConfigService,
+    private readonly sessions: SessionsService,
+    private readonly freezes: FreezeService,
+    private readonly consents: ConsentService,
+    private readonly referrals: ReferralService,
   ) {}
 
   private me(request: RequestWithUser): { userId: string; role: UserRole } {
@@ -315,6 +329,111 @@ export class AccountController {
   }
 
   // ------------------------------------------------------------------- staff 2FA
+
+  // ------------------------------------------------- sessions & devices (§2.18)
+
+  /**
+   * Where this account is signed in.
+   *
+   * The current session is marked so somebody cannot accidentally end it and
+   * conclude the button is broken.
+   */
+  @Get('sessions')
+  @UseGuards(JwtGuard)
+  async sessionList(@Req() request: RequestWithUser) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+
+    const [sessions, freeze] = await Promise.all([
+      this.sessions.list(user.userId, user.jti),
+      this.freezes.withdrawalsFrozen(user.userId),
+    ]);
+
+    return {
+      sessions,
+      // Shown here rather than only on the wallet: somebody checking their
+      // sessions is usually checking because something felt wrong, and the
+      // freeze is the other half of that story.
+      freeze: {
+        active: freeze.frozen,
+        until: freeze.until?.toISOString() ?? null,
+        reason: freeze.reason,
+      },
+    };
+  }
+
+  @Post('sessions/:id/revoke')
+  @UseGuards(JwtGuard)
+  async revokeSession(@Req() request: RequestWithUser, @Param('id') id: string) {
+    const { userId } = this.me(request);
+    return { revoked: await this.sessions.revoke(userId, id) };
+  }
+
+  /** End every session but this one. */
+  @Post('sessions/revoke-others')
+  @UseGuards(JwtGuard)
+  async revokeOtherSessions(@Req() request: RequestWithUser) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+    // A token with no id predates session recording; there is nothing to spare
+    // and ending everything would log this person out too. Refuse rather than
+    // do something surprising.
+    if (user.jti === undefined) {
+      throw new BadRequestException('sign in again before ending your other sessions');
+    }
+    return { revoked: await this.sessions.revokeOthers(user.userId, user.jti) };
+  }
+
+  /**
+   * §2.18's one-tap "this wasn't me".
+   *
+   * Extends the freeze and ends every session rather than lifting anything:
+   * somebody pressing this is telling us an attacker is mid-way through, and
+   * the right answer is more friction, not less.
+   */
+  @Post('lock')
+  @UseGuards(JwtGuard)
+  async lock(@Req() request: RequestWithUser) {
+    const { userId } = this.me(request);
+    const { endsAt } = await this.freezes.lockDown(userId);
+    return { lockedUntil: endsAt.toISOString() };
+  }
+
+  // ------------------------------------------------------------ consents (§2.18)
+
+  @Get('consents')
+  @UseGuards(JwtGuard)
+  async consentHistory(@Req() request: RequestWithUser) {
+    const { userId } = this.me(request);
+    const [history, outstanding] = await Promise.all([
+      this.consents.historyFor(userId),
+      this.consents.outstanding(userId),
+    ]);
+    return { history, outstanding, marketing: await this.consents.marketingAllowed(userId) };
+  }
+
+  @Post('consents')
+  @UseGuards(JwtGuard)
+  async accept(@Req() request: RequestWithUser, @Body() body: ConsentDto) {
+    const { userId } = this.me(request);
+    const ip = request.ip ?? 'unknown';
+
+    if (body.document === 'marketing' && body.accepted === false) {
+      await this.consents.withdrawMarketing(userId, ip);
+      return { accepted: false };
+    }
+
+    await this.consents.record({ userId, document: body.document, ip });
+    return { accepted: true };
+  }
+
+  // ----------------------------------------------------------- referrals (§2.17)
+
+  @Get('referrals')
+  @UseGuards(JwtGuard)
+  async referralSummary(@Req() request: RequestWithUser) {
+    return this.referrals.summaryFor(this.me(request).userId);
+  }
 
   @Get('2fa')
   @UseGuards(JwtGuard)

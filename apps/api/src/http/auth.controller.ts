@@ -12,6 +12,9 @@ import {
 } from '@nestjs/common';
 import { IsBoolean, IsEmail, IsOptional, IsString, Length, MinLength } from 'class-validator';
 
+import { ConsentService } from '../account/consent.service';
+import { ReferralService } from '../account/referral.service';
+import { SessionsService } from '../account/sessions.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { AuthError, AuthService } from '../auth/auth.service';
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
@@ -28,6 +31,9 @@ export class SignupDto {
   @IsOptional() @IsString() phone?: string;
   @MinLength(10) password!: string;
   @IsBoolean() ageAttested!: boolean;
+  /** §2.17. Optional, and a wrong one is ignored rather than refused — a bad
+   * code must never be a reason somebody cannot open an account. */
+  @IsOptional() @IsString() @Length(4, 12) referralCode?: string;
 }
 
 export class LoginDto {
@@ -75,12 +81,15 @@ export class AuthController {
     private readonly prisma: PrismaService,
     private readonly wallet: WalletService,
     private readonly revocations: TokenRevocationService,
+    private readonly sessions: SessionsService,
+    private readonly consents: ConsentService,
+    private readonly referrals: ReferralService,
   ) {}
 
   @Post('signup')
   @UseGuards(RateLimitGuard)
   @RateLimit('auth')
-  async signup(@Body() body: SignupDto) {
+  async signup(@Req() request: RequestWithUser, @Body() body: SignupDto) {
     try {
       const result = await this.auth.signup({
         ...(body.email === undefined ? {} : { email: body.email }),
@@ -88,6 +97,24 @@ export class AuthController {
         password: body.password,
         ageAttested: body.ageAttested,
       });
+
+      // §2.18: what they agreed to, and which version of it. Recorded at the
+      // moment of agreement rather than inferred later from a signup date.
+      await this.consents
+        .acceptAllRequired(result.userId, request.ip ?? 'unknown')
+        .catch((error: unknown) => {
+          logger.error({ userId: result.userId, error }, 'could not record signup consents');
+        });
+
+      // §2.17. Attaching only — nothing is paid until they verify and stake.
+      if (body.referralCode !== undefined && body.referralCode.trim().length > 0) {
+        await this.referrals
+          .claim({ referredId: result.userId, code: body.referralCode })
+          .catch(() => undefined);
+      }
+
+      await this.recordSession(request, result);
+
       // The top of §6.8's funnel. Best-effort, like every analytics write.
       await this.analytics.record('signup', { tier: result.tier }, result.userId);
       return result;
@@ -99,11 +126,59 @@ export class AuthController {
   @Post('login')
   @UseGuards(RateLimitGuard)
   @RateLimit('auth')
-  async login(@Body() body: LoginDto) {
+  async login(@Req() request: RequestWithUser, @Body() body: LoginDto) {
     try {
-      return await this.auth.login(body);
+      const tokens = await this.auth.login(body);
+      await this.recordSession(request, tokens);
+      return tokens;
     } catch (error) {
       throw asRefusal(error, 'login');
+    }
+  }
+
+  /**
+   * §2.18: record the sign-in so it can be listed and ended.
+   *
+   * Done here rather than inside `auth.service` deliberately — the service
+   * mints the token and knows nothing about the request, and giving it the
+   * user agent and the IP would mean handing an authentication service a
+   * transport concern. The jti is read back off the token it just issued.
+   *
+   * Failure is swallowed: a session row that could not be written must never
+   * stop somebody logging in. The consequence is one session missing from a
+   * list, which is a smaller harm than a locked-out account.
+   */
+  private async recordSession(
+    request: RequestWithUser,
+    tokens: { accessToken: string; userId: string },
+  ): Promise<void> {
+    const claims = decodeClaims(tokens.accessToken);
+    if (claims?.jti === undefined) return;
+
+    const agent = request.headers['user-agent'];
+    try {
+      const { newDevice } = await this.sessions.open({
+        userId: tokens.userId,
+        jti: claims.jti,
+        userAgent: typeof agent === 'string' ? agent.slice(0, 300) : 'unknown',
+        ip: request.ip ?? 'unknown',
+      });
+
+      // §2.18: "new-device login notifies existing devices". The point is that
+      // somebody whose password has leaked hears about it from the account
+      // itself rather than from their balance.
+      if (newDevice) {
+        await this.notifications
+          .notify({
+            userId: tokens.userId,
+            type: 'contact_changed',
+            body: 'Your account was signed in on a new device. If that was not you, lock it now.',
+            data: { kind: 'new_device' },
+          })
+          .catch(() => undefined);
+      }
+    } catch {
+      // See above.
     }
   }
 

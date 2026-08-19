@@ -12,6 +12,15 @@ export interface AuthenticatedUser {
   readonly userId: string;
   readonly role: string;
   readonly tier: number;
+  /**
+   * The token's own id (§2.18).
+   *
+   * Carried so a screen can say which session is *this* one, and so "log out
+   * everywhere else" can spare it. Optional because tokens issued before
+   * sessions were recorded do not carry one, and those people must not be
+   * locked out at deploy time.
+   */
+  readonly jti?: string;
 }
 
 /**
@@ -65,7 +74,12 @@ export class JwtGuard implements CanActivate {
       throw new UnauthorizedException('this session has ended — sign in again');
     }
 
-    request.user = { userId: payload.sub, role: payload.role, tier: payload.tier };
+    request.user = {
+      userId: payload.sub,
+      role: payload.role,
+      tier: payload.tier,
+      ...(payload.jti === undefined ? {} : { jti: payload.jti }),
+    };
     return true;
   }
 }
@@ -96,7 +110,12 @@ export class OptionalJwtGuard implements CanActivate {
       // A revoked token is treated as no token, not as an error — same as an
       // expired one, for the same reason.
       if (!(await this.revocations.isRevoked(payload))) {
-        request.user = { userId: payload.sub, role: payload.role, tier: payload.tier };
+        request.user = {
+          userId: payload.sub,
+          role: payload.role,
+          tier: payload.tier,
+          ...(payload.jti === undefined ? {} : { jti: payload.jti }),
+        };
       }
     } catch {
       // Deliberately silent: an expired token on a public page should show the

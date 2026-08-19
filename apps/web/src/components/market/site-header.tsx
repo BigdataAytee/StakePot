@@ -215,12 +215,37 @@ function CashChip() {
   }
 
   return (
-    <Link
-      href="/wallet"
-      className="flex shrink-0 flex-col items-end rounded-md px-2 py-1 leading-[1.15] hover:bg-chip"
-    >
-      <span className="font-mono text-base font-bold text-money">{money(me.available)}</span>
-      <span className="hidden text-[10px] font-medium text-text-muted sm:block">Balance</span>
-    </Link>
+    <div className="flex shrink-0 items-center gap-1">
+      {/*
+        §2.18's account screen — sessions, consents, referrals. Reachable from
+        every screen, because the moment somebody wants it is the moment they
+        think something is wrong, and hunting for it is not what that moment
+        should involve.
+      */}
+      <Link
+        href="/account"
+        aria-label="Your account"
+        className="hidden size-9 items-center justify-center rounded-md text-text-muted hover:bg-chip hover:text-text sm:flex"
+      >
+        <svg viewBox="0 0 20 20" aria-hidden className="size-[18px]">
+          <circle cx="10" cy="6.5" r="3.2" fill="none" stroke="currentColor" strokeWidth="1.6" />
+          <path
+            d="M3.8 17c.7-3.3 3.2-5 6.2-5s5.5 1.7 6.2 5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+          />
+        </svg>
+      </Link>
+
+      <Link
+        href="/wallet"
+        className="flex flex-col items-end rounded-md px-2 py-1 leading-[1.15] hover:bg-chip"
+      >
+        <span className="font-mono text-base font-bold text-money">{money(me.available)}</span>
+        <span className="hidden text-[10px] font-medium text-text-muted sm:block">Balance</span>
+      </Link>
+    </div>
   );
 }
