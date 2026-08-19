@@ -186,7 +186,7 @@ function Slide({ market }: { market: MarketDetail }) {
                 </span>
                 {tradeable && (
                   <Link
-                    href={`/market/${market.id}`}
+                    href={`/market/${market.id}?side=${outcome.id}`}
                     aria-label={`Back ${outcome.label} on ${market.question} at ${kobo(outcome.price)}`}
                     className={`group/side relative z-10 grid h-8 w-16 place-items-center rounded-sm text-xs font-black transition-colors ${
                       down

@@ -2,9 +2,12 @@ import type { Metadata, Viewport } from 'next';
 import { NextIntlClientProvider } from 'next-intl';
 import { getMessages } from 'next-intl/server';
 
+import { Suspense } from 'react';
+
 import { archivo, spaceMono } from '@/lib/fonts';
 import { SITE_URL } from '@/lib/site';
 import { RealityCheck } from '@/components/reality-check';
+import { RouteProgress } from '@/components/route-progress';
 import './globals.css';
 
 const DESCRIPTION =
@@ -78,6 +81,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body>
         <NextIntlClientProvider messages={messages}>
+          {/* Suspended because it reads the query string, which a statically
+              rendered page has no answer for until it is asked for. */}
+          <Suspense fallback={null}>
+            <RouteProgress />
+          </Suspense>
           {/* §2.12's session reality check sits above everything, on every screen. */}
           <RealityCheck />
           {children}

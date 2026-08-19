@@ -1,5 +1,6 @@
 'use client';
 
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
 import { ArgumentBar } from '@/components/argument-bar';
@@ -45,6 +46,38 @@ export function TicketView({
 
   const headline = initial.outcomes[0];
   useMarketFeed(initial.id);
+
+  const params = useSearchParams();
+  const pathname = usePathname();
+  const router = useRouter();
+
+  /**
+   * The side somebody already picked, one screen back.
+   *
+   * A price button on a card is a decision, not a link to a page — pressing
+   * "Yes 62k" and landing on a market with nothing selected asks the person to
+   * make the same choice twice, and the second time without the number that
+   * made them press it. So the card carries the outcome in `?side=`, and the
+   * ticket opens on it with the sheet already up.
+   *
+   * The parameter is cleared as soon as it is read. It is an instruction, not
+   * a location: left in place, closing the sheet and reloading would re-open a
+   * ticket the person had just dismissed, and the back button would walk them
+   * through the same sheet on the way out.
+   */
+  useEffect(() => {
+    const requested = params.get('side');
+    if (requested === null) return;
+
+    const outcome = initial.outcomes.find((row) => row.id === requested);
+    // An outcome that is not on this market, or a market that has stopped
+    // trading, drops the instruction rather than opening a ticket that cannot
+    // be filled.
+    if (outcome !== undefined && initial.state === 'active') {
+      setIntent({ outcome, side: 'buy' });
+    }
+    router.replace(pathname, { scroll: false });
+  }, [params, pathname, router, initial.outcomes, initial.state]);
 
   const seed = useLivePrices((state) => state.seed);
   const live = useLivePrices((state) => state.markets[initial.id]);

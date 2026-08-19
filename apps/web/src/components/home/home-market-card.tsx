@@ -128,7 +128,9 @@ function SideButton({
 
   return (
     <Link
-      href={`/market/${market.id}`}
+      // The side travels with the click, so the ticket opens on it rather
+      // than asking for the same decision a second time.
+      href={`/market/${market.id}?side=${outcome.id}`}
       aria-label={`${outcome.label} on ${market.question} at ${kobo(outcome.price)}`}
       className={`group/side relative z-10 grid h-10 flex-1 place-items-center rounded-sm text-sm font-black transition-colors ${skin}`}
     >
@@ -149,7 +151,7 @@ function OutcomeRow({ market, outcome }: { market: MarketSummary; outcome: Outco
         {Math.round(percent(outcome.price))}%
       </span>
       <Link
-        href={`/market/${market.id}`}
+        href={`/market/${market.id}?side=${outcome.id}`}
         aria-label={`Back ${outcome.label} on ${market.question}`}
         className="group/side relative z-10 grid h-[27px] w-11 place-items-center rounded-sm bg-rise/15 text-xs font-black text-rise transition-colors hover:bg-rise hover:text-paper"
       >
