@@ -2,7 +2,12 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # `main` because it is the trunk, and the deploy branch because it is what
+    # actually reaches users. Render builds `claude/plugin-ktnja5` directly, and
+    # a push there with no open pull request used to run no checks at all — an
+    # auto-deploying branch with no gate in front of it. If the deploy branch
+    # moves, move it here too.
+    branches: [main, claude/plugin-ktnja5]
   pull_request:
 
 concurrency:

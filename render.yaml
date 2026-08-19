@@ -18,6 +18,14 @@
 # Postgres on Render expires after 30 days and free services sleep when idle —
 # fine for a preview, not for anything with real money in it. See the notes at
 # the bottom before this carries a real market.
+#
+# Both services deploy from `claude/plugin-ktnja5`, not `main`, so a change
+# reaches this environment when it is pushed rather than when it is merged.
+# **Changing this file is not enough on its own**: Render reads the Blueprint
+# from whichever branch the Blueprint itself tracks, so a service already
+# created from `main` keeps building `main` until either the Blueprint is
+# re-synced or the branch is changed by hand — Render → the service → Settings →
+# Build & Deploy → Branch.
 
 databases:
   - name: stakeam-db
@@ -53,6 +61,13 @@ services:
     runtime: docker
     dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
+    # Deploys from the working branch rather than `main`, so a change reaches
+    # this environment when it is pushed rather than when it is merged. That is
+    # the right trade for a preview and the wrong one for production: whatever
+    # is on this branch is live, so CI runs on every push to it (see
+    # .github/workflows/ci.yml) rather than only on pull requests. Set this to
+    # `main` before anything real depends on it.
+    branch: claude/plugin-ktnja5
     region: frankfurt
     plan: free
     healthCheckPath: /health
@@ -113,6 +128,8 @@ services:
     runtime: docker
     dockerfilePath: ./apps/web/Dockerfile
     dockerContext: .
+    # Same branch as the API — see the note there.
+    branch: claude/plugin-ktnja5
     region: frankfurt
     plan: free
     envVars:
@@ -126,6 +143,11 @@ services:
       # fails while the page still renders.
       - key: NEXT_PUBLIC_API_URL
         value: https://stakeam-api.onrender.com
+      # This service's own address. Feeds robots.txt, the sitemap and every
+      # Open Graph tag, all of which have to be absolute. Same build-time
+      # inlining as the line above, so it is wrong until a rebuild if changed.
+      - key: NEXT_PUBLIC_SITE_URL
+        value: https://stakeam-web.onrender.com
       - key: NEXT_PUBLIC_SENTRY_DSN
         sync: false
 # ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { SiteFooter } from '@/components/site-footer';
 
 import { API_URL } from '@/lib/api';
 
@@ -161,6 +162,7 @@ export default function SupportPage() {
           </ul>
         )}
       </section>
+      <SiteFooter />
     </main>
   );
 }

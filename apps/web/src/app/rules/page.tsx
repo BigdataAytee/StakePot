@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { SiteFooter } from '@/components/site-footer';
 
 /**
  * §2.18 — "Legal pages in-app... linked from signup, footer, and every market's
@@ -11,7 +12,7 @@ import Link from 'next/link';
  * what it is rather than pretending to be the finished set.
  */
 export const metadata = {
-  title: 'Rules · StakeAm',
+  title: 'Rules',
   description: 'How StakeAm markets open, trade, settle and pay out.',
 };
 
@@ -95,6 +96,7 @@ export default function RulesPage() {
         </Link>
         .
       </p>
+      <SiteFooter />
     </main>
   );
 }

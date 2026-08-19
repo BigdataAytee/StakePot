@@ -21,21 +21,29 @@ The spec is `apps/web/e2e/walkthrough.spec.ts`. Each step asserts the one fact
 that would make it a lie if it were false, then screenshots the result — so
 these images cannot drift from a passing suite without the suite going red.
 
+The run owns these folders: it clears its own numbered shots before writing new
+ones. Without that the claim above was not true. Step numbers are part of the
+filenames, so inserting a step renumbers everything after it and leaves the
+previous run's files behind under their old numbers — three generations had
+piled up, fifty files in a folder that holds twenty-two, several of them
+photographs of screens as they were two changes ago.
+
 | #     | Screen                 | What it proves                                                                      |
 | ----- | ---------------------- | ----------------------------------------------------------------------------------- |
 | 01    | Landing                | §7.6's front door: hero, live market at real prices, how-it-works, trust block, CTA |
 | 02    | Signup                 | §2.1 Tier 0 — one contact field, password, age attestation                          |
-| 03–04 | Verification           | Tier 1 by real OTP, read from the notification the API actually sent                |
-| 05–06 | Markets                | Both shelves; balance in the header                                                 |
-| 07    | Ticket                 | Chart, argument bar, money strip, priced buttons                                    |
-| 08    | Trade sheet (buy)      | Amount-first entry, shares, est. to win                                             |
-| 09    | Position               | What you hold, marked to market                                                     |
-| 10    | Trade sheet (sell)     | Proceeds, early-exit fee, net — itemised before the commitment                      |
-| 11–12 | After the exit, wallet | History from the ledger, balancing to the balance                                   |
-| 13    | Leaderboard            | Settled markets only                                                                |
-| 14    | Rules                  | How money moves, in plain words                                                     |
-| 15    | Create wizard          | As far as it goes without a question-engine key                                     |
-| 16–17 | Settlement             | Winners paid from the pot; payout on the wallet history                             |
+| 03    | Straight into the app  | Tier 0 lands in the markets with a balance, and nothing asks it to verify           |
+| 04–05 | Verification           | Reachable but never imposed; Tier 1 by real OTP, read from the notification sent    |
+| 06–08 | Markets                | Both shelves, the shelf chips with counts, and one shelf on its own                 |
+| 09    | Ticket                 | Chart, argument bar, money strip, priced buttons                                    |
+| 10    | Trade sheet (buy)      | Amount-first entry, shares, est. to win                                             |
+| 11    | Position               | What you hold, marked to market                                                     |
+| 12    | Trade sheet (sell)     | Proceeds, early-exit fee, net — itemised before the commitment                      |
+| 13–14 | After the exit, wallet | History from the ledger, balancing to the balance                                   |
+| 15    | Leaderboard            | Settled markets only                                                                |
+| 16    | Rules                  | How money moves, in plain words                                                     |
+| 17    | Create wizard          | As far as it goes without a question-engine key                                     |
+| 18–20 | Settlement             | Winners paid from the pot; payout on the wallet history; the board counts it        |
 
 ## What the walkthrough found
 
@@ -128,7 +136,16 @@ and answered generically. §2.7's one-account-per-contact clash is turned into a
 sentence with a next step: "an account already uses that email — log in
 instead, or use another address."
 
-**12. `pnpm start` ran a server the deployment never uses.** Next warns that
+**12. There was no way to choose a shelf.** §7.1's two shelves were two stacked
+sections and nothing else — fine on a desktop, wrong on the phone this product
+is used on, where one full shelf of cards pushes the other clean off the screen
+and the second reads as missing rather than as further down. There are chips
+now: All · Official · Community, each carrying a count, so an empty shelf
+answers for itself instead of making you tap to find out. The choice lives in
+the URL, so a shelf is linkable and survives a reload, and the page stays a
+server component.
+
+**13. `pnpm start` ran a server the deployment never uses.** Next warns that
 `next start` does not support `output: standalone` on every boot. That mismatch
 is how (1) survived.
 
