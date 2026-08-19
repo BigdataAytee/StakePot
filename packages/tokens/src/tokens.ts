@@ -103,6 +103,23 @@ const roles = {
    * meaning for a palette that only has room for three.
    */
   money: palette.green,
+
+  /**
+   * Caution — something needs attention but nothing is wrong yet.
+   *
+   * Added after a screenshot pass found the amber state missing across the
+   * whole console. In the palette this replaced, `money` was gold, and every
+   * "attention" mark in the admin screens was written as `text-money`: an SLA
+   * about to breach, a dispute still open, a backup going stale, a funding
+   * window inside its last day. The redesign re-pointed `money` to green and
+   * every one of those quietly became a success colour — a breaching SLA
+   * rendered as good news, which is worse than no colour at all.
+   *
+   * The reference's star gold is the only warm tone in the palette, and this
+   * is what it is for. Red stays reserved for alarms, exactly as §6.10 asks.
+   */
+  caution: palette.star,
+  cautionBg: '#fef6e6',
 } as const;
 
 export const semantic = {

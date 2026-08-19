@@ -27,7 +27,7 @@ import { dateTime } from '@/lib/format';
  */
 const BLAST: Record<ConfigNote['blast'], { label: string; className: string }> = {
   money: { label: 'money', className: 'bg-fall/15 text-fall' },
-  market: { label: 'market', className: 'bg-money/15 text-money' },
+  market: { label: 'market', className: 'bg-caution/20 text-caution' },
   guard: { label: 'guard', className: 'bg-brand/15 text-brand' },
   cosmetic: { label: 'cosmetic', className: 'bg-surface-raised text-text-muted' },
 };
@@ -59,7 +59,7 @@ export default function ConfigPage() {
       {error !== null && <p className="text-sm text-fall">{error}</p>}
 
       {view !== null && view.pending.length > 0 && (
-        <section className="rounded-md border border-money/40 bg-money/5 p-4">
+        <section className="rounded-md border border-caution/50 bg-caution/10 p-4">
           <h2 className="text-sm font-semibold">Approved and waiting</h2>
           <p className="mt-1 text-sm text-text-muted">
             These land on their own. The delay exists so a mistake can be caught before it does
@@ -70,7 +70,7 @@ export default function ConfigPage() {
               <li key={`${change.key}:${change.version}`} className="rounded-sm bg-surface p-3">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                   <span className="font-mono text-sm font-semibold">{change.key}</span>
-                  <span className="font-mono text-xs text-money">
+                  <span className="font-mono text-xs text-caution">
                     lands {dateTime(change.effectiveAt)}
                   </span>
                 </div>

@@ -240,7 +240,7 @@ function DisputeCard({
         <span className="font-mono text-xs text-text-muted">{dispute.userId.slice(0, 8)}…</span>
         <span
           className={`font-mono text-xs uppercase ${
-            dispute.state === 'open' ? 'text-money' : 'text-text-muted'
+            dispute.state === 'open' ? 'text-caution' : 'text-text-muted'
           }`}
         >
           {dispute.state}
@@ -272,7 +272,7 @@ function DisputeCard({
               onClick={() =>
                 void onSubmit(() => admin.decideDispute(dispute.id, true, decision.trim()))
               }
-              className="rounded-sm border border-money px-2 py-1 text-xs font-bold text-money disabled:opacity-30"
+              className="rounded-sm border border-caution px-2 py-1 text-xs font-bold text-caution disabled:opacity-30"
             >
               Uphold
             </button>

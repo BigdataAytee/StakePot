@@ -267,7 +267,15 @@ export default async function WelcomePage() {
         </section>
       </main>
 
-      <SiteFooter />
+      {/*
+        The footer carries no padding of its own — every other caller renders
+        it inside an already-padded `main`. This page ends its last section at
+        the viewport edge, so it needs the container here or the links sit
+        flush against the left of the screen.
+      */}
+      <div className={`px-4 sm:px-5 ${PAGE_WIDTH}`}>
+        <SiteFooter />
+      </div>
     </>
   );
 }

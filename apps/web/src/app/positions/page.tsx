@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 
 import { PageShell, PageTitle } from '@/components/market/page-shell';
-import { exactMoney, kobo, money, percent } from '@/lib/format';
+import { exactMoney, money, percent } from '@/lib/format';
 import { authed, getToken, useSession } from '@/lib/session';
 
 /**
@@ -214,9 +214,16 @@ function OpenRow({ position }: { position: Position }) {
         <span className="min-w-0">
           <span className="block text-base font-semibold">{position.marketQuestion}</span>
           <span className="mt-0.5 block text-sm text-text-muted">
+            {/*
+              Percent, not kobo. `kobo()` renders "62k", which is right in the
+              trade sheet where the surrounding words say kobo — and reads as
+              ₦62,000 here, sitting inline beside ₦880.79 and ₦266.60. It also
+              lets the entry price be compared directly with the "now 71%"
+              underneath it, which is the comparison somebody is making.
+            */}
             {shares.toFixed(2)} shares of{' '}
             <span className="font-semibold text-text">{position.outcomeLabel}</span> at{' '}
-            {kobo(position.avgPrice)}
+            {Math.round(percent(position.avgPrice))}%
             {position.marketState !== 'active' && (
               <span className="ml-2 rounded-full bg-chip px-1.5 py-0.5 font-mono text-xs">
                 {position.marketState}

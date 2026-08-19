@@ -107,7 +107,7 @@ export default function DraftsQueue() {
                     does. These sort to the top of the queue too.
                   */}
                   {draft.firstMarket && (
-                    <span className="mr-2 rounded-full bg-money/15 px-2 py-0.5 align-middle text-xs font-bold uppercase tracking-wide text-money">
+                    <span className="mr-2 rounded-full bg-caution/20 px-2 py-0.5 align-middle text-xs font-bold uppercase tracking-wide text-caution">
                       First market
                     </span>
                   )}

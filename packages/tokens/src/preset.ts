@@ -83,6 +83,8 @@ export const tailwindPreset: Partial<Config> = {
         fall: themed('fall'),
         'fall-bg': themed('fallBg'),
         money: themed('money'),
+        caution: themed('caution'),
+        'caution-bg': themed('cautionBg'),
       },
       fontFamily: {
         sans: [`var(${cssVar.font.display})`, 'Open Sauce', 'Inter', 'system-ui', 'sans-serif'],

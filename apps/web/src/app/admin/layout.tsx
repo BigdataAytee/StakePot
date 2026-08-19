@@ -27,10 +27,24 @@ import { admin, type DashboardView } from '@/lib/admin-api';
 /**
  * The cockpit shell (§6.10).
  *
- * "Desktop-first... same tokens as §7.4 but in a denser, calmer register — ink-
- * green dark theme by default, gold strictly for money figures, red strictly for
- * alarms." The dark register comes from the tokens package's `.dark` class, so
- * this is the same palette the user app uses, not a second one.
+ * "Desktop-first... same tokens as §7.4 but in a denser, calmer register...
+ * red strictly for alarms."
+ *
+ * §6.10 asks for an ink-green dark theme. The console is light, and the `dark`
+ * class that used to be on this element had been doing nothing since the
+ * design reference replaced the tokens: that reference is a light-only system,
+ * so `semantic.dark` aliases `semantic.light` and the class resolved to the
+ * same palette. A class implying a theme it does not apply is worse than no
+ * class, so it is gone.
+ *
+ * Light is also the right answer under the standing rule that every screen
+ * matches the reference — a dark console would be, precisely, a second visual
+ * style. §6.10 in the architecture doc records the divergence. Reversing it
+ * means putting real values back in `semantic.dark`, not restoring this class.
+ *
+ * What survives from §6.10 is the register rather than the palette: denser
+ * type, tighter rows, `caution` for "needs attention", red strictly for
+ * alarms.
  *
  * The status strip is the point of the layout: reconciliation, disputes and
  * pending approvals are visible from every screen, because those are the three
@@ -86,7 +100,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const reconciliationRed = status !== null && status.reconciliation.status !== 'clean';
 
   return (
-    <div className="dark min-h-screen bg-surface text-text">
+    <div className="min-h-screen bg-surface text-text">
       {/* §6.10: ⌘K from anywhere. The console is fourteen screens deep. */}
       <CommandPalette />
       <div className="flex min-h-screen">
@@ -178,7 +192,7 @@ function StripItem({
   alarm?: boolean;
   amber?: boolean;
 }) {
-  const tone = alarm ? (amber ? 'text-money' : 'text-fall') : 'text-text';
+  const tone = alarm ? (amber ? 'text-caution' : 'text-fall') : 'text-text';
   return (
     <span className="flex items-baseline gap-1.5">
       <span className="text-text-muted">{label}</span>

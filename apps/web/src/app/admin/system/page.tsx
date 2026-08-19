@@ -76,7 +76,7 @@ export default function SystemRoomPage() {
 
       <section
         className={`rounded-md border p-4 ${
-          room.backups.stale ? 'border-money/50 bg-money/5' : 'border-border'
+          room.backups.stale ? 'border-caution/50 bg-caution/10' : 'border-border'
         }`}
       >
         <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -85,7 +85,7 @@ export default function SystemRoomPage() {
             {room.backups.ageDays === null ? (
               <span className="text-fall">no drill has ever run</span>
             ) : (
-              <span className={room.backups.stale ? 'text-money' : 'text-rise'}>
+              <span className={room.backups.stale ? 'text-caution' : 'text-rise'}>
                 last proved {room.backups.ageDays}d ago
               </span>
             )}
@@ -170,7 +170,7 @@ export default function SystemRoomPage() {
                 className="flex items-baseline justify-between gap-3 rounded-sm border border-border p-2.5 font-mono text-xs"
               >
                 <span>{flag.key}</span>
-                <span className={flag.rolloutPct < 100 ? 'text-money' : 'text-rise'}>
+                <span className={flag.rolloutPct < 100 ? 'text-caution' : 'text-rise'}>
                   {flag.rolloutPct}%
                 </span>
               </li>
@@ -247,7 +247,7 @@ function Depth({
       <dt className="font-mono text-xs uppercase text-text-muted">{label}</dt>
       <dd
         className={`mt-1 font-mono text-xl font-bold tabular-nums ${
-          red ? 'text-fall' : amber ? 'text-money' : ''
+          red ? 'text-fall' : amber ? 'text-caution' : ''
         }`}
       >
         {value}

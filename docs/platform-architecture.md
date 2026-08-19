@@ -490,7 +490,11 @@ Weekly prize runs (approve airtime payouts), **weekly Top Calls curation**, shar
 Queue/worker status, deploy & canary controls, alert history, backup/restore drill logs, status-page incident posting.
 
 ### 6.10 Admin Frontend Design (built for speed of operation, not decoration)
-The cockpit is a **desktop-first** web app (same Next.js codebase, `/admin` routes, same tokens as §7.4 but in a denser register — red strictly for alarms). Its design goal is operational efficiency: an operator resolves a market, clears a reconciliation exception, or approves a config change in seconds, with zero ambiguity.
+The cockpit is a **desktop-first** web app (same Next.js codebase, `/admin` routes, same tokens as §7.4 but in a denser register — red strictly for alarms).
+
+**Register.** This section originally specified an ink-green dark theme. The console is **light**, following the design reference, which is a light-only system: a dark console would be a second visual style, which the reference explicitly rules out. What carries over from the original intent is the density rather than the palette — tighter type and rows, `caution` gold for "needs attention", red reserved strictly for alarms. Reversing this means restoring real values to `semantic.dark` in `packages/tokens`, not re-adding a class to the layout.
+
+Its design goal is operational efficiency: an operator resolves a market, clears a reconciliation exception, or approves a config change in seconds, with zero ambiguity.
 
 - **Layout:** persistent left rail (the nine screens, alarm badges on each), top bar with global status strip (reconciliation ✓/✗ · queue lag · open disputes · pending approvals), main content area. Nothing more than two clicks deep.
 - **Command palette (Ctrl/Cmd-K):** jump to any user, market, ticket, transaction, or setting by typing — the fastest path to everything; power operators never touch the mouse. Full keyboard shortcuts on high-frequency actions (approve, next item, open evidence).

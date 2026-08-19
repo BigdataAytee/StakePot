@@ -169,7 +169,7 @@ function Countdown({ iso }: { iso: string | null }) {
 
   const hours = Math.floor(ms / 3_600_000);
   const label = hours >= 24 ? `${Math.floor(hours / 24)}d ${hours % 24}h` : `${hours}h`;
-  return <span className={hours < 24 ? 'text-money' : ''}>{label} left</span>;
+  return <span className={hours < 24 ? 'text-caution' : ''}>{label} left</span>;
 }
 
 /** §6.2's seed composition view, opened in place rather than on its own screen. */

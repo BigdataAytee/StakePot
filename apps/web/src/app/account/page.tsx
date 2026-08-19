@@ -119,7 +119,7 @@ function Sessions() {
       </p>
 
       {view?.freeze.active === true && (
-        <p className="mt-3 rounded-lg border border-money/40 bg-money/5 px-3 py-2 text-sm">
+        <p className="mt-3 rounded-lg border border-caution/50 bg-caution/10 px-3 py-2 text-sm">
           <span className="font-semibold">Withdrawals are paused</span> until{' '}
           {view.freeze.until === null ? 'shortly' : dateTime(view.freeze.until)}. This happens
           automatically after your contact details change, so that nobody who takes over your number
@@ -303,7 +303,7 @@ function Consents() {
       </p>
 
       {view.outstanding.length > 0 && (
-        <div className="mt-3 rounded-lg border border-money/40 bg-money/5 p-3 text-sm">
+        <div className="mt-3 rounded-lg border border-caution/50 bg-caution/10 p-3 text-sm">
           <p className="font-semibold">There is a newer version of some documents.</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {view.outstanding.map((document) => (
