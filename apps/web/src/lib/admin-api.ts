@@ -100,6 +100,27 @@ export interface ReconciliationRow {
   clearedBy: string | null;
 }
 
+/**
+ * §2.10's signed export — the document, as opposed to the panel.
+ *
+ * `signature` is null when no signing key is configured for the environment.
+ * That is a real state, not an error: the figures are still correct, they just
+ * cannot be attested to anybody outside the building.
+ */
+export interface SignedReserves extends ReservesExport {
+  document: 'stakeam.proof-of-reserves';
+  version: 1;
+  byFundClass: Record<string, string>;
+  accounts: number;
+  reconciliation: { runDate: string | null; status: string; diff: string | null };
+  signature: {
+    algorithm: string;
+    keyId: string;
+    value: string;
+    canonicalisation: string;
+  } | null;
+}
+
 export interface ReservesExport {
   generatedAt: string;
   currency: string;
@@ -253,6 +274,7 @@ export const admin = {
       body: JSON.stringify({ code }),
     }),
   reserves: () => request<ReservesExport>('/admin/reserves'),
+  reservesExport: () => request<SignedReserves>('/admin/reserves/export'),
   decideDispute: (disputeId: string, upheld: boolean, decision: string) =>
     request<{ state: string }>(`/admin/disputes/${disputeId}/decide`, {
       method: 'POST',

@@ -14,6 +14,7 @@ import type { UserRole } from '@prisma/client';
 import { IsBoolean, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
 import { subHours } from 'date-fns';
 
+import { signReserves } from '../admin/reserves-export';
 import { SolvencyService } from '../admin/solvency.service';
 import { ApprovalError, ApprovalsService, type Actor } from '../approvals/approvals.service';
 import { APPROVAL_ACTIONS, APPROVAL_ACTION_TYPES } from '../approvals/approval-actions';
@@ -193,7 +194,7 @@ export class AdminController {
     };
   }
 
-  /** §2.10's proof-of-reserves export: liabilities vs what backs them, stamped. */
+  /** §2.10's solvency position, as the money room's header reads it. */
   @Get('reserves')
   @UseGuards(JwtGuard, RolesGuard)
   @Roles('finance', 'admin')
@@ -208,6 +209,61 @@ export class AdminController {
       surplus: solvency.surplus.toString(),
       solvent: solvency.surplus.gte(0),
     };
+  }
+
+  /**
+   * §2.10's proof-of-reserves export: "one-click signed export ... feeds
+   * external attestations and regulator reports".
+   *
+   * Distinct from `/reserves` above, which renders a panel. This produces a
+   * document that leaves the building: every fund class, the account count the
+   * liabilities are spread over, the reconciliation run that makes them
+   * credible, and a signature over the lot. A solvency figure that only exists
+   * inside our own console is not evidence of anything.
+   *
+   * The export is itself an audited read — somebody asking for the platform's
+   * full financial position is exactly the event an audit log is for.
+   */
+  @Get('reserves/export')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('finance', 'admin')
+  async reservesExport(@Req() request: RequestWithUser) {
+    const [solvency, lastRun, accounts] = await Promise.all([
+      this.solvency.view(),
+      this.prisma.reconciliationRun.findFirst({ orderBy: { runDate: 'desc' } }),
+      this.prisma.wallet.count({ where: { currency: 'SPC' } }),
+    ]);
+
+    const document = signReserves(
+      {
+        currency: 'SPC',
+        userLiabilities: solvency.userLiabilities.toString(),
+        totalIssued: solvency.totalIssued.toString(),
+        platformFees: solvency.byFundClass.platform_fees.toString(),
+        surplus: solvency.surplus.toString(),
+        byFundClass: Object.fromEntries(
+          Object.entries(solvency.byFundClass).map(([name, total]) => [name, total.toString()]),
+        ),
+        accounts,
+        reconciliation: {
+          runDate: lastRun?.runDate.toISOString().slice(0, 10) ?? null,
+          status: lastRun?.status ?? 'never_run',
+          diff: lastRun?.diff.toString() ?? null,
+        },
+      },
+      new Date().toISOString(),
+    );
+
+    const actor = this.actor(request);
+    await this.audit.record({
+      staffId: actor.userId,
+      action: 'reserves.export',
+      targetRef: 'platform:reserves',
+      after: { generatedAt: document.generatedAt, signed: document.signature !== null },
+      ip: actor.ip,
+    });
+
+    return document;
   }
 
   /** §6.4's ledger explorer: drill from any balance to the entries behind it. */
