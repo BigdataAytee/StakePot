@@ -94,10 +94,8 @@ jobs:
             exit 0
           fi
           psql "$PGPASSWORD_URL" -v ON_ERROR_STOP=1 \
-            -v email="'$ADMIN_EMAIL'" -v role="'admin'" \
+            -v email="$ADMIN_EMAIL" -v role=admin \
             -f scripts/deploy/promote-admin.sql
-          psql "$PGPASSWORD_URL" -v ON_ERROR_STOP=1 -c \
-            "select role, count(*) from users group by role order by role;"
 
       - name: What the live API returns
         if: steps.guard.outputs.ready == 'true'
