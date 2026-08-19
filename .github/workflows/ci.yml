@@ -191,9 +191,17 @@ jobs:
       # The journeys drive the real stack, so the real stack has to be up. The
       # API writes to the *test* database because the fixtures go in through
       # psql and the suite is free to churn it.
+      # A verification code that reached nobody is not a notification that
+      # failed quietly — it is a signup that cannot finish, and the API says so
+      # rather than claiming "sent". Which means the journeys need somewhere for
+      # mail to go: this accepts it and throws it away, so step 3 of the
+      # walkthrough proves the send succeeded rather than only that a row was
+      # written. Sixty lines of socket, no mail container, no dependency.
       - name: Start the stack
         run: |
-          DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @stakeam/api start &
+          node scripts/dev/smtp-sink.mjs &
+          DATABASE_URL="$TEST_DATABASE_URL" SMTP_URL="smtp://127.0.0.1:1025" \
+            pnpm --filter @stakeam/api start &
           pnpm --filter @stakeam/web start &
           npx --yes wait-on -t 90000 http://localhost:3001/health http://localhost:3000
 

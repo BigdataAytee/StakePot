@@ -1,4 +1,13 @@
-import { BadRequestException, Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Post,
+  Req,
+  ServiceUnavailableException,
+  UseGuards,
+} from '@nestjs/common';
 import { IsBoolean, IsEmail, IsOptional, IsString, Length, MinLength } from 'class-validator';
 
 import { AnalyticsService } from '../analytics/analytics.service';
@@ -7,6 +16,7 @@ import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { OtpError, OtpService } from '../auth/otp.service';
 import { TokenRevocationService } from '../auth/token-revocation.service';
 import { RateLimit, RateLimitGuard } from '../hardening/rate-limit.guard';
+import { logger } from '../logger';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -149,9 +159,10 @@ export class AuthController {
       throw new BadRequestException('this account has no contact to verify');
     }
 
+    let outcome;
     try {
       const code = await this.otp.issue(contact);
-      await this.notifications.notify({
+      outcome = await this.notifications.notify({
         userId,
         type: 'contact_verification',
         body: `Your StakeAm code is ${code}. It expires shortly — nobody from StakeAm will ever ask you for it.`,
@@ -159,6 +170,26 @@ export class AuthController {
     } catch (error) {
       if (error instanceof OtpError) throw new BadRequestException(error.message);
       throw error;
+    }
+
+    // Nothing left the building. Delivery is best-effort everywhere else in the
+    // product — a market must settle whether or not an SMS gateway is up — but
+    // a verification code that reached nobody is not a courtesy that failed, it
+    // is a signup that cannot finish. Saying "sent" here leaves somebody
+    // refreshing an inbox that will never fill, which is precisely what an
+    // environment with no mail transport configured does to its first user.
+    if (outcome.delivered.length === 0) {
+      // The code is unusable, so it must not hold the resend cooldown against a
+      // retry: the operator's fix is to configure a channel, and the next
+      // attempt should go out the moment they have.
+      await this.otp.revoke(contact);
+      logger.error(
+        { userId, failures: outcome.failed.map((row) => `${row.channel}: ${row.failure}`) },
+        'verification code could not be delivered on any channel',
+      );
+      throw new ServiceUnavailableException(
+        'we could not send your code — no delivery channel is available. Please contact support.',
+      );
     }
 
     return { sent: true, contact: maskContact(contact) };
