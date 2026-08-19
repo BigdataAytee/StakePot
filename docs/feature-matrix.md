@@ -23,7 +23,7 @@ _Audited: 2026-08-19, branch `claude/plugin-ktnja5`. Paths are from the repo roo
 | Block                                             | Implemented | Partial | Missing |
 | ------------------------------------------------- | ----------- | ------- | ------- |
 | A · Ticket View (§7.2)                            | 27          | 0       | 0       |
-| B · Wallet (§7.5)                                 | 5           | 2       | 1       |
+| B · Wallet (§7.5)                                 | 7           | 1       | 0       |
 | C · Community shelf (§2.4, §2.14a)                | 9           | 2       | 1       |
 | D · Resolution & disputes (§2.6)                  | 9           | 0       | 0       |
 | E · Admin platform (§6)                           | 9           | 5       | 3       |
@@ -104,11 +104,19 @@ limits, which is a spec requirement and a real refusal-after-submit annoyance.
 | 2.2 | Per-market invariant: payouts + fees ≤ pot                    | **IMPLEMENTED** | `packages/engine` property tests; `hardening/ledger-audit`                                                                                     |
 | 2.2 | Currency field (SPC now, NGN later)                           | **IMPLEMENTED** | Prisma `ledger.currency`                                                                                                                       |
 | 7.5 | Balance header: available vs in-open-markets                  | **IMPLEMENTED** | `apps/web/src/app/wallet/page.tsx`                                                                                                             |
-| 7.5 | Transaction history in plain language                         | **PARTIAL**     | History renders from the ledger. **Missing: filtering**, which the spec names                                                                  |
-| 7.5 | **Monthly statement download + per-transaction receipt view** | **MISSING**     | No statement endpoint, no receipt detail view                                                                                                  |
+| 7.5 | Transaction history in plain language                         | **IMPLEMENTED** | `app/wallet/page.tsx` — ledger-backed, now filterable by kind (stakes, wins, exits, fees, bonuses, bonds)                                      |
+| 7.5 | **Monthly statement download + per-transaction receipt view** | **IMPLEMENTED** | `GET /me/wallet/statement?month=` returns CSV built from the ledger; each row expands to its receipt (exact amount, reference, ledger id)      |
 | 7.5 | Deposit/Withdraw actions                                      | **PARTIAL**     | Correctly absent in points mode; the fintech interfaces are stubbed (Block J). Wallet shows points, history and prize credits as the spec asks |
 
 ---
+
+> **Built 2026-08-19.** The wallet was also the last screen still wearing the
+> pre-redesign `AppHeader` — a second visual style, which the build rules
+> forbid. It now uses `SiteHeader`, the shared page width and the mobile nav.
+> The one remaining PARTIAL is deliberate: deposit and withdrawal are correctly
+> absent in points mode, and the fintech interfaces they will hang off are
+> stubbed (Block J). Building the buttons before the rails exist would be
+> theatre.
 
 ## Block C · Community shelf (§2.4, §2.5, §2.14a)
 

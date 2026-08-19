@@ -5,9 +5,11 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
+import { Decimal } from '@stakeam/engine';
 import { IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
@@ -201,6 +203,73 @@ export class TradesController {
       marketQuestion: entry.market?.question ?? null,
       ref: entry.ref,
     }));
+  }
+
+  /**
+   * §7.5's downloadable monthly statement.
+   *
+   * CSV rather than PDF: a statement's job is to be checkable, and a
+   * spreadsheet is what somebody actually reconciles against. Generated from
+   * the ledger for the requested month, so it is complete by construction —
+   * there is no second place a money event could have been recorded.
+   *
+   * Escrow legs are excluded for the same reason the on-screen history
+   * excludes them: they are the same events seen from the pot's side, and
+   * showing both would double every row on a document people balance against.
+   */
+  @Get('me/wallet/statement')
+  @UseGuards(JwtGuard)
+  async statement(@Req() request: RequestWithUser, @Query('month') month?: string) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+
+    // `YYYY-MM`, defaulting to the current month.
+    const now = new Date();
+    const asked = /^\d{4}-\d{2}$/.test(month ?? '')
+      ? (month as string)
+      : `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+
+    const [year, monthIndex] = asked.split('-').map((part) => Number.parseInt(part, 10));
+    if (year === undefined || monthIndex === undefined) {
+      throw new BadRequestException('month must look like 2026-08');
+    }
+    const from = new Date(Date.UTC(year, monthIndex - 1, 1));
+    const to = new Date(Date.UTC(year, monthIndex, 1));
+
+    const entries = await this.prisma.ledgerEntry.findMany({
+      where: {
+        userId: user.userId,
+        fundClass: 'user_available',
+        createdAt: { gte: from, lt: to },
+      },
+      orderBy: { createdAt: 'asc' },
+      include: { market: { select: { question: true } } },
+    });
+
+    const escape = (value: string): string =>
+      /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+
+    const rows = entries.map((entry) =>
+      [
+        entry.createdAt.toISOString(),
+        entry.type,
+        entry.amount.toString(),
+        entry.currency,
+        entry.market?.question ?? '',
+        entry.ref ?? '',
+      ]
+        .map((cell) => escape(String(cell)))
+        .join(','),
+    );
+
+    const total = entries.reduce((sum, entry) => sum.plus(entry.amount.toString()), new Decimal(0));
+
+    return {
+      month: asked,
+      rows: entries.length,
+      net: total.toString(),
+      csv: ['date,type,amount,currency,market,reference', ...rows].join('\n'),
+    };
   }
 
   /** Open positions, for the ticket's position panel (§7.2d). */
