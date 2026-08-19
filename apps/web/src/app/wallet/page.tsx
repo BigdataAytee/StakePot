@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useMemo, useState } from 'react';
+import { Suspense, useEffect, useMemo, useState } from 'react';
 
 import { MobileNav } from '@/components/market/mobile-nav';
 import { SiteHeader } from '@/components/market/site-header';
@@ -90,7 +90,7 @@ export default function WalletPage() {
   if (!loading && me === null) {
     return (
       <>
-        <SiteHeader />
+        <Header />
         <main className={`px-4 py-8 sm:px-5 ${PAGE_WIDTH}`}>
           <p className="text-base text-text-muted">
             <Link href="/login" className="font-semibold text-brand underline">
@@ -99,14 +99,14 @@ export default function WalletPage() {
             to see your wallet.
           </p>
         </main>
-        <MobileNav />
+        <Nav />
       </>
     );
   }
 
   return (
     <>
-      <SiteHeader />
+      <Header />
 
       <main className={`px-4 pb-[72px] pt-5 sm:px-5 md:pb-10 ${PAGE_WIDTH}`}>
         <h1 className="text-xl font-bold">Wallet</h1>
@@ -183,8 +183,34 @@ export default function WalletPage() {
         )}
       </main>
 
-      <MobileNav />
+      <Nav />
     </>
+  );
+}
+
+/**
+ * The page chrome, behind a suspense boundary.
+ *
+ * `SiteHeader` and `MobileNav` both call `useSearchParams()` — the header for
+ * the search field, the nav for the watchlist tab's active state. Next cannot
+ * prerender a page that reads the query string outside a boundary, so without
+ * these the production build fails on `/wallet` even though the dev server is
+ * perfectly happy. The fallbacks are sized to the real chrome so the page does
+ * not jump when it hydrates.
+ */
+function Header() {
+  return (
+    <Suspense fallback={<div className="h-[60px] border-b border-border" />}>
+      <SiteHeader />
+    </Suspense>
+  );
+}
+
+function Nav() {
+  return (
+    <Suspense>
+      <MobileNav />
+    </Suspense>
   );
 }
 
