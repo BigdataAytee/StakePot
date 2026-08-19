@@ -5,6 +5,11 @@ coverage/
 pnpm-lock.yaml
 apps/api/prisma/migrations/
 docs/prediction-market-demo.html
+# The design reference — the source of truth every screen is checked against.
+# Reformatting it would churn the one file whose exact markup is the spec, and
+# lint-staged never caught it locally because its globs do not include .html
+# while `prettier --check .` checks everything.
+docs/design-reference.html
 docs/platform-architecture.md
 docs/market-rulebook.md
 docs/build-plan.md

@@ -35,9 +35,19 @@ ARG NEXT_PUBLIC_SITE_URL=http://localhost:3000
 ENV NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL
 
 COPY tsconfig.base.json ./
+# The engine as well as the tokens. `packages/engine/package.json` is copied in
+# the deps stage, so pnpm links the workspace package and `pnpm install`
+# succeeds — but the *source* never arrived and the package resolves through
+# `dist/`, which nothing built. The web app started importing it when the topic
+# taxonomy moved there (both apps need the same answer, or somebody is titled
+# "Football Prophet" with their markets under Culture), and the local build
+# kept working because a workspace symlink points at real files on disk.
+# Only the container, with its curated COPYs, showed the gap.
+COPY packages/engine packages/engine
 COPY packages/tokens packages/tokens
 COPY apps/web apps/web
-RUN pnpm --filter @stakeam/tokens build \
+RUN pnpm --filter @stakeam/engine build \
+ && pnpm --filter @stakeam/tokens build \
  && pnpm --filter @stakeam/web build
 
 # ---------------------------------------------------------------- runtime
