@@ -109,7 +109,12 @@ test.describe('the walkthrough', () => {
     // and live questions at live prices. The explaining lives in the footer and
     // the rules, where somebody who wants it goes looking.
     await expect(page.getByRole('searchbox', { name: /search markets/i })).toBeVisible();
-    await expect(page.getByRole('link', { name: /Trending/i })).toBeVisible();
+    // Scoped to the category row: "Trending" is also the name of the default
+    // sort pill, so an unscoped match finds two links and fails on strictness
+    // rather than on the page being wrong.
+    await expect(
+      page.getByRole('navigation', { name: 'Categories' }).getByRole('link', { name: /Trending/ }),
+    ).toBeVisible();
     await expect(page.getByRole('link', { name: /Sign up/i })).toBeVisible();
 
     // At least one real market, and a percentage next to it — the thirty-second
