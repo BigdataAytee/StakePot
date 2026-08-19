@@ -11,6 +11,12 @@ import { z } from 'zod';
 export const CONFIG_SCHEMAS = {
   // Tiering and onboarding (§2.1)
   starter_balance_spc: z.number().nonnegative(),
+  /**
+   * §2.17's referral reward, paid to the referrer once the referred account
+   * verifies and stakes. Zero turns the programme off without removing it,
+   * which is what you want the moment a farm is discovered.
+   */
+  referral_reward_spc: z.number().nonnegative(),
   signup_bonus_spc: z.number().nonnegative(),
   tier0_expiry_days: z.number().int().positive(),
   /**

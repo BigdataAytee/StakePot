@@ -52,6 +52,19 @@ export const NOTIFICATION_TYPES = {
     title: 'Your verification code',
     channels: ['email', 'sms'],
   },
+  /*
+   * §2.18's SIM-swap defence.
+   *
+   * Every channel, and the one type where that is not overkill. This is the
+   * message that reaches somebody whose phone number has just been taken over
+   * — the SMS will not arrive, which is precisely why the email and the push
+   * have to. A person who cannot be reached on any channel is the case the
+   * 48-hour freeze covers instead.
+   */
+  contact_changed: {
+    title: 'Your contact details changed',
+    channels: ['in_app', 'push', 'email', 'sms'],
+  },
   rg_confirmation: {
     title: 'Your limits changed',
     // Deliberately every channel, including SMS: a person who has just excluded

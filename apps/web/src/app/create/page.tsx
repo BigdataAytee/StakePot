@@ -59,6 +59,22 @@ interface CopilotResponse {
   engagement: number;
   rationale: string;
   problems: { code: string; message: string }[];
+  /** §2.14e's warnings. Present on balance-check, absent on the co-pilot. */
+  risks?: Risk[];
+}
+
+/**
+ * §2.14e — "auto-void risk warnings *before* posting".
+ *
+ * Warnings, never refusals. A creator whose market voids loses no money — the
+ * bond comes back — but they lose the week they spent telling people to back
+ * it, and that is what this is trying to save them.
+ */
+interface Risk {
+  code: string;
+  message: string;
+  suggestion: string;
+  severity: 'high' | 'medium' | 'low';
 }
 
 /** `2026-08-21T10:13:00.000Z` → `2026-08-21T10:13`, what a datetime-local wants. */
@@ -76,6 +92,8 @@ export default function CreatePage() {
   const [estimate, setEstimate] = useState<number | null>(null);
   const [rationale, setRationale] = useState<string | null>(null);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [risks, setRisks] = useState<Risk[] | null>(null);
+  const [conflictAttested, setConflictAttested] = useState(false);
 
   // §2.14b's feed. Public, so it renders before anybody signs in — the whole
   // point is to show a would-be creator that there is demand waiting.
@@ -174,6 +192,8 @@ export default function CreatePage() {
           sourceUrl: values.sourceUrl,
           eventDate: new Date(values.eventDate).toISOString(),
           voidDate: new Date(values.voidDate).toISOString(),
+          activationPath: values.activationPath,
+          conflictAttested,
         }),
       });
       const body = (await response.json()) as CopilotResponse & { message?: string };
@@ -182,6 +202,7 @@ export default function CreatePage() {
 
       setEstimate(Math.max(...body.estimates));
       setRationale(body.rationale);
+      setRisks(body.risks ?? []);
     } catch (caught) {
       setError((caught as Error).message);
     } finally {
@@ -443,6 +464,10 @@ export default function CreatePage() {
           onChange={(path) => form.setValue('activationPath', path)}
         />
 
+        <ConflictAttestation value={conflictAttested} onChange={setConflictAttested} />
+
+        {risks !== null && <RiskPanel risks={risks} />}
+
         {error !== null && <p className="text-sm text-fall">{error}</p>}
 
         <button
@@ -459,6 +484,94 @@ export default function CreatePage() {
         </p>
       </form>
     </PageShell>
+  );
+}
+
+/**
+ * §2.14e's warnings, shown where the creator can still act on them.
+ *
+ * Ordered by severity and each one paired with what to do instead, because a
+ * warning with no suggestion is just discouragement. Nothing here blocks the
+ * submit button: deciding which questions are worth asking is not ours to
+ * make, and the market that fills against our expectations is the interesting
+ * one.
+ */
+function RiskPanel({ risks }: { risks: Risk[] }) {
+  if (risks.length === 0) {
+    return (
+      <p className="rounded-lg border border-rise/40 bg-rise-bg px-3 py-2 text-sm">
+        Nothing obvious stands in the way of this one filling.
+      </p>
+    );
+  }
+
+  const order = { high: 0, medium: 1, low: 2 } as const;
+  const sorted = [...risks].sort((a, b) => order[a.severity] - order[b.severity]);
+
+  return (
+    <section className="rounded-xl border border-border">
+      <h2 className="border-b border-border px-4 py-2.5 text-sm font-semibold">Before you post</h2>
+      <ul className="divide-y divide-border">
+        {sorted.map((risk) => (
+          <li key={risk.code} className="px-4 py-3">
+            <p className="flex items-baseline gap-2 text-sm font-semibold">
+              <span
+                className={`mt-0.5 size-2 shrink-0 rounded-full ${
+                  risk.severity === 'high'
+                    ? 'bg-fall'
+                    : risk.severity === 'medium'
+                      ? 'bg-money'
+                      : 'bg-border'
+                }`}
+                aria-hidden
+              />
+              {risk.message}
+            </p>
+            <p className="mt-1 pl-4 text-sm text-text-muted">{risk.suggestion}</p>
+          </li>
+        ))}
+      </ul>
+      <p className="border-t border-border px-4 py-2.5 text-sm text-text-muted">
+        None of this stops you posting. If it voids, every stake is refunded in full and your bond
+        comes back.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * The Rulebook Part 3 attestation, asked plainly.
+ *
+ * Not buried in the terms: the creator settles this market themselves, and the
+ * one thing that makes that safe is them saying up front whether they can
+ * influence the result. Declaring costs nothing; hiding it forfeits the bond,
+ * and it is only fair to say that where the question is asked.
+ */
+function ConflictAttestation({
+  value,
+  onChange,
+}: {
+  value: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-3 rounded-lg border border-border p-3">
+      <input
+        type="checkbox"
+        checked={value}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-0.5 size-4 accent-brand"
+      />
+      <span className="text-sm">
+        <span className="font-semibold">
+          I have no influence over this result and no inside knowledge of it.
+        </span>
+        <span className="mt-0.5 block text-text-muted">
+          You settle this market against the source you named. If that is not true of you here, say
+          so — declaring it costs nothing, and hiding it forfeits your bond.
+        </span>
+      </span>
+    </label>
   );
 }
 

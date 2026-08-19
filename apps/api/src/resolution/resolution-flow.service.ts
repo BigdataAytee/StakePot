@@ -360,15 +360,62 @@ export class ResolutionFlowService {
       fee: result.fee.toString(),
     });
 
+    /*
+     * §2.15d's resolution-day recap.
+     *
+     * "Resolution-day recap cards ('The 18% longshot landed — here's who
+     * called it') market the next market."
+     *
+     * The card itself has rendered at `/api/result/[id]` since step 13 and
+     * nothing linked anybody to it — a marketing asset nobody is ever sent is
+     * not a marketing asset. Every holder gets the link now, winner or not.
+     *
+     * The headline is built from the settled price, because that is what makes
+     * the card worth forwarding: the 91% favourite winning is not a story, and
+     * a recap that says so anyway teaches people to ignore recaps.
+     */
+    const settledAt = Number(outcome.priceCurrent);
+    const longshot = settledAt > 0 && settledAt < 0.35;
+    const recap = longshot
+      ? `The ${Math.round(settledAt * 100)}% call landed — ${outcome.label} won.`
+      : `${outcome.label} won.`;
+
     // Everyone who was paid, and everyone who argued, hears about it — after the
     // money has moved, because that is when it is true (§2.12).
+    const paid = new Set<string>();
     for (const payout of result.payouts) {
       if (payout.payout.lte(0)) continue;
+      paid.add(payout.userId);
       await this.notifications.notify({
         userId: payout.userId,
         type: 'payout',
-        body: `${outcome.label} won. ${payout.payout.toFixed(2)} is in your balance.`,
-        data: { marketId: market.id },
+        body: `${recap} ${payout.payout.toFixed(2)} is in your balance.`,
+        data: { marketId: market.id, recap: `/api/result/${market.id}` },
+      });
+    }
+
+    /*
+     * The people who were on the other side.
+     *
+     * They heard nothing at all before this, which is the worse half of the
+     * omission: somebody who staked and lost found out by going looking. §7.4
+     * asks for "quiet dignity — result shown plainly, no shame animations", so
+     * this says what happened and offers the receipt, and does not mention
+     * what they lost.
+     */
+    const holders = await this.prisma.position.findMany({
+      where: { marketId: market.id, shares: { gt: 0 } },
+      select: { userId: true },
+      distinct: ['userId'],
+    });
+
+    for (const holder of holders) {
+      if (paid.has(holder.userId)) continue;
+      await this.notifications.notify({
+        userId: holder.userId,
+        type: 'market_resolved',
+        body: `${recap} Here is how it settled.`,
+        data: { marketId: market.id, recap: `/api/result/${market.id}` },
       });
     }
     for (const dispute of disputes) {

@@ -20,6 +20,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { RgModule } from './rg/rg.module';
+import { AccountModule } from './account/account.module';
 import { FlagsModule } from './flags/flags.module';
 import { StatusModule } from './status/status.module';
 import { SupportModule } from './support/support.module';
@@ -50,6 +51,7 @@ import { WalletModule } from './wallet/wallet.module';
     SupportModule,
     StatusModule,
     FlagsModule,
+    AccountModule,
     CommunityModule,
     CommunityLayerModule,
     CreatorModule,

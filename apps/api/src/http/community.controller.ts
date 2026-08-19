@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import {
   IsArray,
+  IsBoolean,
   IsIn,
   IsISO8601,
   IsInt,
@@ -30,6 +31,7 @@ import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { CommunityService, CommunityMarketError } from '../community/community.service';
 import { FundingWindowWorker } from '../community/funding-window.worker';
+import { voidRisks } from '../community/void-risk';
 import { SeedError, SeedService } from '../community/seed.service';
 import { ResolutionFlowError, ResolutionFlowService } from '../resolution/resolution-flow.service';
 import {
@@ -81,6 +83,9 @@ export class BalanceCheckDto {
   @IsString() sourceUrl!: string;
   @IsISO8601() eventDate!: string;
   @IsISO8601() voidDate!: string;
+  /** §2.14e's warnings depend on which path the creator has picked. */
+  @IsOptional() @IsIn(['organic', 'seeded']) activationPath?: 'organic' | 'seeded';
+  @IsOptional() @IsBoolean() conflictAttested?: boolean;
 }
 
 export class ProposeResultDto {
@@ -233,6 +238,16 @@ export class CommunityController {
         code: problem.code,
         message: problem.message,
       })),
+      // §2.14e: what is likely to go wrong, as distinct from what is not
+      // allowed. Computed here rather than by the model — a warning about a
+      // deadline is arithmetic, and paying for a language model to do
+      // arithmetic makes it slower and less reliable at once.
+      risks: voidRisks({
+        template,
+        activationPath: body.activationPath ?? 'organic',
+        now: new Date(),
+        ...(body.conflictAttested === undefined ? {} : { conflictAttested: body.conflictAttested }),
+      }),
     };
   }
 

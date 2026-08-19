@@ -170,3 +170,12 @@ CREATE INDEX "account_freezes_userId_endsAt_idx" ON "account_freezes"("userId", 
 
 ALTER TABLE "account_freezes" ADD CONSTRAINT "account_freezes_userId_fkey"
   FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- ------------------------------------------------------------ config values
+--
+-- §2.17's referral reward. Seeded at 500 points — meaningful next to the
+-- 5,000 starter balance without being worth farming for, and set to 0 the
+-- moment a farm is found, which turns the programme off without removing it.
+INSERT INTO platform_config (key, "valueJson", "effectiveAt", version, state)
+VALUES ('referral_reward_spc', '500', NOW(), 1, 'active')
+ON CONFLICT (key, version) DO NOTHING;

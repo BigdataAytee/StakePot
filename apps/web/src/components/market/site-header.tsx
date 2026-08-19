@@ -189,6 +189,18 @@ function CashChip() {
   if (me === null) {
     return (
       <div className="flex shrink-0 items-center gap-3">
+        {/*
+          §7.6's marketing page. The grid is the front door, so this is the
+          way to the explanation rather than the other way round — somebody
+          who wants to know what this *is* before signing up needs a door,
+          and burying it in the footer is not one.
+        */}
+        <Link
+          href="/welcome"
+          className="hidden text-base font-semibold text-text-muted hover:text-text md:block"
+        >
+          What is this?
+        </Link>
         <Link href="/login" className="hidden text-base font-semibold hover:underline sm:block">
           Log in
         </Link>

@@ -599,8 +599,12 @@ The user's personal account screen — their money, fully visible, always reconc
 - **Actions:** Deposit (shows *their own* virtual account number with one-tap copy + "transfer from any bank app" guidance) and Withdraw (linked bank account, amount, fee shown, confirmation) — both licensed-phase; in points mode this screen shows points balance, history, and prize credits identically, so users learn the surface before real money arrives.
 - Monthly statement download; receipt view per transaction.
 
-### 7.6 Public Landing Page (the front door — logged-out visitors)
-A marketing-grade page at the root domain, built on the same tokens (§7.4) but louder — its job: a stranger understands and signs up in under 30 seconds:
+### 7.6 Public Landing Page (logged-out visitors)
+A marketing-grade page built on the same tokens (§7.4) but louder — its job: a stranger understands and signs up in under 30 seconds.
+
+**Where it lives.** This section originally put the page at the root domain. It is served at **`/welcome`** instead, linked from the logged-out header ("What is this?") and the footer, because the design reference makes the markets grid the front door — and a stranger who lands on a wall of live arguments with prices actually moving has already seen the demo this page is trying to describe. The root stays the catalogue.
+
+Its sections:
 - **Hero:** the brand promise in Nigerian voice — "Nigeria argues about everything. StakePot is where arguments get settled — with receipts." Behind it, a **live animated market card** (real prices from the API — the argument bar shifting on the actual naira market) so the product demos itself before signup.
 - **How-it-works strip:** three steps with §7.4 visuals — *Pick a question → Stake your side → Winners share the pot* — illustrated with the argument bar, the living number, and the receipt.
 - **Live markets teaser:** 3–4 real trending cards (read-only), tappable → sign-up sheet. Social proof: total staked this week, top forecaster of the week, biggest correct call.

@@ -4,6 +4,7 @@ import { CategoryTabs } from '@/components/market/category-tabs';
 import { LiveFeed } from '@/components/market/live-feed';
 import { MarketCard } from '@/components/market/market-card';
 import { ShelfToolbar } from '@/components/market/shelf-toolbar';
+import { SearchDemand } from '@/components/market/search-demand';
 import { SiteHeader } from '@/components/market/site-header';
 import { TradeSheetHost } from '@/components/market/trade-sheet-host';
 import { WatchGate, WatchlistEmpty } from '@/components/market/watch-gate';
@@ -96,6 +97,13 @@ export default async function MarketsHome({
       <main className={`px-4 pb-[72px] sm:px-5 md:pb-0 ${PAGE_WIDTH}`}>
         {/* One subscription for the whole page, governed by the header switch. */}
         <LiveFeed marketIds={ordered.map((market) => market.id)} />
+
+        {/*
+          §2.14b's unmet-demand signal. The header search filters through the
+          query string, so no request ever reached the search route and the
+          opportunity feed was running on nothing.
+        */}
+        {query !== '' && <SearchDemand query={query} results={ordered.length} />}
 
         {unreachable && (
           <p className="mt-4 rounded-xl border border-border p-4 text-base text-text-muted">

@@ -27,6 +27,7 @@ const ITEMS = [
     label: 'Watchlist',
     match: (p: string, c: string | null) => p === '/' && c === 'watch',
   },
+  { href: '/positions', label: 'Positions', match: (p: string) => p.startsWith('/positions') },
   { href: '/wallet', label: 'Wallet', match: (p: string) => p.startsWith('/wallet') },
   { href: '/leaderboard', label: 'Board', match: (p: string) => p.startsWith('/leaderboard') },
 ] as const;

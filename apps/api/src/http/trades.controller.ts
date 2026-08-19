@@ -272,31 +272,60 @@ export class TradesController {
     };
   }
 
-  /** Open positions, for the ticket's position panel (§7.2d). */
+  /**
+   * Positions — the ticket's panel (§7.2d) and the portfolio screen (§7.1).
+   *
+   * Open only by default, which is what the ticket panel has always asked
+   * for. `?all=1` adds settled and closed rows, because §7.1's "my positions"
+   * wants "open positions with live P&L, closed history, pending payouts" and
+   * a screen that only ever shows what is still running cannot show somebody
+   * what they won.
+   */
   @Get('me/positions')
   @UseGuards(JwtGuard)
-  async positions(@Req() request: RequestWithUser) {
+  async positions(@Req() request: RequestWithUser, @Query('all') all?: string) {
     const user = request.user;
     if (user === undefined) throw new BadRequestException('no authenticated user');
+    const everything = all === '1' || all === 'true';
 
     const positions = await this.prisma.position.findMany({
-      where: { userId: user.userId, shares: { gt: 0 } },
+      where: {
+        userId: user.userId,
+        ...(everything ? {} : { shares: { gt: 0 } }),
+      },
       include: {
-        market: { select: { id: true, question: true, state: true } },
+        market: {
+          select: {
+            id: true,
+            question: true,
+            state: true,
+            resolvedOutcomeId: true,
+            shelf: true,
+            resolutions: { select: { finalizedAt: true }, take: 1 },
+          },
+        },
         outcome: { select: { id: true, label: true, priceCurrent: true } },
       },
     });
 
-    return positions.map((p) => ({
-      marketId: p.marketId,
-      marketQuestion: p.market.question,
-      marketState: p.market.state,
-      outcomeId: p.outcomeId,
-      outcomeLabel: p.outcome.label,
-      shares: p.shares.toString(),
-      avgPrice: p.avgPrice.toString(),
-      price: p.outcome.priceCurrent.toString(),
-      realizedPnl: p.realizedPnl.toString(),
-    }));
+    return positions.map((p) => {
+      const resolved = p.market.resolvedOutcomeId;
+      return {
+        marketId: p.marketId,
+        marketQuestion: p.market.question,
+        marketState: p.market.state,
+        shelf: p.market.shelf,
+        outcomeId: p.outcomeId,
+        outcomeLabel: p.outcome.label,
+        shares: p.shares.toString(),
+        avgPrice: p.avgPrice.toString(),
+        price: p.outcome.priceCurrent.toString(),
+        realizedPnl: p.realizedPnl.toString(),
+        // Null while the market is still running. `true`/`false` only once
+        // there is a result — "not won yet" and "lost" must not look the same.
+        won: resolved === null ? null : resolved === p.outcomeId,
+        settledAt: p.market.resolutions[0]?.finalizedAt?.toISOString() ?? null,
+      };
+    });
   }
 }

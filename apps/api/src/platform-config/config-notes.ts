@@ -63,6 +63,11 @@ export const CONFIG_KEY_NOTES: Record<string, ConfigNote> = {
     what: 'Points credited on signup.',
     risk: 'Issues real liability on the ledger for every new account, including farmed ones.',
   },
+  referral_reward_spc: {
+    blast: 'money',
+    what: 'Paid to a referrer once the account they invited verifies and stakes.',
+    risk: 'Issues real liability per qualifying referral. Set it to 0 to stop the programme without removing it.',
+  },
   signup_bonus_spc: {
     blast: 'money',
     what: 'Points credited when contact is verified.',
