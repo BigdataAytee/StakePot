@@ -3,6 +3,8 @@ import {
   Body,
   Controller,
   Get,
+  HttpException,
+  InternalServerErrorException,
   Post,
   Req,
   ServiceUnavailableException,
@@ -11,7 +13,7 @@ import {
 import { IsBoolean, IsEmail, IsOptional, IsString, Length, MinLength } from 'class-validator';
 
 import { AnalyticsService } from '../analytics/analytics.service';
-import { AuthService } from '../auth/auth.service';
+import { AuthError, AuthService } from '../auth/auth.service';
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { OtpError, OtpService } from '../auth/otp.service';
 import { TokenRevocationService } from '../auth/token-revocation.service';
@@ -36,6 +38,31 @@ export class LoginDto {
 export class VerifyDto {
   /** Six digits. Length-checked here so a malformed code never reaches Redis. */
   @IsString() @Length(6, 6) code!: string;
+}
+
+/**
+ * Turn what went wrong into what to say.
+ *
+ * `AuthError` is a refusal somebody can act on — "password must be at least 10
+ * characters", "an account already uses that email" — and travels verbatim.
+ * Everything else is ours, and must not: forwarding `error.message` blindly is
+ * how a stranger came to be shown
+ *
+ *     Invalid `prisma.user.create()` invocation:
+ *     Unique constraint failed on the fields: (`email`)
+ *
+ * on the signup screen — unreadable to the person it was shown to, and a free
+ * description of the schema to anyone else. It also disguised real failures as
+ * 400s, so a database that had fallen over looked like a user typing badly and
+ * never showed up as an error rate.
+ */
+function asRefusal(error: unknown, path: string): HttpException {
+  if (error instanceof AuthError) return new BadRequestException(error.message);
+  logger.error(
+    { path, error: error instanceof Error ? error.message : String(error) },
+    'auth path failed',
+  );
+  return new InternalServerErrorException();
 }
 
 @Controller('auth')
@@ -65,7 +92,7 @@ export class AuthController {
       await this.analytics.record('signup', { tier: result.tier }, result.userId);
       return result;
     } catch (error) {
-      throw new BadRequestException((error as Error).message);
+      throw asRefusal(error, 'signup');
     }
   }
 
@@ -76,7 +103,7 @@ export class AuthController {
     try {
       return await this.auth.login(body);
     } catch (error) {
-      throw new BadRequestException((error as Error).message);
+      throw asRefusal(error, 'login');
     }
   }
 

@@ -110,7 +110,25 @@ revokes the unusable code so the resend cooldown does not hold a retry against
 the operator's fix, and logs the failure per channel. The API also says so at
 boot rather than waiting for the first user to find out.
 
-**11. `pnpm start` ran a server the deployment never uses.** Next warns that
+**11. A taken email answered with a database error.** Signing up on an address
+that already had an account showed the person
+
+```
+Invalid `prisma.user.create()` invocation:
+Unique constraint failed on the fields: (`email`)
+```
+
+The cause was one line: the signup and login handlers caught _everything_ and
+forwarded `error.message` to the browser, so any unexpected failure became a
+400 carrying its own internals — unreadable to the person it was shown to, a
+free description of the schema to anyone else, and a disguise that kept real
+failures out of the error rate by dressing them as user mistakes. Refusals now
+travel verbatim because they are written for a person; anything else is logged
+and answered generically. §2.7's one-account-per-contact clash is turned into a
+sentence with a next step: "an account already uses that email — log in
+instead, or use another address."
+
+**12. `pnpm start` ran a server the deployment never uses.** Next warns that
 `next start` does not support `output: standalone` on every boot. That mismatch
 is how (1) survived.
 
