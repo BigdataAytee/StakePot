@@ -1,0 +1,185 @@
+name: Repair production migrations
+
+# Clear a failed migration off the production database and apply the rest.
+#
+# `prisma migrate deploy` refuses to do anything once a migration has failed
+# (P3009) — it will not guess whether the failure left the schema half-changed,
+# and it is right not to. Clearing the marker is therefore a deliberate act by
+# a person, which is what this workflow is.
+#
+# It reads PROD_DATABASE_URL, the same repository secret the seed workflow
+# uses. This session cannot reach the database — the sandbox refuses outbound
+# 5432 — and the credential must not live in this file, because the repository
+# is public.
+#
+#   Settings → Secrets and variables → Actions → New repository secret
+#   Name:  PROD_DATABASE_URL
+#   Value: the external connection string for the Render database
+#
+# Nothing here deletes, truncates or updates application data. The only write
+# outside `prisma migrate deploy` is to Prisma's own `_prisma_migrations`
+# bookkeeping table, and it is guarded: if the failed migration reports that it
+# applied any steps before dying, the run stops rather than marking it rolled
+# back, because "rolled back" would then be a lie and the next deploy would
+# replay statements on top of a half-changed schema.
+on:
+  workflow_dispatch:
+  # Runs when this file itself changes, which is a deliberate act — there is no
+  # path by which an unrelated commit triggers a write to production.
+  push:
+    paths: ['.github/workflows/repair-migrations.yml']
+
+jobs:
+  repair:
+    name: clear the failed migration and apply the rest
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FAILED: 20240101000017_tier0_stake_cap
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Check the secret is set
+        id: guard
+        env:
+          URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          if [ -z "${URL:-}" ]; then
+            echo "PROD_DATABASE_URL is not set."
+            echo "Settings → Secrets and variables → Actions → New repository secret"
+            echo "Name it PROD_DATABASE_URL and paste the external connection string."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ------------------------------------------------------------ diagnose
+      #
+      # The reason the migration failed is already recorded: Prisma writes the
+      # database's own error into `_prisma_migrations.logs` when a migration
+      # dies. Reading it beats re-running the statement and guessing, because
+      # it is what actually happened on the night, against this data.
+      - name: Why it failed, in the database's own words
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          psql "$URL" -v ON_ERROR_STOP=1 -c "
+            select migration_name, started_at, finished_at, rolled_back_at, applied_steps_count
+              from _prisma_migrations order by started_at;"
+          echo '--- logs of the failed migration ---'
+          psql "$URL" -v ON_ERROR_STOP=1 -tAc \
+            "select coalesce(logs, '(no log recorded)') from _prisma_migrations
+              where migration_name = '${FAILED}'"
+
+      # The row this migration inserts. If it is already present the migration
+      # is a no-op on re-run, which is worth knowing before re-running it.
+      - name: What is already in platform_config
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          psql "$URL" -v ON_ERROR_STOP=1 -c "
+            select key, version, state, \"valueJson\"
+              from platform_config where key = 'tier0_stake_cap_spc' order by version;"
+
+      # ------------------------------------------------------------ the guard
+      #
+      # `--rolled-back` asserts that the database is back where it started. For
+      # this migration that is true — Postgres runs each migration file in one
+      # transaction and this one is a single INSERT, so the 42P10 aborted it
+      # whole. Assert it from the data rather than from that reasoning: if any
+      # step was applied, stop and let a person look.
+      - name: Refuse to proceed if anything was actually applied
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          steps_applied=$(psql "$URL" -tAc \
+            "select coalesce(max(applied_steps_count), 0) from _prisma_migrations
+              where migration_name = '${FAILED}' and finished_at is null")
+          echo "steps applied by the failed migration: ${steps_applied}"
+          if [ "${steps_applied:-0}" -ne 0 ]; then
+            echo "::error::${FAILED} applied ${steps_applied} step(s) before failing."
+            echo "::error::Marking it rolled back would be false. Inspect the schema by hand."
+            exit 1
+          fi
+
+      # ---------------------------------------------------------- the dry run
+      #
+      # Apply the corrected 17 and the whole of 18 against the real data inside
+      # a transaction that is thrown away. If either one cannot cope with what
+      # is already in this database, it fails here — before Prisma's
+      # bookkeeping has been touched and with production unchanged.
+      - name: Rehearse both migrations against the real data, then roll back
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          {
+            echo 'BEGIN;'
+            cat apps/api/prisma/migrations/20240101000017_tier0_stake_cap/migration.sql
+            cat apps/api/prisma/migrations/20240101000018_blocks_e_to_j/migration.sql
+            echo 'ROLLBACK;'
+          } | psql "$URL" -v ON_ERROR_STOP=1 -f -
+          echo 'both migrations applied cleanly against live data and were rolled back'
+
+      # ------------------------------------------------------------- the fix
+      - name: Install
+        if: steps.guard.outputs.ready == 'true'
+        run: pnpm install --frozen-lockfile
+
+      - name: Mark the failed migration rolled back
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: pnpm --filter @stakeam/api exec prisma migrate resolve --rolled-back "${FAILED}"
+
+      - name: Apply
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: pnpm --filter @stakeam/api exec prisma migrate deploy
+
+      # ------------------------------------------------------------- verify
+      - name: All nineteen applied, and the schema matches
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.PROD_DATABASE_URL }}
+          URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          pnpm --filter @stakeam/api exec prisma migrate status
+
+          applied=$(psql "$URL" -tAc \
+            "select count(*) from _prisma_migrations where finished_at is not null")
+          expected=$(ls apps/api/prisma/migrations | grep -c '^[0-9]')
+          echo "migrations finished: ${applied} of ${expected} on disk"
+          test "${applied}" -eq "${expected}" || {
+            echo "::error::expected ${expected} finished migrations, found ${applied}"
+            exit 1
+          }
+
+          # The same drift gate CI runs, against production: proves the schema
+          # the app expects is the schema that is actually there.
+          pnpm --filter @stakeam/api exec prisma migrate diff \
+            --from-schema-datamodel prisma/schema.prisma \
+            --to-url "$URL" \
+            --exit-code \
+          || {
+            echo "::error::production schema does not match prisma/schema.prisma"
+            exit 1
+          }
+
+          # The append-only rule on the two evidence tables, read the way an
+          # auditor would: migration 18 is the one that creates them.
+          psql "$URL" -v ON_ERROR_STOP=1 -c "
+            select table_name, string_agg(privilege_type, ',' order by privilege_type) as granted
+              from information_schema.role_table_grants
+             where grantee = 'stakeam_app'
+               and table_name in ('ledger', 'pii_access_log', 'consents', 'user_sessions')
+             group by table_name order by table_name;"
