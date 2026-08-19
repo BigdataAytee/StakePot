@@ -10,6 +10,7 @@ import { LivingNumber } from '@/components/living-number';
 import { LivePercent } from '@/components/market/live-percent';
 import { MarketIcon } from '@/components/market/market-icon';
 import { SiteHeader } from '@/components/market/site-header';
+import { MobileBuyBar } from '@/components/market/mobile-buy-bar';
 import { TradePanel } from '@/components/market/trade-panel';
 import { WatchStar } from '@/components/market/watch-star';
 import { PriceChart, type Timeframe } from '@/components/price-chart';
@@ -20,6 +21,7 @@ import { TakeThread } from '@/components/take-thread';
 import { TradeSheet, type TradeIntent } from '@/components/trade-sheet';
 import { useMarketFeed } from '@/hooks/use-market-feed';
 import { api, type MarketDetail, type PricePoint, type SeedComposition } from '@/lib/api';
+import { PAGE_WIDTH } from '@/lib/layout';
 import { recordView } from '@/lib/creator-api';
 import { STATE_LABEL, dateTime, money, percent, untilFreeze } from '@/lib/format';
 import { PositionPanel } from './position-panel';
@@ -172,7 +174,9 @@ export function TicketView({
     <>
       <SiteHeader />
 
-      <main className="mx-auto max-w-[1200px] px-5 pb-16 pt-[18px]">
+      <main
+        className={`px-4 pb-[88px] pt-4 sm:px-5 min-[860px]:pb-16 min-[860px]:pt-[18px] ${PAGE_WIDTH}`}
+      >
         <Link
           href="/"
           className="mb-3.5 inline-flex items-center gap-1.5 rounded-md bg-chip px-3 py-2 text-base font-semibold text-text-muted hover:text-text"
@@ -329,6 +333,10 @@ export function TicketView({
           )}
         </div>
       </main>
+
+      {/* The phone's primary action, in place of the side panel it has no
+          room for. */}
+      <MobileBuyBar market={initial} livePrices={prices} />
 
       {/* Kept for the two paths that are not the side panel: a price button
           pressed on the grid, and selling out of a position. */}

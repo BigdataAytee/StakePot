@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
 import { money } from '@/lib/format';
+import { PAGE_WIDTH } from '@/lib/layout';
 import { useSession } from '@/lib/session';
 import { useLiveMode } from '@/store/live-mode';
 
@@ -19,10 +20,23 @@ import { useLiveMode } from '@/store/live-mode';
 export function SiteHeader() {
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-surface/[.94] backdrop-blur-[8px]">
-      <div className="mx-auto flex h-[60px] max-w-[1200px] items-center gap-[14px] px-5">
+      {/*
+        One row on a laptop, two on a phone.
+        
+        The reference puts all four things on a single 60px line, which works
+        at 1200px and does not work at 390: the search is the flexible one, so
+        it is what collapses, and a search field squeezed to forty pixels is
+        not a search field. Wrapping it onto its own full-width line below
+        costs one row of height and gives back a control somebody can actually
+        type in. `flex-wrap` with `order-last` does it in one element, so the
+        field is rendered once and keeps one id.
+      */}
+      <div
+        className={`flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2 sm:h-[60px] sm:flex-nowrap sm:gap-x-[14px] sm:px-5 sm:py-0 ${PAGE_WIDTH}`}
+      >
         <Logo />
         <SearchField />
-        <div className="flex-1" />
+        <div className="hidden flex-1 sm:block" />
         <LiveSwitch />
         <CashChip />
       </div>
@@ -83,7 +97,11 @@ function SearchField() {
   }
 
   return (
-    <form role="search" onSubmit={submit} className="relative max-w-[440px] flex-1">
+    <form
+      role="search"
+      onSubmit={submit}
+      className="relative order-last w-full sm:order-none sm:w-auto sm:max-w-[440px] sm:flex-1"
+    >
       <label htmlFor="market-search" className="sr-only">
         Search markets
       </label>
@@ -138,7 +156,7 @@ function LiveSwitch() {
       aria-checked={on}
       onClick={() => setLive(!live)}
       title={on ? 'Live prices are on' : 'Prices are held still'}
-      className={`flex shrink-0 select-none items-center gap-[7px] whitespace-nowrap text-sm font-semibold ${
+      className={`ml-auto flex shrink-0 select-none items-center gap-[7px] whitespace-nowrap text-sm font-semibold sm:ml-0 ${
         on ? 'text-rise' : 'text-text-muted'
       }`}
     >

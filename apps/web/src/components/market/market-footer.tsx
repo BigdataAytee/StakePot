@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { PAGE_WIDTH } from '@/lib/layout';
 
 /**
  * The footer.
@@ -12,7 +13,7 @@ import Link from 'next/link';
 export function MarketFooter() {
   return (
     <footer className="mt-6 border-t border-border">
-      <div className="mx-auto max-w-[1200px] px-5 py-6 text-sm text-text-muted">
+      <div className={`px-4 py-6 sm:px-5 text-sm text-text-muted ${PAGE_WIDTH}`}>
         <nav aria-label="Site" className="flex flex-wrap gap-x-5 gap-y-2">
           <FooterLink href="/markets">All markets</FooterLink>
           <FooterLink href="/create">Open a market</FooterLink>

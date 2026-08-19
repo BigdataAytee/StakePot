@@ -113,7 +113,7 @@ export function TradePanel({
   }
 
   return (
-    <aside className="rounded-xl bg-chip p-4 min-[860px]:sticky min-[860px]:top-[76px]">
+    <aside className="hidden rounded-xl bg-chip p-4 min-[860px]:sticky min-[860px]:top-[76px] min-[860px]:block">
       <p className="mb-2.5 text-[13.5px] font-semibold">{outcome.label}</p>
 
       {binary !== null && (

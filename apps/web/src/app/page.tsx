@@ -8,7 +8,9 @@ import { SiteHeader } from '@/components/market/site-header';
 import { TradeSheetHost } from '@/components/market/trade-sheet-host';
 import { WatchGate, WatchlistEmpty } from '@/components/market/watch-gate';
 import { MarketFooter } from '@/components/market/market-footer';
+import { MobileNav } from '@/components/market/mobile-nav';
 import { api, type MarketSummary } from '@/lib/api';
+import { PAGE_WIDTH } from '@/lib/layout';
 import { comparatorFor, topicOf, topicsPresent } from '@/lib/home';
 
 // Prices move. A cached shelf is a shelf showing yesterday's argument.
@@ -91,7 +93,7 @@ export default async function MarketsHome({
         />
       </Suspense>
 
-      <main className="mx-auto max-w-[1200px] px-5">
+      <main className={`px-4 pb-[72px] sm:px-5 md:pb-0 ${PAGE_WIDTH}`}>
         {/* One subscription for the whole page, governed by the header switch. */}
         <LiveFeed marketIds={ordered.map((market) => market.id)} />
 
@@ -153,6 +155,10 @@ export default async function MarketsHome({
       </main>
 
       <MarketFooter />
+
+      <Suspense>
+        <MobileNav />
+      </Suspense>
 
       {/* One sheet for the whole grid — a price button opens it in place
           rather than sending the reader off to a page first. */}

@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { PAGE_WIDTH } from '@/lib/layout';
 
 /**
  * The row of categories under the header.
@@ -39,7 +40,7 @@ export function CategoryTabs({
 
   return (
     <nav aria-label="Categories" className="border-b border-border bg-surface">
-      <div className="mx-auto max-w-[1200px] px-5">
+      <div className={`px-4 sm:px-5 ${PAGE_WIDTH}`}>
         <div className="flex gap-0.5 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
           {items.map((item) => {
             const on = item.key === active;
