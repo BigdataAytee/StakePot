@@ -36,6 +36,7 @@ import {
   PrizeController,
 } from './leaderboard.controller';
 import { MarketsController } from './markets.controller';
+import { ReputationController, TopCallsAdminController } from './reputation.controller';
 import { ModerationController, ThreadsController } from './threads.controller';
 import { TradesController } from './trades.controller';
 
@@ -80,7 +81,9 @@ import { TradesController } from './trades.controller';
     MarketSignalsController,
     MarketsController,
     ModerationController,
+    ReputationController,
     ThreadsController,
+    TopCallsAdminController,
     TradesController,
   ],
   providers: [JwtGuard, OptionalJwtGuard, RolesGuard],

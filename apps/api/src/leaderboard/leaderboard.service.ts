@@ -9,6 +9,7 @@ import {
   ALL_TIME,
   bestStreak,
   currentStreak,
+  topForecaster,
   isoWeekOf,
   rank,
   weekWindow,
@@ -239,6 +240,69 @@ export class LeaderboardService {
     return { entries: ranked.length };
   }
 
+  /**
+   * §2.8's "Top Forecaster" badge, awarded for a *finished* week.
+   *
+   * `topForecaster` has been exported and tested since step 13 and nothing
+   * ever called it, so the badge existed as a rule and never as an award.
+   * This is the caller.
+   *
+   * The completeness check is the substance, not a guard: a badge handed out
+   * mid-week appears on Tuesday and vanishes on Thursday when somebody else
+   * settles a market, which makes it a notification rather than an honour.
+   * All-time is never awarded — a badge nobody can lose is a badge nobody has
+   * to defend.
+   *
+   * Stored as a reputation row under the `overall` category so the profile has
+   * one place to read titles from, rather than a second badges table saying
+   * nearly the same thing.
+   */
+  async awardTopForecaster(
+    period: string,
+    now = new Date(),
+  ): Promise<{ awarded: readonly string[]; reason?: string }> {
+    if (period === ALL_TIME) return { awarded: [], reason: 'all-time is not a season' };
+
+    const window = weekWindow(period);
+    if (window.end > now) return { awarded: [], reason: 'week is not over' };
+
+    const rows = await this.prisma.leaderboardSnapshot.findMany({
+      where: { period, board: 'accuracy' },
+      orderBy: { rank: 'asc' },
+      take: 10,
+    });
+
+    const winners = topForecaster(
+      rows.map((row) => ({
+        userId: row.userId,
+        rank: row.rank,
+        profit: Number(row.profit),
+        accuracy: Number(row.accuracy),
+        staked: Number(row.staked),
+        marketsSettled: row.marketsSettled,
+      })),
+    );
+
+    for (const userId of winners) {
+      const entry = rows.find((row) => row.userId === userId);
+      await this.prisma.reputation.upsert({
+        where: { userId_category_season: { userId, category: 'overall', season: period } },
+        create: {
+          userId,
+          category: 'overall',
+          season: period,
+          accuracyPct: entry?.accuracy ?? 0,
+          calibration: 0,
+          sampleSize: entry?.marketsSettled ?? 0,
+          title: 'Top Forecaster',
+        },
+        update: { title: 'Top Forecaster' },
+      });
+    }
+
+    return { awarded: winners };
+  }
+
   /** Refresh every board a sweep is responsible for. */
   async snapshotAll(now = new Date()): Promise<Record<string, number>> {
     const period = isoWeekOf(now);
@@ -250,6 +314,14 @@ export class LeaderboardService {
         await this.snapshot({ period: ALL_TIME, board, now })
       ).entries;
     }
+
+    // Last week's badge, once last week is actually over. Awarding for the
+    // period the sweep just snapshotted would award it mid-week every time.
+    const lastWeek = isoWeekOf(new Date(now.getTime() - 7 * 86_400_000));
+    await this.snapshot({ period: lastWeek, board: 'accuracy', now });
+    const badges = await this.awardTopForecaster(lastWeek, now);
+    result[`${lastWeek}:top-forecaster`] = badges.awarded.length;
+
     return result;
   }
 

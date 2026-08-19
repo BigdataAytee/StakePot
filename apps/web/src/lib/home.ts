@@ -1,3 +1,5 @@
+import { FALLBACK_TOPIC, TOPICS, topicFor, type Topic } from '@stakeam/engine';
+
 import type { MarketSummary, OutcomeView } from './api';
 
 /**
@@ -11,69 +13,18 @@ import type { MarketSummary, OutcomeView } from './api';
  * market it describes.
  */
 
-export interface Topic {
-  key: string;
-  label: string;
-  /** What a question about this topic tends to say. Ordered — first match wins. */
-  match: RegExp;
-}
-
 /**
- * The topic strip, in the order it is shown.
- *
- * Nigerian-first on purpose: the naira, the Eagles and the ballot are what this
- * audience already argues about, so they are the first three doors rather than
- * an "Other" bucket three scrolls down.
+ * The taxonomy itself now lives in `@stakeam/engine`, because the API awards
+ * §2.15b's category titles from the same rules. Two copies of this list would
+ * mean somebody titled "Football Prophet" whose markets sit under Culture —
+ * exactly the drift a derived category is supposed to prevent.
  */
-export const TOPICS: Topic[] = [
-  {
-    key: 'politics',
-    label: 'Politics',
-    match:
-      /\b(inec|election|governor|senate|president|tinubu|obi|atiku|apc|pdp|labour party|ballot|poll|minister|bill|assembly)\b/i,
-  },
-  {
-    key: 'sports',
-    label: 'Sports',
-    match:
-      /\b(eagles|super falcons|afcon|caf|nff|premier league|npfl|fifa|world cup|match|derby|goal|olympic|boxing|f1|nba|cricket)\b/i,
-  },
-  {
-    key: 'money',
-    label: 'Money',
-    match:
-      /\b(naira|cbn|inflation|petrol|pump price|fuel|dollar|exchange rate|gdp|budget|tax|bank|interest rate|mpc|nnpc|diesel|cement|rice)\b/i,
-  },
-  {
-    key: 'crypto',
-    label: 'Crypto',
-    match: /\b(bitcoin|btc|ethereum|eth|crypto|stablecoin|usdt|token|binance|solana)\b/i,
-  },
-  {
-    key: 'culture',
-    label: 'Culture',
-    match:
-      /\b(bbnaija|big brother|nollywood|afrobeats|burna|wizkid|davido|asake|rema|grammy|amvca|headies|album|single|netflix|film|song|music)\b/i,
-  },
-  {
-    key: 'tech',
-    label: 'Tech',
-    match:
-      /\b(startup|funding round|ai|apple|google|openai|meta|nvidia|app|launch|iphone|android|chip)\b/i,
-  },
-  {
-    key: 'weather',
-    label: 'Weather',
-    match: /\b(rain|rainfall|flood|harmattan|temperature|nimet|storm|heat)\b/i,
-  },
-];
-
-const FALLBACK: Topic = { key: 'everything', label: 'Everything else', match: /.^/ };
+export type { Topic };
+export { TOPICS };
 
 /** Which strip a market belongs under. Never null — everything has a door. */
 export function topicOf(market: Pick<MarketSummary, 'question' | 'sourceName'>): Topic {
-  const haystack = `${market.question} ${market.sourceName}`;
-  return TOPICS.find((topic) => topic.match.test(haystack)) ?? FALLBACK;
+  return topicFor(market.question, market.sourceName);
 }
 
 /** The topics that actually have markets, in strip order, with counts. */
@@ -87,8 +38,8 @@ export function topicsPresent(markets: MarketSummary[]): { topic: Topic; count: 
     topic,
     count: counts.get(topic.key) as number,
   }));
-  const spare = counts.get(FALLBACK.key);
-  return spare === undefined ? present : [...present, { topic: FALLBACK, count: spare }];
+  const spare = counts.get(FALLBACK_TOPIC.key);
+  return spare === undefined ? present : [...present, { topic: FALLBACK_TOPIC, count: spare }];
 }
 
 /**

@@ -182,6 +182,9 @@ importers:
       '@serwist/next':
         specifier: ^9.5.12
         version: 9.5.12(next@15.5.23(@babel/core@7.29.7)(@opentelemetry/api@1.9.1)(@playwright/test@1.62.1)(@types/node@24.13.3)(react-dom@19.2.8(react@19.2.8))(react@19.2.8))(react@19.2.8)(typescript@5.9.3)(webpack@5.109.2(postcss@8.5.26))
+      '@stakeam/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
       '@stakeam/tokens':
         specifier: workspace:*
         version: link:../../packages/tokens

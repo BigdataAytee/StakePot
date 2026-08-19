@@ -46,3 +46,6 @@ export {
   InsufficientSharesError,
   MarketFrozenError,
 } from './errors';
+
+export { FALLBACK_TOPIC, TOPICS, topicFor, topicKeyFor } from './topics';
+export type { Topic } from './topics';

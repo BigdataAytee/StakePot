@@ -330,6 +330,11 @@ model User {
   opportunities      Opportunity[]
   proposedResolutions Resolution[]       @relation("ResolutionProposer")
   finalizedResolutions Resolution[]      @relation("ResolutionFinalizer")
+  referralsMade      Referral[]          @relation("ReferralsMade")
+  referralReceived   Referral?           @relation("ReferralReceived")
+  consents           Consent[]
+  sessions           UserSession[]
+  freezes            AccountFreeze[]
 
   @@map("users")
 }
@@ -1336,4 +1341,199 @@ model ConfigVersion {
 
   @@index([key, proposedAt])
   @@map("config_versions")
+}
+
+// ------------------------------------------------- feature flags & canary (§2.13)
+
+/// A gate on a shipped-but-not-live feature (§2.13's "canary or feature-flag
+/// gating", §6.8's flags UI).
+///
+/// `rolloutPct` is what makes this a canary rather than a switch: a change goes
+/// to 5% of accounts, and the same account keeps the same answer across
+/// requests because the bucket is a hash of (key, userId), not a coin flip.
+/// A flag that flickers per request is worse than no flag — it makes a bug
+/// report unreproducible.
+model FeatureFlag {
+  key         String   @id
+  description String
+  /// Off entirely. The kill switch, checked before the rollout maths.
+  enabled     Boolean  @default(false)
+  /// 0–100. 100 with `enabled` means everyone.
+  rolloutPct  Int      @default(0)
+  /// Accounts always in, whatever the percentage — staff, and the people
+  /// debugging the thing.
+  allowList   String[] @default([])
+  updatedBy   String?
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  @@map("feature_flags")
+}
+
+// ------------------------------------------------------ operator broadcasts (§6.8)
+
+/// A notification sent to a segment of the userbase from the growth console.
+///
+/// Recorded before it is sent and never deleted: a broadcast is the one action
+/// in the console that reaches every member at once, and "what did we send, to
+/// whom, who approved it" has to survive the person who sent it.
+model Broadcast {
+  id         String    @id @default(cuid())
+  title      String
+  body       String
+  /// `all | tier1 | creators | dormant` — resolved at send time.
+  segment    String
+  channel    String    @default("in_app")
+  createdBy  String
+  approvedBy String?
+  sentAt     DateTime?
+  recipients Int       @default(0)
+  createdAt  DateTime  @default(now())
+
+  @@index([createdAt])
+  @@map("broadcasts")
+}
+
+// ------------------------------------------------------- restore drills (§2.13, §6.9)
+
+/// The record of a backup actually being restored (§2.13).
+///
+/// A backup nobody has restored is a hypothesis. The system room reads this to
+/// show when the last drill ran and whether it passed, because the useful
+/// question is never "are we taking backups" but "when did we last prove one
+/// works".
+model RestoreDrill {
+  id          String   @id @default(cuid())
+  ranAt       DateTime @default(now())
+  /// Which backup was restored — a filename or snapshot id.
+  backupRef   String
+  /// How long the restore took, in seconds. The recovery-time objective.
+  durationSec Int
+  passed      Boolean
+  /// Row counts compared after the restore, and anything that failed.
+  notes       String
+  ranBy       String
+
+  @@index([ranAt])
+  @@map("restore_drills")
+}
+
+// ----------------------------------------------------------- PII access log (§2.11)
+
+/// Every staff read of a member's personal details (§2.11's "field-level
+/// access logging").
+///
+/// Separate from `admin_audit`, which records mutations. A support agent
+/// reading a phone number changes nothing and is exactly the access that needs
+/// a trail — the abuse this catches is looking, not editing.
+model PiiAccessLog {
+  id        String   @id @default(cuid())
+  staffId   String
+  subjectId String
+  /// Which fields were revealed: `email`, `phone`, `kycRef`.
+  fields    String[]
+  reason    String
+  ip        String
+  createdAt DateTime @default(now())
+
+  @@index([subjectId, createdAt])
+  @@index([staffId, createdAt])
+  @@map("pii_access_log")
+}
+
+// ------------------------------------------------------------- referrals (§2.17)
+
+/// Who brought whom, and what it earned them (§2.17).
+///
+/// The reward is deliberately not paid on signup. A referral programme that
+/// pays on account creation pays for account creation, which is a bounty on
+/// fake accounts; this pays when the referred member does the thing the
+/// business actually wants, and `qualifiedAt` is when that happened.
+model Referral {
+  id          String    @id @default(cuid())
+  /// The account whose code was used.
+  referrerId  String
+  /// The new account. One row per referred account, ever.
+  referredId  String    @unique
+  code        String
+  qualifiedAt DateTime?
+  /// Paid once, on qualification, and only after the anti-abuse check.
+  rewardPaid  Decimal   @default(0) @db.Decimal(38, 18)
+  /// Set when the pair looks like self-referral — same device, same contact
+  /// domain, funded from the same source. Blocks the reward, keeps the row.
+  blockedFor  String?
+  createdAt   DateTime  @default(now())
+
+  referrer User @relation("ReferralsMade", fields: [referrerId], references: [id], onDelete: Cascade)
+  referred User @relation("ReferralReceived", fields: [referredId], references: [id], onDelete: Cascade)
+
+  @@index([referrerId])
+  @@index([code])
+  @@map("referrals")
+}
+
+// ------------------------------------------------- consent & sessions (§2.18)
+
+/// Acceptance of a specific version of a specific document (§2.18).
+///
+/// Versioned because "they agreed to the terms" is worthless without saying
+/// which terms. A new version does not invalidate the old row — it needs a new
+/// one, and the absence of it is what triggers the re-prompt.
+model Consent {
+  id         String   @id @default(cuid())
+  userId     String
+  /// `terms | privacy | age`
+  document   String
+  version    String
+  acceptedAt DateTime @default(now())
+  ip         String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, document, version])
+  @@index([userId])
+  @@map("consents")
+}
+
+/// A live sign-in, so somebody can see where they are logged in and end it
+/// (§2.18's session/device management).
+model UserSession {
+  id         String    @id @default(cuid())
+  userId     String
+  /// Hash of the token's jti — never the token. A session list that can hand
+  /// back a working credential is a session list that is worth stealing.
+  tokenHash  String    @unique
+  userAgent  String
+  ip         String
+  lastSeenAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+  /// Why it ended: `user | password_change | sim_swap_freeze | staff`.
+  revokedFor String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@map("user_sessions")
+}
+
+/// A cooling period on an account after a contact change (§2.18's SIM-swap
+/// freeze).
+///
+/// The attack this exists for: take over the phone number, change the contact
+/// details, withdraw. The freeze does not stop somebody using the site — it
+/// stops money leaving while the real owner still has a chance to notice, and
+/// it is why the notification goes to the *old* contact.
+model AccountFreeze {
+  id         String    @id @default(cuid())
+  userId     String
+  reason     String
+  startedAt  DateTime  @default(now())
+  endsAt     DateTime
+  liftedAt   DateTime?
+  liftedBy   String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, endsAt])
+  @@map("account_freezes")
 }
