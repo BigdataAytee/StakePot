@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
@@ -80,6 +80,26 @@ test.describe('the walkthrough', () => {
   // had spent — which is how CI first went red on the phone viewport.
   test.beforeAll(async () => {
     await resetAuthBudget();
+
+    // Clear this viewport's numbered shots before writing new ones.
+    //
+    // The names carry a step number, so inserting a step renumbers everything
+    // after it and the previous run's files are left behind under their old
+    // numbers. Three generations had piled up: fifty files in a folder that
+    // holds twenty-two, several of them photographs of screens as they were two
+    // changes ago. The README claims these images cannot drift from a passing
+    // suite — that is only true if the run owns the folder.
+    //
+    // Numbered files only: `auth-*.png` belongs to auth-screens.spec.ts, which
+    // runs before this one and whose work must survive.
+    // `test.info()` rather than a hook argument: Playwright insists the first
+    // parameter be an object-destructuring pattern, and an empty one is what
+    // the lint rules reject. The project name is available either way.
+    const folder = join(SHOTS, test.info().project.name);
+    mkdirSync(folder, { recursive: true });
+    for (const file of readdirSync(folder)) {
+      if (/^\d+-.*\.png$/.test(file)) rmSync(join(folder, file));
+    }
   });
 
   test('1 · the front door explains itself to a stranger', async ({ page }, testInfo) => {
