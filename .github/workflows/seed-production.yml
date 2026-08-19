@@ -78,15 +78,26 @@ jobs:
       # public and it is somebody's personal email. It promotes an account, it
       # does not create one — sign up through the app first, and the script says
       # so plainly if it finds nobody.
+      #
+      # The emptiness check is in the shell rather than in `if:`, because the
+      # `secrets` context is not available to a step conditional — a workflow
+      # using it there fails to parse, and only GitHub validates expressions, so
+      # a local YAML check passes it happily.
       - name: Promote the first admin
-        if: steps.guard.outputs.ready == 'true' && secrets.ADMIN_EMAIL != ''
+        if: steps.guard.outputs.ready == 'true'
         env:
           PGPASSWORD_URL: ${{ secrets.PROD_DATABASE_URL }}
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
         run: |
+          if [ -z "${ADMIN_EMAIL:-}" ]; then
+            echo "ADMIN_EMAIL is not set — skipping the promotion."
+            exit 0
+          fi
           psql "$PGPASSWORD_URL" -v ON_ERROR_STOP=1 \
             -v email="'$ADMIN_EMAIL'" -v role="'admin'" \
             -f scripts/deploy/promote-admin.sql
+          psql "$PGPASSWORD_URL" -v ON_ERROR_STOP=1 -c \
+            "select role, count(*) from users group by role order by role;"
 
       - name: What the live API returns
         if: steps.guard.outputs.ready == 'true'
