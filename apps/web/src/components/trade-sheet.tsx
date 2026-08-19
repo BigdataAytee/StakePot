@@ -4,44 +4,32 @@ import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowUpDown, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
-import type { MarketDetail, OutcomeView } from '@/lib/api';
-import { API_URL } from '@/lib/api';
+import type { OutcomeView } from '@/lib/api';
+
 import { exactMoney, kobo, percent } from '@/lib/format';
+import { placeTrade } from '@/lib/place-trade';
 import { usePublicConfig } from '@/lib/public-config';
-
-/**
- * Wait for a queued trade to be executed, or to be refused.
- *
- * §11's queue answers "accepted" the moment a busy market's trade is safely on
- * the stream, and the worker executes it a moment later. Somebody who has just
- * committed money is owed the outcome, not an optimistic screen: this polls the
- * status endpoint until the trade exists or the refusal does.
- *
- * It gives up after a minute and says so. Giving up is not the same as losing
- * the trade — the queue still holds it and the wallet will show it — so the
- * message says that rather than implying the money went nowhere.
- */
-async function waitForFill(requestId: string, token: string): Promise<void> {
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    const response = await fetch(`${API_URL}/trades/${requestId}/status`, {
-      headers: { authorization: `Bearer ${token}` },
-    }).catch(() => null);
-    if (response === null || !response.ok) continue;
-
-    const body = (await response.json().catch(() => null)) as {
-      status?: string;
-      reason?: string;
-    } | null;
-    if (body?.status === 'filled') return;
-    if (body?.status === 'rejected') throw new Error(body.reason ?? 'that trade was refused');
-  }
-  throw new Error('Still confirming — your trade is queued and will appear in your wallet.');
-}
+import { quote } from '@/lib/trade-quote';
 
 /** The quick chips §7.2d specifies for amount-first entry. */
 const AMOUNT_CHIPS = [500, 1000, 2000, 5000];
+
+/**
+ * What the sheet needs to quote a trade.
+ *
+ * Structural rather than `MarketDetail`, because the same sheet now opens from
+ * the grid — where a card holds a summary — as well as from the ticket. Both
+ * shapes carry these fields; asking for the detail would have meant fetching a
+ * whole market to price a button somebody has already pressed.
+ */
+export interface TradeMarket {
+  id: string;
+  question: string;
+  state: string;
+  pot: string;
+  liquidity: string;
+  outcomes: OutcomeView[];
+}
 
 export interface TradeIntent {
   outcome: OutcomeView;
@@ -71,7 +59,7 @@ export function TradeSheet({
   onClose,
   onFilled,
 }: {
-  market: MarketDetail;
+  market: TradeMarket;
   intent: TradeIntent | null;
   livePrices: Record<string, string>;
   token: string | null;
@@ -103,70 +91,34 @@ export function TradeSheet({
    * Δ = L·ln((e^(m/L) − 1 + p)/p). The API recomputes everything server-side —
    * this never decides what a trade costs, only what the sheet says it will.
    */
-  const preview = useMemo(() => {
-    if (outcome === null) return null;
-    const entered = Number.parseFloat(amount);
-    if (!Number.isFinite(entered) || entered <= 0 || price <= 0 || price >= 1) return null;
-
-    const liquidity = Number.parseFloat(market.liquidity);
-    const pot = Number.parseFloat(market.pot);
-    const outstanding = Number.parseFloat(outcome.shares);
-    if (!Number.isFinite(liquidity) || liquidity <= 0) return null;
-
-    if (side === 'sell') {
-      // The same cost function the engine uses, so the sheet quotes what the
-      // fill will actually be worth: gross = C(q) − C(q with these shares
-      // returned. A linear shares × price is not the curve, and on a large exit
-      // it overstates the proceeds — which is the wrong direction to be wrong
-      // in on a screen somebody is about to act on.
-      const q = market.outcomes.map((row) => Number.parseFloat(row.shares));
-      const index = market.outcomes.findIndex((row) => row.id === outcome.id);
-      if (index === -1) return null;
-
-      const held = q[index] ?? 0;
-      if (entered > held) return null;
-
-      const after = [...q];
-      after[index] = held - entered;
-
-      const gross = costOf(q, liquidity) - costOf(after, liquidity);
-      if (!Number.isFinite(gross) || gross <= 0) return null;
-
-      // §2.3: the early-exit fee is withheld from the seller, never taken from
-      // the pot. Quoted here so the number on the button is the number that
-      // lands in the wallet.
-      const feeRate = config?.exitFeeRate ?? 0;
-      const fee = gross * feeRate;
-
-      return {
-        shares: entered,
-        total: gross - fee,
-        gross,
-        fee,
-        priceAfter: price,
-        estWin: null,
-      };
-    }
-
-    // The engine's closed form, run here only so the sheet can show the figures
-    // live: Δ = L·ln((e^(m/L) − 1 + p)/p). The API recomputes all of it — this
-    // never decides what a trade costs, only what the sheet says it will.
-    const shares = liquidity * Math.log((Math.exp(entered / liquidity) - 1 + price) / price);
-
-    // Price after this fill, from the same shifted exponentials.
-    const odds = (1 - price) / price;
-    const priceAfter = 1 / (1 + odds * Math.exp(-shares / liquidity));
-
-    // §2.3: the pre-resolution estimate is pot / q[w] per share. Labelled an
-    // estimate because it moves with every trade until the market freezes.
-    const potAfter = pot + entered;
-    const outstandingAfter = outstanding + shares;
-    const estWin = outstandingAfter > 0 ? (potAfter * shares) / outstandingAfter : 0;
-
-    return { shares, total: entered, gross: entered, fee: 0, priceAfter, estWin };
-  }, [amount, price, side, market.pot, market.liquidity, market.outcomes, outcome, config]);
+  const preview = useMemo(
+    () =>
+      outcome === null
+        ? null
+        : quote({
+            market,
+            outcome,
+            side,
+            amount,
+            price,
+            exitFeeRate: config?.exitFeeRate ?? 0,
+          }),
+    [amount, price, side, market, outcome, config],
+  );
 
   const closed = market.state !== 'active';
+
+  // Yes is green, No is red, and anything else is the primary blue — the
+  // reference's three cases. A candidate in a multi-outcome market is the
+  // third: it is neither side of a yes/no question.
+  const tone =
+    outcome === null
+      ? 'bg-brand'
+      : /^yes$/i.test(outcome.label)
+        ? 'bg-rise'
+        : /^no$/i.test(outcome.label)
+          ? 'bg-fall'
+          : 'bg-brand';
 
   async function submit(): Promise<void> {
     if (outcome === null || preview === null) return;
@@ -175,44 +127,19 @@ export function TradeSheet({
       return;
     }
 
-    // A retry must never double-fill (§11), and the id is also what the trade
-    // is polled by if the queue defers it.
-    const requestId = crypto.randomUUID();
-
     setSubmitting(true);
     setQueued(false);
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/trades`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          marketId: market.id,
-          outcomeId: outcome.id,
-          side,
-          amount,
-          requestId,
-          // §2.15a's reason prompt. Optional, one line, and it lands on the
-          // thread carrying the position this trade just created.
-          ...(reason.trim().length === 0 ? {} : { reason: reason.trim() }),
-        }),
+      await placeTrade({
+        marketId: market.id,
+        outcomeId: outcome.id,
+        side,
+        amount,
+        token,
+        reason,
+        onQueued: () => setQueued(true),
       });
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { message?: string };
-        throw new Error(body.message ?? `Trade failed (${response.status})`);
-      }
-
-      // §11: a busy market answers "accepted into queue", not "filled". That is
-      // a 2xx, so a client reading only the status code closes the sheet on a
-      // trade that has not happened yet — the balance does not move, the thread
-      // does not carry the take, and the only thing that changed is that the
-      // screen stopped saying anything. Wait for the confirmation instead.
-      const body = (await response.json().catch(() => ({}))) as { status?: string };
-      if (body.status === 'queued') {
-        setQueued(true);
-        await waitForFill(requestId, token);
-      }
-
       onFilled();
       onClose();
     } catch (caught) {
@@ -290,7 +217,7 @@ export function TradeSheet({
                 onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
                 placeholder="0"
                 disabled={closed}
-                className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-3 font-mono text-xl tabular-nums outline-none focus:border-rise focus-visible:ring-1 focus-visible:ring-rise"
+                className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-3 font-mono text-xl tabular-nums outline-none focus:border-brand focus-visible:ring-1 focus-visible:ring-brand"
               />
             </label>
 
@@ -302,7 +229,7 @@ export function TradeSheet({
                     type="button"
                     disabled={closed}
                     onClick={() => setAmount(String(chip))}
-                    className="flex-1 rounded-sm border border-border py-2 font-mono text-sm hover:border-rise"
+                    className="flex-1 rounded-md border border-border bg-surface py-2 font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
                   >
                     ₦{chip >= 1000 ? `${chip / 1000}k` : chip}
                   </button>
@@ -319,7 +246,7 @@ export function TradeSheet({
                     onClick={() =>
                       setAmount((Number.parseFloat(intent.held!) * fraction).toFixed(6))
                     }
-                    className="flex-1 rounded-sm border border-border py-2 font-mono text-sm hover:border-rise"
+                    className="flex-1 rounded-md border border-border bg-surface py-2 font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
                   >
                     {fraction === 1 ? 'All' : `${fraction * 100}%`}
                   </button>
@@ -382,7 +309,7 @@ export function TradeSheet({
                   onChange={(event) => setReason(event.target.value)}
                   maxLength={500}
                   placeholder="One line. It goes on the thread with your position."
-                  className="mt-1.5 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-rise"
+                  className="mt-1.5 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
                 />
               </div>
             )}
@@ -393,7 +320,7 @@ export function TradeSheet({
               type="button"
               onClick={() => void submit()}
               disabled={closed || submitting || preview === null}
-              className="mt-4 w-full rounded-md bg-rise py-3.5 text-base font-bold text-paper transition-transform active:scale-press disabled:opacity-40"
+              className={`mt-4 w-full rounded-lg py-3 text-md font-bold text-paper transition-transform active:scale-press disabled:opacity-45 ${tone}`}
             >
               {closed
                 ? `Trading is ${market.state === 'resolved' ? 'over' : 'frozen'}`
@@ -432,18 +359,4 @@ function Row({
       <dd className={`font-mono tabular-nums ${emphasis ? 'text-money' : ''}`}>{value}</dd>
     </div>
   );
-}
-
-/**
- * The LMSR cost function, C(q) = L·ln(Σ e^(qᵢ/L)).
- *
- * Shifted by the maximum before exponentiating: without that, a market with a
- * large outstanding position overflows to Infinity in a float and the sheet
- * quotes NaN at exactly the size where the quote matters most.
- */
-function costOf(q: readonly number[], liquidity: number): number {
-  const scaled = q.map((value) => value / liquidity);
-  const peak = Math.max(...scaled);
-  const sum = scaled.reduce((total, value) => total + Math.exp(value - peak), 0);
-  return liquidity * (peak + Math.log(sum));
 }

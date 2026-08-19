@@ -490,7 +490,7 @@ Weekly prize runs (approve airtime payouts), **weekly Top Calls curation**, shar
 Queue/worker status, deploy & canary controls, alert history, backup/restore drill logs, status-page incident posting.
 
 ### 6.10 Admin Frontend Design (built for speed of operation, not decoration)
-The cockpit is a **desktop-first** web app (same Next.js codebase, `/admin` routes, same tokens as §7.4 but in a denser, calmer register — ink-green dark theme by default, gold strictly for money figures, red strictly for alarms). Its design goal is operational efficiency: an operator resolves a market, clears a reconciliation exception, or approves a config change in seconds, with zero ambiguity.
+The cockpit is a **desktop-first** web app (same Next.js codebase, `/admin` routes, same tokens as §7.4 but in a denser register — red strictly for alarms). Its design goal is operational efficiency: an operator resolves a market, clears a reconciliation exception, or approves a config change in seconds, with zero ambiguity.
 
 - **Layout:** persistent left rail (the nine screens, alarm badges on each), top bar with global status strip (reconciliation ✓/✗ · queue lag · open disputes · pending approvals), main content area. Nothing more than two clicks deep.
 - **Command palette (Ctrl/Cmd-K):** jump to any user, market, ticket, transaction, or setting by typing — the fastest path to everything; power operators never touch the mouse. Full keyboard shortcuts on high-frequency actions (approve, next item, open evidence).
@@ -560,25 +560,29 @@ Prices live on the buttons, and buying happens in a slide-up sheet — never a b
 ### 7.3 Display rationale
 The area-probability chart with event annotations is the chosen primary display because it answers the three questions every visitor has in one glance — *what does the crowd think now, how did we get here, and what moved it* — which a number alone or an odds table cannot. Sparklines on cards create the pull into detail views; the argument bar gives the instant emotional read; candlesticks stay optional to avoid intimidating casual users. All charts respect reduced-motion settings and render server-side snapshots for shared links (a shared ticket link unfurls with its chart image).
 
-### 7.4 Design System — the "Naija Green" identity (captivating by craft, not by tricks)
-The UI's job is to make numbers feel alive and being right feel glorious — while §2.12's responsible-play stance forbids dark patterns. Excitement comes from craft: motion, colour, and celebration tied to *real events*, never manufactured urgency.
+### 7.4 Design System
+> **Authoritative reference: `docs/design-reference.html`.** That file is the source of truth for how this product looks. Where this section and the reference disagree, the reference wins and this section is out of date. `packages/tokens` is generated from it by hand; nothing outside that package restates a hex value.
 
-**Tokens (single source of truth, `tokens.ts` consumed by Tailwind config):**
-- Colour: `paper #FAFDF7` · `ink #10241B` · `green #0E7A3D` (rise/YES) · `green-deep #0A5A2D` · `red #C93A2E` (fall/NO) · `gold #E3A81C` (money: pots, fees, payouts — gold is *only* ever money) · `muted #5E7267` · `line #DCE7DC`. Dark mode: ink-green surfaces (`#0B1A13` base) with the same semantic roles — shipped day one, defaulting to system preference.
-- Type: **Archivo** (variable; 900 for headline numbers and market questions — sports-ticker confidence; 400–600 body) + **Space Mono** for every live figure (prices, pots, P&L) with tabular numerals so digits never jitter as they change. Type scale 12/13.5/15/17/21/28/34.
-- Radii 8–14px, 1px `line` borders, soft single-layer shadows only. Spacing on a 4px grid.
+This replaces the earlier "Naija Green" direction in full. The UI's job is unchanged — make numbers feel alive and being right feel glorious, while §2.12's responsible-play stance forbids dark patterns — but the register is now quieter: a white ground, one hairline, one soft shadow, and colour reserved for the three things that carry meaning.
+
+**Tokens (single source of truth, `packages/tokens/src/tokens.ts`, consumed by the Tailwind preset):**
+- Colour — three meanings, and nothing may borrow them: **blue `#2d5cf6`** is the primary action (`brand`; pressed `#1f47d4`), **green `#27ae5f`** is Yes (resting wash `#e9f7ef`), **red `#e64800`** is No (resting wash `#fdeee7`). Ground `#ffffff` · text `#1d2b39` · muted `#828a93` · hairline `#e4e9ef` · quiet fill `chip #f2f5f8` · watchlist star `#f4b63f`. Money (balances, pots, payouts) is green — the old gold-is-money rule is gone, and SPcoin is now the only object rendered in gold.
+- Elevation: one resting shadow `0 1px 3px rgba(29,43,57,.06)` and one hover shadow `0 6px 18px rgba(29,43,57,.10)`. Nothing stacks.
+- Type: **Open Sauce**, four weights (400/500/600/700), self-hosted from `apps/web/src/fonts/` via `next/font/local`, falling back to Inter then the system UI face. There is no second typeface — live figures are the same face with `tabular-nums`, which is what `font-mono` now means. Scale 11.5/12.5/**14 (body)**/14.5/17/21/26.
+- Radii: cards, chart box, trade panel and outcome list **14px**; buttons and inputs 6–10px; pills fully round. 1px borders in `line`. Spacing on a 4px grid. Page width 1200px; header 60px.
+- **Light-only**, as the reference is. This is a position, not an omission: the palette leans on a white ground with a single hairline doing all the separation, and none of that survives a naive inversion. A dark palette is a design job, not a transform, and until it is done the roles resolve the same way in both modes.
 
 **Signature elements (the memorable three):**
 1. **The argument bar** — the green/red split that physically shifts with every trade, eased with `cubic-bezier(.2,.8,.2,1)`. It appears everywhere a market does: full-width in ticket view, miniature on cards, tiny in share images. It is the brand.
 2. **The living number** — every price/percentage animates by counting between values (never snapping), flashes a brief green/red tint on change, and ticks in real time from the WebSocket feed. A screen of StakePot is visibly *alive* within two seconds.
 3. **The receipt** — resolution and payout screens rendered as a monospace "market receipt" (the demo's receipt panel, productised): pot, fee, your line — instantly screenshot-able, deliberately designed to be shared.
-4. **SPcoin (the test-run currency, asset: `spcoin.svg`)** — the platform's points currency, designed as a beautiful object, not a number with a label. Visual spec: a gold coin (radial gradient `#F6C453 → #E3A81C → #B8860B`) with a deep-green (`#0A5A2D`) inner face carrying an embossed **pot silhouette** and the **SP monogram** in Archivo Black, ringed by a milled edge of dots; subtle top-left specular highlight; flat "small" variant (16–20px) for inline balances, full variant (48px+) for the Wallet header and win moments. Behaviour: balances render as `⟨coin⟩ 12,400 SP`; wins trigger the coin in the confetti burst (§ celebration); the deposit/win receipt stamps a small coin watermark. When NGN activates, SPcoin remains the loyalty/points identity (prizes, streak rewards) rather than disappearing — users keep the object they've grown attached to. Rule: gold stays money-only (§ tokens), and SPcoin is the only *object* rendered in gold.
+4. **SPcoin (the test-run currency, asset: `spcoin.svg`)** — the platform's points currency, designed as a beautiful object, not a number with a label. Visual spec: a gold coin (radial gradient `#F6C453 → #E3A81C → #B8860B`) with a deep-green (`#0A5A2D`) inner face carrying an embossed **pot silhouette** and the **SP monogram** in Open Sauce 700, ringed by a milled edge of dots; subtle top-left specular highlight; flat "small" variant (16–20px) for inline balances, full variant (48px+) for the Wallet header and win moments. Behaviour: balances render as `⟨coin⟩ 12,400 SP`; wins trigger the coin in the confetti burst (§ celebration); the deposit/win receipt stamps a small coin watermark. When NGN activates, SPcoin remains the loyalty/points identity (prizes, streak rewards) rather than disappearing — users keep the object they've grown attached to. Rule: money as *text* is green (§ tokens); SPcoin is the only object rendered in gold.
 
 **Motion & celebration (event-driven, respecting `prefers-reduced-motion`):**
-- Price ticks: 250ms count-up + tint. Chart line draws in on ticket-view open (600ms, once).
+- Price ticks: 300ms colour transition, green up / red down, cleared after 600ms so a tint reports one change rather than making a standing claim. Chart line draws in on ticket-view open (600ms, once).
 - **Win moment:** resolution in your favour → confetti burst (green/gold), receipt slides up, haptic (native wrappers). Losses get quiet dignity — result shown plainly, no shame animations, one-tap to the market's thread.
 - Activation moment on community tickets: both meters filling triggers a "LIVE" stamp animation — the creator's payoff moment, built to be screen-recorded.
-- Micro-interactions: buttons depress (scale .97), chips snap, pull-to-refresh spins the brand mark. Nothing loops idly; motion always means something happened.
+- Micro-interactions: buttons depress (scale .93), chips snap, cards lift 2px on hover (120ms), pull-to-refresh spins the brand mark. Nothing loops idly; motion always means something happened.
 
 **Feel & polish standards:**
 - Skeleton loaders shaped like the real content (card + sparkline ghosts) — no spinners on primary surfaces; data streams in progressively.
@@ -590,7 +594,7 @@ The UI's job is to make numbers feel alive and being right feel glorious — whi
 
 ### 7.5 My Wallet (each customer's own money view)
 The user's personal account screen — their money, fully visible, always reconcilable:
-- **Balance header:** Available (spendable now) and **In Open Markets** (escrowed) shown separately with a one-line explainer — gold typography per §7.4 (gold = money).
+- **Balance header:** Available (spendable now) and **In Open Markets** (escrowed) shown separately with a one-line explainer — money typography per §7.4 (money = green).
 - **Transaction history:** every ledger event in plain language ("Staked ₦2,000 — Naira market", "Won ₦3,410 — Eagles vs Ghana", "Sold early +₦450", "Withdrawal to GTB ••1234"), filterable, complete history because the ledger is append-only.
 - **Actions:** Deposit (shows *their own* virtual account number with one-tap copy + "transfer from any bank app" guidance) and Withdraw (linked bank account, amount, fee shown, confirmation) — both licensed-phase; in points mode this screen shows points balance, history, and prize credits identically, so users learn the surface before real money arrives.
 - Monthly statement download; receipt view per transaction.

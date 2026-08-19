@@ -1,93 +1,144 @@
 /**
- * StakeAm design tokens — architecture §7.4.
+ * StakeAm design tokens.
  *
- * This file is the single source of truth. The Tailwind preset in `preset.ts`
- * derives everything it exposes from these objects, including the CSS custom
- * properties it injects, so there is no second copy of a hex value anywhere.
+ * Authoritative reference: docs/design-reference.html. Every value below is
+ * lifted from that file's `:root` block and its component rules — it is the
+ * source of truth for how this product looks, and this module exists so that
+ * the truth is stated once and Tailwind, the canvas share cards and the chart
+ * all read the same numbers.
+ *
+ * This replaces the earlier "Naija Green" direction wholesale.
+ *
+ * The system is light-only, as the reference is. That is a deliberate position
+ * rather than an omission: the palette leans on a white ground with a single
+ * hairline (`line`) and one soft shadow doing all the elevation work, and none
+ * of that survives a naive inversion. A dark palette is a design job, not a
+ * transform, and until it is done the roles below resolve the same way in
+ * both modes.
  */
 
-/** The palette, exactly as specified. */
+/**
+ * The palette, exactly as the reference states it.
+ *
+ * Three colours carry meaning and nothing else may borrow them: blue is the
+ * primary action, green is Yes, red is No.
+ */
 export const palette = {
-  /** Page ground, light mode. */
-  paper: '#FAFDF7',
-  /** Primary text, light mode. */
-  ink: '#10241B',
-  /** Rise / YES. */
-  green: '#0E7A3D',
-  /** Deep green, for pressed and emphatic states. */
-  greenDeep: '#0A5A2D',
-  /** Fall / NO. */
-  red: '#C93A2E',
-  /** Money ONLY — pots, fees, payouts. Never decoration. */
-  gold: '#E3A81C',
+  /** Page ground. */
+  paper: '#ffffff',
+  /** Primary text. */
+  ink: '#1d2b39',
   /** Secondary text. */
-  muted: '#5E7267',
-  /** Hairlines and 1px borders. */
-  line: '#DCE7DC',
+  muted: '#828a93',
+  /** Hairlines and 1px borders — the only divider in the system. */
+  line: '#e4e9ef',
+  /** The quiet fill: search field, sort pills, trade panel, star hover. */
+  chip: '#f2f5f8',
+
+  /** Primary action. Buttons that are not a side of a market are this. */
+  blue: '#2d5cf6',
+  /** Pressed and emphatic blue. */
+  blueDeep: '#1f47d4',
+
+  /** Yes. */
+  green: '#27ae5f',
+  /** The wash a resting Yes button sits on before it is hovered. */
+  greenBg: '#e9f7ef',
+  /** Deep green, for pressed states. */
+  greenDeep: '#1e8f4d',
+
+  /** No. */
+  red: '#e64800',
+  /** The wash a resting No button sits on. */
+  redBg: '#fdeee7',
+
+  /** A watchlisted star, and nothing else. */
+  star: '#f4b63f',
 } as const;
 
-/** Page ground, dark mode. The one dark surface the spec pins down. */
-export const darkBase = '#0B1A13';
-
 /**
- * Semantic roles. Dark mode keeps the same roles against `darkBase`.
- *
- * Only `surface` is given by the spec for dark; the remaining dark values are
- * derived from the light palette to hold the same contrast relationships, and
- * are the ones to revisit first when the full §7.4 doc lands.
+ * Kept so the export surface does not change under consumers. The reference
+ * has no dark ground; see the note at the top of this file.
  */
-export const semantic = {
-  light: {
-    surface: palette.paper,
-    surfaceRaised: '#FFFFFF',
-    text: palette.ink,
-    textMuted: palette.muted,
-    border: palette.line,
-    rise: palette.green,
-    riseDeep: palette.greenDeep,
-    fall: palette.red,
-    money: palette.gold,
-  },
-  dark: {
-    surface: darkBase,
-    /** The light-mode ink reads as a raised surface once the ground is dark. */
-    surfaceRaised: palette.ink,
-    text: '#EAF2EC',
-    textMuted: '#8FA69A',
-    border: '#1E3328',
-    /** Lifted for legibility against a dark ground; same semantic role. */
-    rise: '#22A85C',
-    riseDeep: palette.green,
-    fall: '#E4574A',
-    money: '#F0BC3E',
-  },
-} as const;
-
-export type SemanticRole = keyof (typeof semantic)['light'];
+export const darkBase = palette.paper;
 
 /**
- * Type scale in px: 12 / 13.5 / 15 / 17 / 21 / 28 / 34.
+ * Semantic roles — what a colour is *for*, which is what components name.
  *
- * Named twice on purpose — `xs…2xl` for laying out, and the aliases below for
- * saying what a thing is.
+ * The role names are unchanged from the previous system on purpose. They are
+ * used in roughly nine hundred places across the app, and re-pointing them is
+ * what lets one edit here restyle every screen rather than sixty files each
+ * needing a hand.
+ */
+const roles = {
+  /** The page. */
+  surface: palette.paper,
+  /**
+   * Cards and panels. The same white as the page: in this system a card is
+   * separated by its hairline and its shadow, not by a change of ground.
+   * Anything that needs to read as recessed uses `chip`.
+   */
+  surfaceRaised: palette.paper,
+  /** The quiet fill — inputs, pills, the trade panel. */
+  chip: palette.chip,
+  text: palette.ink,
+  textMuted: palette.muted,
+  border: palette.line,
+
+  /** Primary action. */
+  brand: palette.blue,
+  brandDeep: palette.blueDeep,
+
+  /** Yes, and its resting wash. */
+  rise: palette.green,
+  riseBg: palette.greenBg,
+  riseDeep: palette.greenDeep,
+  /** No, and its resting wash. */
+  fall: palette.red,
+  fallBg: palette.redBg,
+
+  /**
+   * Money — balances, pots, payouts. Green, because the reference sets the
+   * portfolio figure in green and a second money colour would be a third
+   * meaning for a palette that only has room for three.
+   */
+  money: palette.green,
+} as const;
+
+export const semantic = {
+  light: roles,
+  /** Light-only system; see the note at the top of this file. */
+  dark: roles,
+} as const;
+
+export type SemanticRole = keyof typeof roles;
+
+/**
+ * Type scale in px, read off the reference: 11.5 / 12.5 / 14 / 14.5 / 17 / 21 / 26.
+ *
+ * Tighter and smaller than what it replaces, which is most of why the new
+ * screens read as denser at the same information count. 14 is body.
  */
 export const typeScale = {
-  xs: 12,
-  sm: 13.5,
-  base: 15,
-  md: 17,
-  lg: 21,
-  xl: 28,
-  '2xl': 34,
+  xs: 11.5,
+  sm: 12.5,
+  base: 14,
+  md: 14.5,
+  lg: 17,
+  xl: 21,
+  '2xl': 26,
 } as const;
 
 export const typeScaleAliases = {
   caption: typeScale.xs,
   label: typeScale.sm,
   body: typeScale.base,
+  /** Card titles and primary buttons. */
   bodyLg: typeScale.md,
   title: typeScale.lg,
+  /** The big percentage, and a detail page's question. */
   headline: typeScale.xl,
+  /** The chart's current price. */
   display: typeScale['2xl'],
 } as const;
 
@@ -95,35 +146,47 @@ export const typeScaleAliases = {
 export const lineHeights: Record<keyof typeof typeScale, number> = {
   xs: 1.4,
   sm: 1.4,
-  base: 1.55,
-  md: 1.5,
+  base: 1.4,
+  md: 1.32,
   lg: 1.3,
-  xl: 1.15,
-  '2xl': 1.05,
+  xl: 1.25,
+  '2xl': 1.2,
 };
 
 export const fonts = {
-  /** Archivo, variable, 400–900. Display and body both. */
-  display: 'Archivo',
-  body: 'Archivo',
-  /** Space Mono. Every live figure, tabular numerals. */
-  mono: 'Space Mono',
+  /** Open Sauce, four weights, served from our own origin. */
+  display: 'OpenSauce',
+  body: 'OpenSauce',
+  /**
+   * There is no second typeface. Figures are Open Sauce with tabular numerals
+   * — see `cssVar.font.numeric` and the preset's `font-mono` mapping.
+   */
+  mono: 'OpenSauce',
 } as const;
 
-/** Weight 900 is reserved for headline numbers and market questions. */
+/**
+ * Four weights, which is all the files carry.
+ *
+ * `black` is mapped to 700 rather than dropped: it is used in ~60 places to
+ * mean "the heaviest thing on this screen", and 700 is now that weight.
+ */
 export const fontWeights = {
   regular: 400,
   medium: 500,
   semibold: 600,
   bold: 700,
-  black: 900,
+  black: 700,
 } as const;
 
-/** Radii live in an 8–14px band. Nothing rounder, nothing squarer. */
+/** Radii: cards 14, buttons and chips 6–10. */
 export const radii = {
-  sm: 8,
-  md: 10,
-  lg: 12,
+  /** Mini Yes/No chips, the star, sort pills. */
+  sm: 6,
+  /** Buttons, icons, the back button. */
+  md: 8,
+  /** Search field, the primary buy button, the amount input. */
+  lg: 10,
+  /** Cards, the chart box, the trade panel, the outcome list. */
   xl: 14,
 } as const;
 
@@ -133,86 +196,82 @@ export const spacingUnit = 4;
 /** Borders are always 1px in `line`. */
 export const borderWidth = 1;
 
-/** Single-layer soft shadows — no stacked elevation. */
+/** One resting shadow and one hover shadow. Nothing stacks. */
 export const shadows = {
-  soft: '0 1px 2px 0 rgb(16 36 27 / 0.06)',
-  lifted: '0 2px 8px 0 rgb(16 36 27 / 0.08)',
+  soft: '0 1px 3px rgba(29,43,57,.06)',
+  lifted: '0 6px 18px rgba(29,43,57,.10)',
 } as const;
 
 /**
- * SPcoin — the points-mode currency, specified in §7.4 as an object rather than
- * a number with a label.
+ * SPcoin — the points-mode currency.
  *
- * Gold is money-only per the palette rule, and SPcoin is the only *object* ever
- * rendered in gold. The asset itself lives at apps/web/public/spcoin.svg.
+ * Restated in the new palette. The coin is the one object allowed to carry a
+ * gold, because it is a coin; `money` as a text role is green.
  */
 export const spcoin = {
-  /** Radial gradient, light to dark. */
-  gradient: ['#F6C453', '#E3A81C', '#B8860B'],
-  /** The inner face the pot silhouette and SP monogram sit on. */
-  face: palette.greenDeep,
-  /** Inline balance size, e.g. `<coin> 12,400 SP`. */
+  gradient: ['#f8d07a', palette.star, '#c8891f'],
+  face: palette.ink,
   smallPx: 18,
-  /** Wallet header and win moments. */
   fullPx: 48,
 } as const;
 
 /**
  * Outcome series colours, for markets with more than two sides.
  *
- * Ordered by rank, so the leader is always `green` and the runner-up `red` —
- * the same reading a binary market's argument bar gives, extended rather than
- * replaced. The chart legend, the stacked bar and the outcome rows all take
- * their colour from here, so one candidate is one colour everywhere on screen.
- *
- * Gold is absent on purpose. §7.4 reserves it for money — pots, fees, payouts —
- * and a candidate rendered in gold would quietly break the one rule the palette
- * has. The extra steps are tints of the existing greens and reds instead, which
- * keeps a six-candidate election inside the Naija Green identity.
+ * Ranked, so the leader is green and the runner-up red — the same reading a
+ * binary market's Yes/No pair gives, extended rather than replaced. Beyond
+ * those two the ramp is the reference's own icon-fallback palette, which is
+ * already tuned to sit together on a white ground.
  */
 export const outcomeSeries = [
   palette.green,
   palette.red,
-  // Ordered so adjacent ranks alternate hue family rather than shade. Ranks 1
-  // and 3 are the pair a reader compares most, and two greens a shade apart is
-  // not a comparison anyone can make on a line chart.
-  '#2FA35F',
-  '#E4574A',
+  palette.blue,
+  '#8b5cf6',
+  '#0ea5a4',
+  '#d97706',
   palette.greenDeep,
-  '#8C2018',
-  '#1B5E3A',
-  '#F08A80',
+  palette.blueDeep,
 ] as const;
 
 /** The catch-all bucket reads as neutral: it is not a candidate. */
 export const otherOutcomeColour = palette.muted;
 
 /**
- * The colour for one outcome, everywhere it appears — chart line, legend swatch,
- * stacked bar segment, outcome row.
+ * The colour for one outcome, everywhere it appears — chart line, legend
+ * swatch, stacked bar segment, outcome row.
  */
 export function outcomeColour(ordinal: number, isOther = false): string {
   if (isOther) return otherOutcomeColour;
   return outcomeSeries[ordinal % outcomeSeries.length] ?? outcomeSeries[0];
 }
 
-/** Motion tokens. */
+/** Motion, timed off the reference's transitions. */
 export const motion = {
-  /** Count-up on a price tick, with a green/red tint over the same window. */
-  priceTickMs: 250,
-  /** The ticket-view chart line draws in once on open. */
+  /** `.pc{transition:color .3s}` — the tint a changed price wears. */
+  priceTickMs: 300,
+  /** How long that tint stays before it is cleared. */
+  priceTintHoldMs: 600,
+  /** The card's lift. */
+  liftMs: 120,
+  /** The chart line drawing in. */
   chartDrawMs: 600,
-  /** The argument bar's easing. */
-  barEase: 'cubic-bezier(.2,.8,.2,1)',
-  /** Buttons depress on press — the only scale transform in the system. */
-  pressScale: 0.97,
+  /** The live switch, and the trade sheet. */
+  toggleMs: 200,
+  sheetMs: 250,
+  /** Everything eases the same way unless it is a linear loop. */
+  ease: 'cubic-bezier(.2,.8,.2,1)',
+  /** `.quick.tapped{transform:scale(.93)}` */
+  pressScale: 0.93,
 } as const;
 
 /** CSS custom property names, so the preset and any hand-written CSS agree. */
 export const cssVar = {
   font: {
-    display: '--font-archivo',
-    mono: '--font-space-mono',
+    /** Open Sauce. */
+    display: '--font-sauce',
+    /** The same face, asked for by the figures. */
+    numeric: '--font-sauce',
   },
   role: (role: SemanticRole): string =>
     `--sa-${role.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}`,

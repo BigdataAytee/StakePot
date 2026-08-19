@@ -149,7 +149,7 @@ export async function GET(
             style={{
               display: 'flex',
               fontSize: story ? 42 : 32,
-              color: palette.gold,
+              color: palette.green,
               fontWeight: 800,
             }}
           >
@@ -183,8 +183,8 @@ export async function GET(
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <span style={{ color: palette.muted }}>Pot split between the winners</span>
-          {/* Gold is money only (§7.4). */}
-          <span style={{ color: palette.gold, fontWeight: 800 }}>{pot} SPC</span>
+          {/* Money is green in this system — see docs/design-reference.html. */}
+          <span style={{ color: palette.green, fontWeight: 800 }}>{pot} SPC</span>
         </div>
         {market.creator?.handle != null && (
           <span style={{ color: palette.muted }}>@{market.creator.handle}</span>

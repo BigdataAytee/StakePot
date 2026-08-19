@@ -3,10 +3,15 @@
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
+import Link from 'next/link';
+
 import { ArgumentBar } from '@/components/argument-bar';
 import { LivingNumber } from '@/components/living-number';
-import { MoneyStrip } from '@/components/money-strip';
-import { OutcomeButtons } from '@/components/outcome-buttons';
+import { LivePercent } from '@/components/market/live-percent';
+import { MarketIcon } from '@/components/market/market-icon';
+import { SiteHeader } from '@/components/market/site-header';
+import { TradePanel } from '@/components/market/trade-panel';
+import { WatchStar } from '@/components/market/watch-star';
 import { PriceChart, type Timeframe } from '@/components/price-chart';
 import { RulesCard } from '@/components/rules-card';
 import { SeedPanel } from '@/components/seed-panel';
@@ -16,7 +21,7 @@ import { TradeSheet, type TradeIntent } from '@/components/trade-sheet';
 import { useMarketFeed } from '@/hooks/use-market-feed';
 import { api, type MarketDetail, type PricePoint, type SeedComposition } from '@/lib/api';
 import { recordView } from '@/lib/creator-api';
-import { STATE_LABEL, closedReason, percent, untilFreeze } from '@/lib/format';
+import { STATE_LABEL, dateTime, money, percent, untilFreeze } from '@/lib/format';
 import { PositionPanel } from './position-panel';
 import { useLivePrices } from '@/store/live-prices';
 
@@ -38,6 +43,9 @@ export function TicketView({
   const [timeframe, setTimeframe] = useState<Timeframe>('1D');
   const [history, setHistory] = useState<PricePoint[]>(initialHistory);
   const [intent, setIntent] = useState<TradeIntent | null>(null);
+  // Which outcome the chart and the side panel are showing. Null until the
+  // reader picks one from the list, so the market opens on its headline.
+  const [picked, setPicked] = useState<string | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [composition, setComposition] = useState<SeedComposition | null>(null);
   // Bumped after a fill so the position panel re-reads rather than showing the
@@ -75,6 +83,7 @@ export function TicketView({
     // be filled.
     if (outcome !== undefined && initial.state === 'active') {
       setIntent({ outcome, side: 'buy' });
+      setPicked(outcome.id);
     }
     router.replace(pathname, { scroll: false });
   }, [params, pathname, router, initial.outcomes, initial.state]);
@@ -153,41 +162,40 @@ export function TicketView({
     recordView(initial.id, source);
   }, [initial.id]);
 
-  const headlinePrice = headline === undefined ? 0 : percent(prices[headline.id] ?? headline.price);
   const tradingOpen = initial.state === 'active';
 
-  return (
-    <main className="mx-auto max-w-2xl px-4 py-6">
-      <header className="mb-5">
-        <div className="flex items-center justify-between gap-3">
-          <span
-            className={`rounded-sm px-1.5 py-0.5 font-mono text-xs ${
-              tradingOpen ? 'bg-rise text-paper' : 'bg-border text-text-muted'
-            }`}
-          >
-            {STATE_LABEL[initial.state] ?? initial.state.toUpperCase()}
-          </span>
-          {tradingOpen && (
-            <span className="font-mono text-xs text-text-muted">
-              Freezes in {untilFreeze(initial.eventDate)}
-            </span>
-          )}
-        </div>
+  const selected =
+    initial.outcomes.find((row) => row.id === picked) ?? headline ?? initial.outcomes[0];
+  const selectedPrice = selected === undefined ? 0 : percent(prices[selected.id] ?? selected.price);
 
-        <h1 className="mt-3 text-xl font-black leading-tight">{initial.question}</h1>
+  return (
+    <>
+      <SiteHeader />
+
+      <main className="mx-auto max-w-[1200px] px-5 pb-16 pt-[18px]">
+        <Link
+          href="/"
+          className="mb-3.5 inline-flex items-center gap-1.5 rounded-md bg-chip px-3 py-2 text-base font-semibold text-text-muted hover:text-text"
+        >
+          ← All markets
+        </Link>
+
+        <div className="mb-1.5 flex items-start gap-3.5">
+          <MarketIcon id={initial.id} question={initial.question} size={56} radius={12} />
+          <h1 className="flex-1 text-xl font-bold leading-[1.25]">{initial.question}</h1>
+          <WatchStar marketId={initial.id} question={initial.question} size={34} />
+          <ShareSheet marketId={initial.id} question={initial.question} />
+        </div>
 
         {/* §2.14c's byline. A community market is somebody's promise, so it
             carries their name and what their record has earned them. */}
         {initial.creator?.handle != null && (
-          <p className="mt-2 flex items-center gap-2 font-mono text-xs text-text-muted">
-            <a
-              href={`/c/${initial.creator.handle}`}
-              className="text-rise underline underline-offset-2"
-            >
+          <p className="flex items-center gap-2 text-sm text-text-muted">
+            <a href={`/c/${initial.creator.handle}`} className="text-brand underline">
               @{initial.creator.handle}
             </a>
             {initial.creator.badge !== null && (
-              <span className="rounded-full bg-rise px-1.5 py-0.5 text-[10px] font-bold text-paper">
+              <span className="rounded-full bg-brand px-1.5 py-0.5 text-[10px] font-bold text-paper">
                 {initial.creator.badge}
               </span>
             )}
@@ -197,90 +205,133 @@ export function TicketView({
           </p>
         )}
 
-        <div className="mt-4 flex items-baseline justify-between gap-3">
-          <p className="flex items-baseline gap-2">
-            <LivingNumber value={headlinePrice} suffix="%" className="text-2xl font-black" />
-            <span className="text-md text-text-muted">{headline?.label}</span>
-          </p>
-          <ShareSheet marketId={initial.id} question={initial.question} />
+        <div className="mb-4 mt-2.5 flex flex-wrap gap-[18px] text-sm text-text-muted">
+          <span>
+            <b className="text-text">{money(live?.pot ?? initial.pot)}</b> pot
+          </span>
+          <span>
+            <b className="text-text">{money(initial.volume24h)}</b> 24h vol.
+          </span>
+          <span>
+            <b className="text-text">{initial.traderCount}</b>{' '}
+            {initial.traderCount === 1 ? 'trader' : 'traders'}
+          </span>
+          <span>
+            <b className="text-text">{(initial.feeBps / 100).toFixed(1)}%</b> fee
+          </span>
+          {tradingOpen ? (
+            <span>
+              Freezes in <b className="text-text">{untilFreeze(initial.eventDate)}</b>
+            </span>
+          ) : (
+            <span className="font-semibold uppercase tracking-wide">
+              {STATE_LABEL[initial.state] ?? initial.state}
+            </span>
+          )}
+          <span>
+            Ends <b className="text-text">{dateTime(initial.eventDate)}</b>
+          </span>
         </div>
-      </header>
 
-      {/* (a) the hero */}
-      <PriceChart
-        points={history}
-        outcomes={initial.outcomes}
-        annotations={initial.annotations}
-        timeframe={timeframe}
-        onTimeframeChange={setTimeframe}
-      />
+        {/* Two columns down to 860px, one below it — the reference's own
+            breakpoint, which is where 330px of trade panel stops leaving the
+            chart a readable width. */}
+        <div className="grid items-start gap-[22px] min-[860px]:grid-cols-[1fr_330px]">
+          <div>
+            <div className="rounded-xl border border-border p-4">
+              <div className="mb-1 flex flex-wrap items-baseline gap-2.5">
+                <span className="text-base font-semibold text-text-muted">{selected?.label}</span>
+                <LivingNumber value={selectedPrice} suffix="%" className="text-2xl font-bold" />
+              </div>
 
-      {/* (b) the argument bar */}
-      <div className="mt-5">
-        {/* Multi-outcome tickets get their names and prices from the chart
-            legend directly above, so the bar is left as pure shape. */}
-        <ArgumentBar segments={segments} showLabels={initial.outcomes.length === 2} />
-      </div>
+              <PriceChart
+                points={history}
+                outcomes={initial.outcomes}
+                annotations={initial.annotations}
+                timeframe={timeframe}
+                onTimeframeChange={setTimeframe}
+              />
 
-      {/* (c) money strip */}
-      <div className="mt-5">
-        <MoneyStrip
-          pot={live?.pot ?? initial.pot}
-          volume24h={initial.volume24h}
-          traders={initial.traderCount}
-          feeBps={initial.feeBps}
-        />
-      </div>
+              {/* The argument bar: who is winning, as one shape. */}
+              <div className="mt-4">
+                <ArgumentBar segments={segments} showLabels={initial.outcomes.length === 2} />
+              </div>
+            </div>
 
-      {/* (d) priced buttons — tapping one slides up the Trade Ticket */}
-      <div className="mt-5">
-        <OutcomeButtons
-          outcomes={initial.outcomes}
-          livePrices={prices}
-          disabled={!tradingOpen}
-          onPick={(outcome) => setIntent({ outcome, side: 'buy' })}
-        />
-        {!tradingOpen && (
-          <p className="mt-2 text-sm text-text-muted">
-            {closedReason(initial.state, initial.fundingClosesAt)}
-          </p>
-        )}
-      </div>
+            <div className="mt-4 overflow-hidden rounded-xl border border-border">
+              <div className="flex border-b border-border px-3.5 py-2.5 text-sm font-semibold text-text-muted">
+                <span>Outcome</span>
+                <span className="ml-auto">Chance</span>
+              </div>
+              {initial.outcomes.map((row) => (
+                <button
+                  key={row.id}
+                  type="button"
+                  onClick={() => setPicked(row.id)}
+                  className={`flex w-full items-center gap-2.5 border-b border-border px-3.5 py-2.5 text-left text-[13.5px] last:border-b-0 hover:bg-chip ${
+                    row.id === selected?.id ? 'bg-brand/[.06]' : ''
+                  }`}
+                >
+                  <span className="flex-1 font-medium">{row.label}</span>
+                  <span className="text-xs text-text-muted">{money(row.staked)} staked</span>
+                  <LivePercent
+                    marketId={initial.id}
+                    outcomeId={row.id}
+                    fallback={row.price}
+                    className="font-bold"
+                  />
+                </button>
+              ))}
+            </div>
 
-      <PositionPanel
-        market={initial}
-        livePrices={prices}
-        refreshKey={filled}
-        onSell={(outcome, held) => setIntent({ outcome, side: 'sell', held })}
-      />
+            {composition !== null && (
+              <div className="mt-4">
+                <SeedPanel
+                  composition={composition}
+                  token={token}
+                  onChanged={() => window.location.reload()}
+                />
+              </div>
+            )}
 
-      {composition !== null && (
-        <div className="mt-5">
-          <SeedPanel
-            composition={composition}
-            token={token}
-            onChanged={() => window.location.reload()}
-          />
+            <PositionPanel
+              market={initial}
+              livePrices={prices}
+              refreshKey={filled}
+              onSell={(outcome, held) => setIntent({ outcome, side: 'sell', held })}
+            />
+
+            <div className="mt-4">
+              <RulesCard market={initial} />
+            </div>
+
+            {/* §2.15a: the market page *is* the community space — no separate
+                forum, because the argument and the money belong on one screen. */}
+            <TakeThread
+              marketId={initial.id}
+              outcomes={initial.outcomes.map((outcome) => ({
+                label: outcome.label,
+                ordinal: outcome.ordinal,
+              }))}
+              resolved={initial.state === 'resolved'}
+              signedIn={token !== null}
+            />
+          </div>
+
+          {selected !== undefined && (
+            <TradePanel
+              market={initial}
+              outcome={selected}
+              livePrices={prices}
+              onPick={(row) => setPicked(row.id)}
+              onFilled={() => setFilled((count) => count + 1)}
+            />
+          )}
         </div>
-      )}
+      </main>
 
-      {/* (f) below the fold */}
-      <div className="mt-6">
-        <RulesCard market={initial} />
-      </div>
-
-      {/* §2.15a: the market page *is* the community space — no separate forum,
-          because the argument and the money belong on the same screen. */}
-      <TakeThread
-        marketId={initial.id}
-        outcomes={initial.outcomes.map((outcome) => ({
-          label: outcome.label,
-          ordinal: outcome.ordinal,
-        }))}
-        resolved={initial.state === 'resolved'}
-        signedIn={token !== null}
-      />
-
+      {/* Kept for the two paths that are not the side panel: a price button
+          pressed on the grid, and selling out of a position. */}
       <TradeSheet
         market={initial}
         intent={intent}
@@ -288,13 +339,10 @@ export function TicketView({
         token={token}
         onClose={() => setIntent(null)}
         onFilled={() => {
-          // A fill changes the pot, the thread and the position at once, so the
-          // page is re-read rather than patched in three places. `filled` is
-          // what refreshes the position panel on the paths that do not reload.
           setFilled((count) => count + 1);
           window.location.reload();
         }}
       />
-    </main>
+    </>
   );
 }

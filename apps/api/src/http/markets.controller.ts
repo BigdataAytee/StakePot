@@ -50,9 +50,28 @@ export class MarketsController {
       take: 50,
     });
 
+    // How busy each market has been today, in one grouped pass rather than a
+    // query per card. The shelf sorts by this, so it has to be the real
+    // figure — a "trending" order computed from the total pot would just be
+    // the volume order wearing a different name, and would rank a market that
+    // filled up last month above one that is filling up now.
+    const traded = await this.prisma.trade.groupBy({
+      by: ['marketId'],
+      where: {
+        marketId: { in: markets.map((market) => market.id) },
+        // A seed takes no side and moves no price (§2.4), so it is liquidity
+        // rather than activity and must not read as a busy market.
+        side: { not: 'seed' },
+        createdAt: { gte: subHours(new Date(), 24) },
+      },
+      _sum: { cost: true },
+    });
+    const volume24h = new Map(traded.map((row) => [row.marketId, (row._sum.cost ?? 0).toString()]));
+
     return Promise.all(
       markets.map(async (market) => ({
         ...this.serialiseMarket(market),
+        volume24h: volume24h.get(market.id) ?? '0',
         // The card's mini sparkline: last 24h of the headline outcome (§7.1).
         sparkline: await this.sparklineFor(market.id, market.outcomes[0]?.id),
       })),
@@ -198,6 +217,7 @@ export class MarketsController {
     feeBps: number;
     criteriaJson: unknown;
     resolvedOutcomeId: string | null;
+    createdAt: Date;
     outcomes: {
       id: string;
       label: string;
@@ -211,6 +231,7 @@ export class MarketsController {
     return {
       id: market.id,
       shelf: market.shelf,
+      createdAt: market.createdAt.toISOString(),
       question: market.question,
       sourceName: market.sourceName,
       sourceUrl: market.sourceUrl,

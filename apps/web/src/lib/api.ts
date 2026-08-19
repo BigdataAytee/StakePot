@@ -15,6 +15,8 @@ export interface OutcomeView {
 export interface MarketSummary {
   id: string;
   shelf: 'official' | 'community';
+  /** When the market opened. What "New" sorts on. */
+  createdAt: string;
   question: string;
   sourceName: string;
   sourceUrl: string;
@@ -32,6 +34,8 @@ export interface MarketSummary {
   criteria: unknown;
   resolvedOutcomeId: string | null;
   outcomes: OutcomeView[];
+  /** Money traded in the last 24h, seeds excluded. What "Trending" sorts on. */
+  volume24h: string;
   sparkline?: string[];
 }
 
@@ -46,7 +50,6 @@ export interface MarketDetail extends MarketSummary {
   livePrices: Record<string, string> | null;
   annotations: Annotation[];
   traderCount: number;
-  volume24h: string;
   /** Whose market this is (§2.14c). Null on the official shelf. */
   creator: CreatorByline | null;
   /** What the winners split. Null while the market is still open. */
