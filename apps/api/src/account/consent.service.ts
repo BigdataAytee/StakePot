@@ -56,15 +56,21 @@ export class ConsentService {
   }): Promise<void> {
     const version = params.version ?? CURRENT_VERSIONS[params.document];
 
-    await this.prisma.consent.upsert({
-      where: {
-        userId_document_version: { userId: params.userId, document: params.document, version },
-      },
-      create: { userId: params.userId, document: params.document, version, ip: params.ip },
-      // Accepting twice is not an error and must not overwrite the first
-      // acceptance's timestamp — when they first agreed is the fact worth
-      // keeping.
-      update: {},
+    // Accepting twice is not an error and must not overwrite the first
+    // acceptance's timestamp — when they first agreed is the fact worth
+    // keeping.
+    //
+    // An insert that skips duplicates rather than an upsert with an empty
+    // update. Both work today: Prisma compiles `update: {}` to DO NOTHING, so
+    // the previous form survives the append-only trigger this table now
+    // carries — checked against a live database rather than assumed. But it
+    // survives by an implementation detail. An upsert *means* "update if it
+    // exists", and a Prisma release that starts emitting a literal `DO UPDATE`
+    // would turn a second acceptance into a rejected write on a table that
+    // rejects updates by design. This says what is actually wanted.
+    await this.prisma.consent.createMany({
+      data: [{ userId: params.userId, document: params.document, version, ip: params.ip }],
+      skipDuplicates: true,
     });
   }
 

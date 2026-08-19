@@ -74,10 +74,27 @@ CREATE TABLE "pii_access_log" (
 CREATE INDEX "pii_access_log_subjectId_createdAt_idx" ON "pii_access_log"("subjectId", "createdAt");
 CREATE INDEX "pii_access_log_staffId_createdAt_idx" ON "pii_access_log"("staffId", "createdAt");
 
--- An access log that staff can edit is not a log. Same treatment as `ledger`:
--- insert only, at the database-permission level, so no application bug and no
--- leaked application credential can quietly unsee a lookup.
-REVOKE UPDATE, DELETE ON "pii_access_log" FROM PUBLIC;
+-- An access log that staff can edit is not a log. Same treatment as `ledger`,
+-- and for the same reason it takes two layers rather than one:
+--
+--   1. REVOKE from the application role. Note the role, not PUBLIC — migration
+--      1 grants `stakeam_app` UPDATE and DELETE on every table created after
+--      it, through ALTER DEFAULT PRIVILEGES, so a revoke aimed at PUBLIC
+--      takes nothing away from the one account that connects here. That is
+--      what this said in its first version, which made the guarantee in this
+--      comment untrue while reading as though it held.
+--   2. A trigger, because grants never constrain a table's *owner* — and in
+--      development, and on the current Render blueprint, the app connects as
+--      the owner.
+REVOKE UPDATE, DELETE, TRUNCATE ON "pii_access_log" FROM stakeam_app;
+
+CREATE TRIGGER pii_access_log_append_only
+  BEFORE UPDATE OR DELETE ON "pii_access_log"
+  FOR EACH ROW EXECUTE FUNCTION stakeam_reject_mutation();
+
+CREATE TRIGGER pii_access_log_no_truncate
+  BEFORE TRUNCATE ON "pii_access_log"
+  FOR EACH STATEMENT EXECUTE FUNCTION stakeam_reject_mutation();
 
 -- --------------------------------------------------------------- referrals
 
@@ -130,7 +147,16 @@ ALTER TABLE "consents" ADD CONSTRAINT "consents_userId_fkey"
   FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- Consent is evidence. A withdrawn consent is a new fact, not an erased one.
-REVOKE UPDATE, DELETE ON "consents" FROM PUBLIC;
+-- Same two layers, and the same correction, as `pii_access_log` above.
+REVOKE UPDATE, DELETE, TRUNCATE ON "consents" FROM stakeam_app;
+
+CREATE TRIGGER consents_append_only
+  BEFORE UPDATE OR DELETE ON "consents"
+  FOR EACH ROW EXECUTE FUNCTION stakeam_reject_mutation();
+
+CREATE TRIGGER consents_no_truncate
+  BEFORE TRUNCATE ON "consents"
+  FOR EACH STATEMENT EXECUTE FUNCTION stakeam_reject_mutation();
 
 -- ------------------------------------------------------------- sessions
 
