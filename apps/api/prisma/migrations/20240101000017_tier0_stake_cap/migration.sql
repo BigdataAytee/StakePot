@@ -12,4 +12,7 @@
 -- four-eyes proposal and not a deploy.
 INSERT INTO platform_config (key, "valueJson", "effectiveAt", version, state) VALUES
   ('tier0_stake_cap_spc', '5000', NOW(), 1, 'active')
-ON CONFLICT (key) DO NOTHING;
+-- The primary key is (key, version), so an unqualified ON CONFLICT (key) has
+-- no index to infer and the statement fails outright. Caught by applying this
+-- against a real database rather than by reading it.
+ON CONFLICT (key, version) DO NOTHING;

@@ -606,7 +606,9 @@ The user's personal account screen — their money, fully visible, always reconc
 ### 7.6 Public Landing Page (logged-out visitors)
 A marketing-grade page built on the same tokens (§7.4) but louder — its job: a stranger understands and signs up in under 30 seconds.
 
-**Where it lives.** This section originally put the page at the root domain. It is served at **`/welcome`** instead, linked from the logged-out header ("What is this?") and the footer, because the design reference makes the markets grid the front door — and a stranger who lands on a wall of live arguments with prices actually moving has already seen the demo this page is trying to describe. The root stays the catalogue.
+**Where it lives.** This section originally put the page at the root domain. **The root is the board of open markets** — that is the front door, for logged-out visitors as much as anyone, and a stranger landing on live questions with Buy Yes and Buy No under them has already understood more than a marketing page would tell them. Nothing gates it and nothing redirects to a sign-in.
+
+This page is served at **`/welcome`** as the long version, reached from the footer's "About" link only. It is deliberately *not* linked from the header: an explainer advertised on top of the product is an invitation to leave the one screen that sells it.
 
 Its sections:
 - **Hero:** the brand promise in Nigerian voice — "Nigeria argues about everything. StakePot is where arguments get settled — with receipts." Behind it, a **live animated market card** (real prices from the API — the argument bar shifting on the actual naira market) so the product demos itself before signup.

@@ -190,17 +190,18 @@ function CashChip() {
     return (
       <div className="flex shrink-0 items-center gap-3">
         {/*
-          §7.6's marketing page. The grid is the front door, so this is the
-          way to the explanation rather than the other way round — somebody
-          who wants to know what this *is* before signing up needs a door,
-          and burying it in the footer is not one.
+          No link to the marketing page from here.
+          
+          It was here for one commit and it was wrong: the landing page is the
+          board of open questions, and a header link offering to explain the
+          product instead of letting somebody read it is an invitation to
+          leave the only screen that sells it. A stranger who lands on live
+          prices with Buy Yes and Buy No under them has already understood
+          more than the explainer would have told them.
+          
+          `/welcome` still exists for anyone who wants the long version, from
+          the footer, where an About page belongs.
         */}
-        <Link
-          href="/welcome"
-          className="hidden text-base font-semibold text-text-muted hover:text-text md:block"
-        >
-          What is this?
-        </Link>
         <Link href="/login" className="hidden text-base font-semibold hover:underline sm:block">
           Log in
         </Link>
