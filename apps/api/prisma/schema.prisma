@@ -1430,7 +1430,12 @@ model PiiAccessLog {
   staffId   String
   subjectId String
   /// Which fields were revealed: `email`, `phone`, `kycRef`.
-  fields    String[]
+  ///
+  /// Empty by default rather than absent. A list column with no default is
+  /// null until something writes it, and "we do not know which fields were
+  /// read" is the one answer an access log must never give; an empty array at
+  /// least says plainly that the row recorded none.
+  fields    String[] @default([])
   reason    String
   ip        String
   createdAt DateTime @default(now())
