@@ -113,10 +113,19 @@ export const tailwindPreset: Partial<Config> = {
           '0%': { color: themed('fall').replace('<alpha-value>', '1') },
           '100%': { color: 'inherit' },
         },
+        // Half a list-height, because the list is rendered twice — the seam
+        // lands exactly where the first copy ended, so there is no jump.
+        'marquee-y': {
+          '0%': { transform: 'translateY(0)' },
+          '100%': { transform: 'translateY(-50%)' },
+        },
       },
       animation: {
         'tick-up': `tick-up ${motion.priceTickMs}ms ${motion.barEase}`,
         'tick-down': `tick-down ${motion.priceTickMs}ms ${motion.barEase}`,
+        // The featured card's activity column. Linear and unending: it is
+        // ambient, and an eased loop would draw the eye on every cycle.
+        'marquee-y': 'marquee-y 30s linear infinite',
       },
     },
   },

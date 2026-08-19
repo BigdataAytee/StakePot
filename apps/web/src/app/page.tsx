@@ -1,220 +1,187 @@
-import Link from 'next/link';
+import { Suspense } from 'react';
 
-import { SiteFooter } from '@/components/site-footer';
+import { FeaturedCarousel } from '@/components/home/featured-carousel';
+import { HomeFilterBar } from '@/components/home/home-filter-bar';
+import { HomeFooter } from '@/components/home/home-footer';
+import { HomeMarketCard } from '@/components/home/home-market-card';
+import { HomeNav } from '@/components/home/home-nav';
+import { MobileTabBar } from '@/components/home/mobile-tab-bar';
+import { TopicStrip } from '@/components/home/topic-strip';
+import { api, type MarketDetail, type MarketSummary } from '@/lib/api';
+import { SORTS, byBusiest, isSortKey, topicOf, topicsPresent } from '@/lib/home';
 
-import { api, type MarketSummary } from '@/lib/api';
-import { ArgumentBar } from '@/components/argument-bar';
-import { MarketCard } from '@/components/market-card';
-import { SignedInRedirect } from '@/components/signed-in-redirect';
-import { kobo, money } from '@/lib/format';
-
-// Live prices on the front door, so the demo is the product and not a mockup.
+// Prices move. A cached front page is a front page showing yesterday's argument.
 export const dynamic = 'force-dynamic';
 
+/** How many markets get the full-size treatment at the top. */
+const FEATURED = 4;
+
 /**
- * §7.6 — the public landing page.
+ * The front door.
  *
- * "A marketing-grade page at the root domain, built on the same tokens (§7.4)
- * but louder — its job: a stranger understands and signs up in under 30
- * seconds."
+ * This used to be a brochure: a headline, three "how it works" boxes, and four
+ * cards near the bottom as evidence that the product existed. It read like an
+ * ad for a prediction market rather than like one, and the thing a visitor came
+ * to do — look at the questions — was below the fold behind an explanation they
+ * had not asked for.
  *
- * The hero card is a real market at real prices rather than a screenshot,
- * which is the one decision that makes the rest of the page believable: the
- * argument bar a visitor sees moving is the same component, fed by the same
- * API, that they will trade on thirty seconds later.
+ * So the page is now the product. Every market is on it, in a dense grid, with
+ * a handful given the full-size treatment at the top; the search, the topics
+ * and the sort sit above the grid; and the explaining has moved to where
+ * somebody goes looking for it (the rules, the FAQ, the footer). A stranger
+ * still understands what this is in under thirty seconds — from live questions
+ * with live prices, which is a faster explanation than any paragraph.
+ *
+ * Everything the reader can change — the search, the topic, the shelf, the
+ * order — lives in the query string, so every view of this page is a URL that
+ * can be sent to somebody, and the whole grid stays on the server.
  */
-export default async function LandingPage() {
+export const metadata = {
+  title: 'StakeAm · Nigeria’s prediction market',
+  description:
+    'Live odds on Nigerian politics, football, the naira, music and more. Pick a side, winners split the pot, and every market settles against one named source.',
+};
+
+export default async function HomePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string; topic?: string; shelf?: string; sort?: string }>;
+}) {
+  const { q, topic, shelf, sort } = await searchParams;
+
   let markets: MarketSummary[] = [];
+  let unreachable = false;
   try {
     markets = await api.markets();
   } catch {
-    // The front door must still open when the API is down. It loses the live
-    // cards and keeps everything that explains what this is.
+    // The front door still opens when the API does not. It loses the markets
+    // and keeps the navigation, so a visitor can reach the status page rather
+    // than a blank screen that tells them nothing.
+    unreachable = true;
   }
 
-  // Busiest first. §7.6 wants "3–4 real trending cards" and a hero that demos
-  // the product — and a front door leading with an untouched market shows a
-  // ₦0 pot to the one visitor who has never seen the product work.
-  const live = markets
+  const open = markets.filter((market) => market.state !== 'resolved' && market.state !== 'voided');
+
+  const query = (q ?? '').trim().toLowerCase();
+  const shown = open
+    .filter((market) =>
+      shelf === 'official' || shelf === 'community' ? market.shelf === shelf : true,
+    )
+    .filter((market) => (topic === undefined ? true : topicOf(market).key === topic))
+    .filter((market) =>
+      query === ''
+        ? true
+        : `${market.question} ${market.sourceName} ${market.outcomes.map((o) => o.label).join(' ')}`
+            .toLowerCase()
+            .includes(query),
+    );
+
+  const compare = (
+    SORTS.find((option) => option.key === (isSortKey(sort) ? sort : 'volume')) ?? SORTS[0]
+  ).compare;
+  const ordered = [...shown].sort(compare);
+
+  // The featured strip follows whatever the reader has filtered to — a topic
+  // view whose headline act is a market from another topic is a page arguing
+  // with itself. Detail is fetched only for these few, because the carousel
+  // shows a chart and a history the list endpoint does not carry.
+  const candidates = [...shown]
     .filter((market) => market.state === 'active')
-    .sort((a, b) => Number(b.pot) - Number(a.pot));
-  const hero = live[0];
-  const teaser = live.slice(1, 5);
-  const totalPot = markets.reduce((sum, market) => sum + Number(market.pot), 0);
+    .sort(byBusiest)
+    .slice(0, FEATURED);
+  const featured = (
+    await Promise.all(
+      candidates.map((market) => api.market(market.id).catch((): MarketDetail | null => null)),
+    )
+  ).filter((market): market is MarketDetail => market !== null);
 
   return (
-    <main className="mx-auto max-w-3xl px-4 py-8">
-      <SignedInRedirect />
+    <>
+      <Suspense fallback={<div className="h-[68px] border-b border-border" />}>
+        <HomeNav />
+      </Suspense>
+      <Suspense fallback={<div className="h-12 border-b border-border" />}>
+        {/* Label and count only — the topic's matcher is a RegExp, and a
+            RegExp cannot cross into a client component. */}
+        <TopicStrip
+          topics={topicsPresent(open).map(({ topic: t, count }) => ({
+            key: t.key,
+            label: t.label,
+            count,
+          }))}
+        />
+      </Suspense>
 
-      {/* Hero */}
-      <section className="pb-10 pt-6">
-        <p className="font-mono text-xs uppercase tracking-widest text-text-muted">StakeAm</p>
-        <h1 className="mt-3 text-3xl font-black leading-none sm:text-4xl">
-          Nigeria argues about everything.
-          <br />
-          This is where arguments get settled — with receipts.
-        </h1>
-        <p className="mt-4 max-w-xl text-lg text-text-muted">
-          Pick a side on the questions people are already shouting about. Winners split the pot.
-          There is no house, and no house edge.
-        </p>
-
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          <Link
-            href="/signup"
-            className="rounded-md bg-rise px-5 py-3 text-md font-black text-paper transition-transform active:scale-press"
-          >
-            Start with a free balance
-          </Link>
-          <Link href="/login" className="text-sm font-bold underline">
-            I already have an account
-          </Link>
-        </div>
-
-        {hero !== undefined && (
-          <div className="mt-8 rounded-lg border border-border bg-surface-raised p-5">
-            <p className="font-mono text-xs uppercase tracking-widest text-text-muted">
-              Live right now
-            </p>
-            <h2 className="mt-2 text-lg font-bold leading-snug">{hero.question}</h2>
-            <div className="mt-4">
-              <ArgumentBar
-                segments={hero.outcomes.map((outcome) => ({
-                  id: outcome.id,
-                  label: outcome.label,
-                  price: outcome.price,
-                  ordinal: outcome.ordinal,
-                  isOther: outcome.isOther,
-                }))}
-                showLabels={hero.outcomes.length === 2}
-              />
-            </div>
-            <p className="mt-4 font-mono text-sm text-text-muted">
-              {hero.outcomes[0]?.label} at{' '}
-              <span className="font-black text-text">{kobo(hero.outcomes[0]?.price ?? '0')}</span>{' '}
-              per share · pot <span className="text-money">{money(hero.pot)}</span>
-            </p>
-          </div>
+      <main className="mx-auto max-w-[1350px] px-4 pb-24 pt-5 md:pb-10">
+        {unreachable && (
+          <p className="rounded-lg border border-border bg-surface-raised p-4 text-sm text-text-muted">
+            The markets are not loading right now. Nothing is wrong with your account —{' '}
+            <a href="/status" className="underline">
+              platform status
+            </a>{' '}
+            says whether it is us.
+          </p>
         )}
-      </section>
 
-      {/* How it works */}
-      <section className="border-t border-border py-10">
-        <h2 className="text-xl font-black">How it works</h2>
-        <div className="mt-5 grid gap-4 sm:grid-cols-3">
-          <Step
-            n="1"
-            title="Pick a question"
-            body="Elections, the naira, the Super Eagles, BBNaija. Every market settles against one named source, decided before it opens."
-          />
-          <Step
-            n="2"
-            title="Stake your side"
-            body="The price is what the crowd thinks right now. Stake ₦500 or ₦50,000 — the odds move as people pile in."
-          />
-          <Step
-            n="3"
-            title="Winners share the pot"
-            body="When the result lands, everyone who called it right splits the pot in proportion to what they staked. Receipts forever."
-          />
-        </div>
-      </section>
+        {featured.length > 0 && <FeaturedCarousel markets={featured} />}
 
-      {/* Live markets teaser */}
-      {teaser.length > 0 && (
-        <section className="border-t border-border py-10">
-          <div className="flex items-baseline justify-between gap-4">
-            <h2 className="text-xl font-black">Open now</h2>
-            {totalPot > 0 && (
-              <p className="font-mono text-xs text-text-muted">
-                <span className="text-money">{money(totalPot)}</span> staked across all markets
-              </p>
-            )}
-          </div>
-          <div className="mt-5 grid gap-3 sm:grid-cols-2">
-            {teaser.map((market) => (
-              <MarketCard key={market.id} market={market} />
+        <Suspense fallback={<div className="h-14" />}>
+          <HomeFilterBar shown={ordered.length} total={open.length} />
+        </Suspense>
+
+        {ordered.length === 0 ? (
+          <Empty query={query} filtered={open.length > 0} />
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {ordered.map((market) => (
+              <HomeMarketCard key={market.id} market={market} />
             ))}
           </div>
-        </section>
-      )}
+        )}
+      </main>
 
-      {/* Trust block */}
-      <section className="border-t border-border py-10">
-        <h2 className="text-xl font-black">Why you can trust the result</h2>
-        <dl className="mt-5 flex flex-col gap-5">
-          <Trust term="One named source, agreed up front">
-            Every market says exactly what will settle it — INEC, CBN, CAF — before anybody can
-            stake. The rules cannot change after the fact, because they are written into the market.
-          </Trust>
-          <Trust term="Your stake sits in the pot, not with us">
-            Money you stake is held in escrow against that market. Winners are paid only from the
-            pot. We take a stated fee on the losing side and nothing else — there is no house
-            position on the other side of your trade.
-          </Trust>
-          <Trust term="A dispute window before anyone is paid">
-            Results are posted with their evidence, and there is a window to challenge them before
-            payouts settle. Disputes are decided by people, in public.
-          </Trust>
-          <Trust term="Built to be walked away from">
-            Set your own limits, take a cool-off, or self-exclude at any time — and the app tells
-            you how long you have been in a session whether or not you asked.
-          </Trust>
-        </dl>
-        <p className="mt-5 text-sm text-text-muted">
-          <Link href="/rules" className="underline">
-            Read the rules
-          </Link>{' '}
-          ·{' '}
-          <Link href="/status" className="underline">
-            Platform status
-          </Link>
-        </p>
-      </section>
+      <HomeFooter />
+      <MobileTabBar />
+    </>
+  );
+}
 
-      {/* Closing CTA */}
-      <section className="border-t border-border py-10">
-        <h2 className="text-xl font-black">Ten seconds to start</h2>
-        <p className="mt-2 max-w-lg text-md text-text-muted">
-          Email or phone, a password, and you are in — with a free balance to trade. No card, no
-          deposit, nothing to lose while you learn how it works.
-        </p>
-        <Link
-          href="/signup"
-          className="mt-5 inline-block rounded-md bg-rise px-5 py-3 text-md font-black text-paper transition-transform active:scale-press"
-        >
-          Create your account
-        </Link>
-      </section>
-
-      {/*
-        One footer, shared. This page had its own three links and the legal
-        pages had none, so the FAQ and the privacy policy were reachable only by
-        typing the URL — which is the same as not existing.
-      */}
-      <p className="mt-16 text-sm text-text-muted">
-        Play responsibly — StakeAm is entertainment, not income.
+/**
+ * Nothing matched — and which nothing it is matters.
+ *
+ * A search that found no market and a platform with no markets look identical
+ * on screen and are entirely different problems; saying which one this is is
+ * the difference between "try another word" and "come back later".
+ */
+function Empty({ query, filtered }: { query: string; filtered: boolean }) {
+  return (
+    <div className="rounded-lg border border-dashed border-border p-10 text-center">
+      <p className="text-md font-bold">
+        {filtered
+          ? query === ''
+            ? 'Nothing open under this filter.'
+            : `No open market mentions “${query}”.`
+          : 'No markets are open yet.'}
       </p>
-      <SiteFooter />
-    </main>
-  );
-}
-
-function Step({ n, title, body }: { n: string; title: string; body: string }) {
-  return (
-    <div className="rounded-lg border border-border bg-surface-raised p-4">
-      <span className="font-mono text-xs font-black text-rise">{n}</span>
-      <h3 className="mt-1.5 text-md font-bold">{title}</h3>
-      <p className="mt-1.5 text-sm text-text-muted">{body}</p>
-    </div>
-  );
-}
-
-function Trust({ term, children }: { term: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <dt className="text-md font-bold">{term}</dt>
-      <dd className="mt-1 text-sm text-text-muted">{children}</dd>
+      <p className="mt-2 text-sm text-text-muted">
+        {filtered ? (
+          <>
+            Try another topic, or{' '}
+            <a href="/" className="underline">
+              see everything
+            </a>
+            .
+          </>
+        ) : (
+          <>
+            The first ones are on their way.{' '}
+            <a href="/create" className="underline">
+              Open one yourself
+            </a>{' '}
+            if you cannot wait.
+          </>
+        )}
+      </p>
     </div>
   );
 }

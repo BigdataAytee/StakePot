@@ -102,13 +102,22 @@ test.describe('the walkthrough', () => {
     }
   });
 
-  test('1 · the front door explains itself to a stranger', async ({ page }, testInfo) => {
+  test('1 · the front door is the product, not a brochure about it', async ({ page }, testInfo) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: /arguments get settled/i })).toBeVisible();
-    // §7.6's live card: a real market at real prices, not a picture of one.
-    await expect(page.getByText(/Live right now/i)).toBeVisible();
-    await expect(page.getByRole('heading', { name: /How it works/i })).toBeVisible();
-    await expect(page.getByRole('heading', { name: /trust the result/i })).toBeVisible();
+
+    // What a stranger gets in the first screenful: a way to search, the topics,
+    // and live questions at live prices. The explaining lives in the footer and
+    // the rules, where somebody who wants it goes looking.
+    await expect(page.getByRole('searchbox', { name: /search markets/i })).toBeVisible();
+    await expect(page.getByRole('link', { name: /Trending/i })).toBeVisible();
+    await expect(page.getByRole('link', { name: /Sign up/i })).toBeVisible();
+
+    // At least one real market, and a percentage next to it — the thirty-second
+    // explanation §7.6 asks for, delivered by the markets rather than by prose.
+    const questions = page.getByRole('article');
+    await expect(questions.first()).toBeVisible();
+    await expect(page.getByText(/%/).first()).toBeVisible();
+
     await capture(page, 'landing', testInfo);
   });
 
@@ -116,7 +125,7 @@ test.describe('the walkthrough', () => {
     page,
   }, testInfo) => {
     await page.goto('/');
-    await page.getByRole('link', { name: /Start with a free balance/i }).click();
+    await page.getByRole('link', { name: /^Sign up$/i }).click();
     await expect(page).toHaveURL(/\/signup/);
 
     await page.getByLabel('Email or phone').fill(email);
