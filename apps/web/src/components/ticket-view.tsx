@@ -359,7 +359,14 @@ export function TicketView({
 
       {/* The phone's primary action, in place of the side panel it has no
           room for. */}
-      <MobileBuyBar market={initial} livePrices={prices} />
+      <MobileBuyBar
+        market={initial}
+        livePrices={prices}
+        onBuy={(outcome) => {
+          setPicked(outcome.id);
+          setIntent({ outcome, side: 'buy' });
+        }}
+      />
 
       {/* Kept for the two paths that are not the side panel: a price button
           pressed on the grid, and selling out of a position. */}

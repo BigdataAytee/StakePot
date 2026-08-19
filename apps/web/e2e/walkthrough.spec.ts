@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
 import { resetAuthBudget } from './redis';
+import { enterStake, submitStake } from './trade';
 
 /**
  * The whole product, in order, in the browser a user gets — and a screenshot of
@@ -255,10 +256,9 @@ test.describe('the walkthrough', () => {
     const token = await signIn(page, email, password);
     await page.goto('/market/wt-naira');
 
-    await page.getByRole('button', { name: /Buy Yes/i }).click();
-    await page.locator('#trade-amount').fill('2000');
+    await enterStake(page, { amount: '2000' });
     await capture(page, 'trade-sheet-buy', testInfo);
-    await page.getByRole('button', { name: 'Stake am' }).click();
+    await submitStake(page);
 
     await expect
       .poll(async () => (await get<unknown[]>('/me/positions', token)).length, {

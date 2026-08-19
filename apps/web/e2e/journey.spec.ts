@@ -3,6 +3,7 @@ import { execSync } from 'node:child_process';
 import { expect, test } from '@playwright/test';
 
 import { resetAuthBudget } from './redis';
+import { enterStake, stakeConfirmed, submitStake } from './trade';
 
 /**
  * §5.1 step 14's end-to-end user journeys, in the browser the users get.
@@ -88,21 +89,19 @@ test('a new user signs up, stakes with a reason, and their badge lands on the th
   await expect(page.getByRole('heading', { name: /Super Eagles beat Ghana/ })).toBeVisible();
   await expect(page.getByRole('heading', { name: /takes/i })).toBeVisible();
 
-  // Open the trade ticket, stake, and leave the one-line why.
-  await page.getByRole('button', { name: /Buy Yes/i }).click();
-  await page.locator('#trade-amount').fill('2000');
-  await page
-    .getByPlaceholder('One line. It goes on the thread with your position.')
-    .fill('Osimhen is back, that changes everything');
-  await page.getByRole('button', { name: 'Stake am' }).click();
+  // Open the trade ticket, stake, and leave the one-line why. Whether that is
+  // the side panel or the phone's bottom sheet depends on the viewport, so the
+  // journey asks for the act rather than for a particular widget.
+  await enterStake(page, {
+    amount: '2000',
+    reason: 'Osimhen is back, that changes everything',
+  });
+  await submitStake(page);
 
-  // Wait for the confirmation before going anywhere. The sheet closes when the
-  // trade is *confirmed*, not when the request is sent — navigating on the
-  // click abandons an in-flight submit, which is a test measuring its own
-  // timing rather than the product.
-  await expect(
-    page.getByPlaceholder('One line. It goes on the thread with your position.'),
-  ).toBeHidden({ timeout: 30_000 });
+  // Wait for the confirmation before going anywhere: navigating on the click
+  // abandons an in-flight submit, which is a test measuring its own timing
+  // rather than the product.
+  await stakeConfirmed(page);
 
   // The trade filled and the reason arrived on the thread wearing the badge —
   // §2.15a's whole design, observed from the outside.
@@ -174,15 +173,14 @@ test.describe('the queued path', () => {
     );
 
     await page.goto(`/market/${marketId}`);
-    await page.getByRole('button', { name: /Buy Yes/i }).click();
-    await page.locator('#trade-amount').fill('1000');
-    await page.getByRole('button', { name: 'Stake am' }).click();
+    await enterStake(page, { amount: '1000' });
+    await submitStake(page);
 
     // It says what is actually happening…
     await expect(page.getByRole('button', { name: /confirming/i })).toBeVisible();
     // …and stands down only once the trade exists, found by polling §11's status
     // endpoint rather than by assuming.
-    await expect(page.locator('#trade-amount')).toBeHidden({ timeout: 30_000 });
+    await stakeConfirmed(page);
   });
 });
 

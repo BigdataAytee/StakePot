@@ -1,9 +1,8 @@
 'use client';
 
-import type { MarketDetail } from '@/lib/api';
+import type { MarketDetail, OutcomeView } from '@/lib/api';
 import { kobo } from '@/lib/format';
 import { binaryPair } from '@/lib/home';
-import { useTradeIntent } from '@/store/trade-intent';
 
 /**
  * The detail page's primary action, on a phone.
@@ -17,16 +16,24 @@ import { useTradeIntent } from '@/store/trade-intent';
  * sheet the grid uses. A detail page replaces the tab bar with its own action
  * rather than stacking two fixed bars — which is why this page does not render
  * the primary nav.
+ *
+ * The chosen outcome goes back to the page rather than into the shared
+ * `trade-intent` store. The store exists for the grid, where the sheet is
+ * mounted once beside forty cards that cannot each own one; the detail page
+ * already renders its own sheet from its own state. Writing to the store here
+ * set an intent nothing on this page was reading — the bar was the only way to
+ * trade on a phone, and tapping it did nothing at all, silently, because a
+ * button that opens no sheet still looks like a button.
  */
 export function MobileBuyBar({
   market,
   livePrices,
+  onBuy,
 }: {
   market: MarketDetail;
   livePrices: Record<string, string>;
+  onBuy: (outcome: OutcomeView) => void;
 }) {
-  const open = useTradeIntent((state) => state.open);
-
   if (market.state !== 'active') return null;
 
   const binary = binaryPair(market);
@@ -46,7 +53,7 @@ export function MobileBuyBar({
             <button
               key={outcome.id}
               type="button"
-              onClick={() => open(market, outcome)}
+              onClick={() => onBuy(outcome)}
               className={`flex-1 rounded-lg py-3 text-md font-bold text-paper transition-transform active:scale-press ${
                 no ? 'bg-fall' : 'bg-rise'
               }`}
