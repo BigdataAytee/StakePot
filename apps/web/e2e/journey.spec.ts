@@ -90,7 +90,7 @@ test('a new user signs up, stakes with a reason, and their badge lands on the th
 
   // Open the trade ticket, stake, and leave the one-line why.
   await page.getByRole('button', { name: /Buy Yes/i }).click();
-  await page.locator('input[inputmode="decimal"]').fill('2000');
+  await page.locator('#trade-amount').fill('2000');
   await page
     .getByPlaceholder('One line. It goes on the thread with your position.')
     .fill('Osimhen is back, that changes everything');
@@ -175,14 +175,14 @@ test.describe('the queued path', () => {
 
     await page.goto(`/market/${marketId}`);
     await page.getByRole('button', { name: /Buy Yes/i }).click();
-    await page.locator('input[inputmode="decimal"]').fill('1000');
+    await page.locator('#trade-amount').fill('1000');
     await page.getByRole('button', { name: 'Stake am' }).click();
 
     // It says what is actually happening…
     await expect(page.getByRole('button', { name: /confirming/i })).toBeVisible();
     // …and stands down only once the trade exists, found by polling §11's status
     // endpoint rather than by assuming.
-    await expect(page.locator('input[inputmode="decimal"]')).toBeHidden({ timeout: 30_000 });
+    await expect(page.locator('#trade-amount')).toBeHidden({ timeout: 30_000 });
   });
 });
 

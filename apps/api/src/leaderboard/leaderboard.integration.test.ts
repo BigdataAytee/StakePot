@@ -273,7 +273,12 @@ describe.skipIf(!TEST_DATABASE_URL)('leaderboards and prizes (integration)', () 
     await settledMarket({
       label: 'a tiered thing',
       stakes: [
-        { userId: unverified, outcome: 0, amount: '20000' },
+        // Inside §2.1's Tier 0 exposure cap, because that is now enforced and
+        // an unverified account cannot hold 20,000 across open markets. The
+        // amount does not weaken the assertion: `beforeEach` drops
+        // `leaderboard_min_staked_profit` to 1, so tier is the only thing
+        // keeping this account off the board — which is what the test is for.
+        { userId: unverified, outcome: 0, amount: '4000' },
         { userId: verified, outcome: 1, amount: '20000' },
       ],
       winner: 0,

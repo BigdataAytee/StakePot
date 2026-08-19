@@ -240,8 +240,16 @@ function CashChip() {
         </svg>
       </Link>
 
+      {/*
+        Named for screen readers, and for anything else that has to find it.
+        Its visible content is a number and the word "Balance" beside it is
+        `sm:block` — hidden on a phone, where the figure has to carry the whole
+        meaning on its own. A link whose entire accessible name is "₦4,821" is
+        opaque, and the phone is where most of this traffic arrives.
+      */}
       <Link
         href="/wallet"
+        aria-label="Your balance"
         className="flex flex-col items-end rounded-md px-2 py-1 leading-[1.15] hover:bg-chip"
       >
         <span className="font-mono text-base font-bold text-money">{money(me.available)}</span>

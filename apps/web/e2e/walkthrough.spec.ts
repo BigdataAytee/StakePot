@@ -145,7 +145,7 @@ test.describe('the walkthrough', () => {
     // Tier 0 lands in the markets with money to spend, and nothing on the way
     // in asks it to prove a contact.
     await expect(page).toHaveURL(/\/markets/, { timeout: 15_000 });
-    await expect(page.getByText('Balance').first()).toBeVisible();
+    await expect(page.getByRole('link', { name: /your balance/i })).toBeVisible();
     await expect(page.getByText(/verify/i)).toHaveCount(0);
     await capture(page, 'markets-tier0', testInfo);
 
@@ -175,7 +175,7 @@ test.describe('the walkthrough', () => {
     const me = await get<{ tier: number; available: string }>('/auth/me', token);
     expect(me.tier).toBe(1);
     expect(Number(me.available)).toBe(15_000);
-    await expect(page.getByText('Balance').first()).toBeVisible();
+    await expect(page.getByRole('link', { name: /your balance/i })).toBeVisible();
     await expect(page.getByText('₦15k').first()).toBeVisible();
     await capture(page, 'markets-signed-in', testInfo);
   });
@@ -256,7 +256,7 @@ test.describe('the walkthrough', () => {
     await page.goto('/market/wt-naira');
 
     await page.getByRole('button', { name: /Buy Yes/i }).click();
-    await page.locator('input[inputmode="decimal"]').fill('2000');
+    await page.locator('#trade-amount').fill('2000');
     await capture(page, 'trade-sheet-buy', testInfo);
     await page.getByRole('button', { name: 'Stake am' }).click();
 
@@ -280,7 +280,7 @@ test.describe('the walkthrough', () => {
     await page.goto('/market/wt-naira');
 
     await page.getByRole('button', { name: /Sell/i }).first().click();
-    await page.locator('input[inputmode="decimal"]').fill('500');
+    await page.locator('#trade-amount').fill('500');
 
     // §2.3's early-exit fee, itemised *inside the sheet* where the commitment
     // is made. Scoped to the dialog deliberately: an earlier version of this
