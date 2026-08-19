@@ -3,19 +3,25 @@
 import {
   AlertTriangle,
   BarChart3,
+  Flag,
   Gavel,
   LayoutDashboard,
   LifeBuoy,
   ShieldAlert,
   ShieldCheck,
+  Sliders,
   Sparkles,
+  Server,
+  Timer,
   Trophy,
+  UserCog,
   Wallet,
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+import { CommandPalette } from '@/components/admin/command-palette';
 import { admin, type DashboardView } from '@/lib/admin-api';
 
 /**
@@ -40,6 +46,11 @@ const SCREENS = [
   { href: '/admin/approvals', label: 'Approvals', icon: ShieldCheck },
   { href: '/admin/money', label: 'Money room', icon: Wallet },
   { href: '/admin/support', label: 'Support desk', icon: LifeBuoy },
+  { href: '/admin/lifecycle', label: 'Lifecycle', icon: Timer },
+  { href: '/admin/creators', label: 'Creators desk', icon: UserCog },
+  { href: '/admin/growth', label: 'Growth', icon: Flag },
+  { href: '/admin/config', label: 'Platform config', icon: Sliders },
+  { href: '/admin/system', label: 'System room', icon: Server },
 ] as const;
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
@@ -76,10 +87,15 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
 
   return (
     <div className="dark min-h-screen bg-surface text-text">
+      {/* §6.10: ⌘K from anywhere. The console is fourteen screens deep. */}
+      <CommandPalette />
       <div className="flex min-h-screen">
         <nav className="w-56 shrink-0 border-r border-border px-3 py-4">
           <p className="px-2 pb-4 font-mono text-xs uppercase tracking-widest text-text-muted">
             StakeAm ops
+          </p>
+          <p className="px-2 pb-3 font-mono text-xs text-text-muted">
+            <kbd className="rounded-sm border border-border px-1">⌘K</kbd> to jump
           </p>
           <ul className="space-y-1">
             {SCREENS.map((screen) => {

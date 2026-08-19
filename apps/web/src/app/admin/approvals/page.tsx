@@ -1,8 +1,12 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
+import { useWorkQueue } from '@/components/admin/work-queue';
 import { admin, type PendingApproval } from '@/lib/admin-api';
+
+/** Stable identity for the work queue. */
+const keyOf = (item: PendingApproval): string => item.id;
 
 /**
  * §6.4's approvals inbox.
@@ -19,6 +23,13 @@ export default function ApprovalsInbox() {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [codes, setCodes] = useState<Record<string, string>>({});
 
+  // §6.10's work-queue auto-advance. An approvals inbox is the console's
+  // highest-volume queue, and without this the operator loses their place on
+  // every decision — forty approvals become forty decisions plus forty
+  // searches for where they had got to.
+  const { advance, isActive, setActiveKey } = useWorkQueue(items, keyOf);
+  const rows = useRef<Record<string, HTMLLIElement | null>>({});
+
   const load = (): void => {
     void admin
       .approvals()
@@ -33,6 +44,10 @@ export default function ApprovalsInbox() {
     setError(null);
     try {
       await action();
+      // Advance before reloading: the finished item is about to leave the
+      // list, and picking the next one from the list that still contains it is
+      // the only moment "next" is unambiguous.
+      advance();
       load();
     } catch (caught) {
       setError((caught as Error).message);
@@ -40,6 +55,15 @@ export default function ApprovalsInbox() {
       setBusy(null);
     }
   }
+
+  // Bring the active row into view when it moves on its own. Only then — a
+  // scroll that fires on every refresh would fight whoever is reading.
+  const active = items.find(isActive);
+  const activeId = active?.id ?? null;
+  useEffect(() => {
+    if (activeId === null) return;
+    rows.current[activeId]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [activeId]);
 
   return (
     <div className="space-y-4">
@@ -58,7 +82,16 @@ export default function ApprovalsInbox() {
       ) : (
         <ul className="space-y-3">
           {items.map((item) => (
-            <li key={item.id} className="rounded-md border border-border p-4">
+            <li
+              key={item.id}
+              ref={(node) => {
+                rows.current[item.id] = node;
+              }}
+              onFocusCapture={() => setActiveKey(item.id)}
+              className={`rounded-md border p-4 transition-colors ${
+                isActive(item) ? 'border-brand bg-surface-raised/40' : 'border-border'
+              }`}
+            >
               <div className="flex items-baseline justify-between">
                 <h2 className="text-sm font-semibold">{item.summary}</h2>
                 <span className="font-mono text-xs text-text-muted">{item.actionType}</span>

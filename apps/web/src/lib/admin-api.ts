@@ -350,3 +350,219 @@ export const growth = {
     }),
   analytics: (days = 14) => request<AnalyticsOverview>(`/admin/analytics?days=${days}`),
 };
+
+// ------------------------------------------------------- blocks E & F consoles
+
+export interface FundingWindow {
+  id: string;
+  question: string;
+  state: string;
+  shelf: string;
+  activationPath: string | null;
+  closesAt: string | null;
+  pot: string;
+  trades: number;
+  outcomes: { label: string; staked: string; funded: boolean }[];
+  fundedOutcomes: number;
+}
+
+export interface Composition {
+  market: {
+    id: string;
+    question: string;
+    state: string;
+    activationPath: string | null;
+    creatorId: string | null;
+    pot: string;
+  };
+  outcomes: { label: string; staked: string }[];
+  syndicates: {
+    id: string;
+    state: string;
+    target: string;
+    perOutcomeMin: string;
+    raised: string;
+    organiserBps: number;
+    maxSponsors: number;
+    roundEndsAt: string;
+    members: { userId: string; amount: string; feeShare: string; joinedAt: string }[];
+  }[];
+  bonds: { id: string; creatorId: string; amount: string; state: string }[];
+}
+
+export interface ConfigNote {
+  blast: 'money' | 'market' | 'guard' | 'cosmetic';
+  what: string;
+  risk: string;
+}
+
+export interface ConfigConsole {
+  keys: { key: string; value: unknown; version: number; note: ConfigNote | null }[];
+  pending: {
+    key: string;
+    from: unknown;
+    to: unknown;
+    version: number;
+    effectiveAt: string;
+    note: ConfigNote | null;
+  }[];
+  history: {
+    key: string;
+    from: unknown;
+    to: unknown;
+    reason: string;
+    proposedBy: string;
+    approvedBy: string;
+    proposedAt: string;
+    activatedAt: string | null;
+  }[];
+}
+
+export interface CreatorDeskRow {
+  userId: string;
+  handle: string | null;
+  displayName: string | null;
+  status: string;
+  level: number;
+  cleanResolutions: number;
+  disputedResolutions: number;
+  voidedAfterActivation: number;
+  volumeHosted: string;
+  followers: number;
+  levelUpdatedAt: string | null;
+  liveMarkets: number;
+  bonds: { id: string; marketId: string; amount: string; state: string }[];
+}
+
+export interface FeatureFlagRow {
+  key: string;
+  description: string;
+  enabled: boolean;
+  rolloutPct: number;
+  allowList: string[];
+  updatedBy: string | null;
+  updatedAt: string;
+}
+
+export interface BroadcastRow {
+  id: string;
+  title: string;
+  body: string;
+  segment: string;
+  channel: string;
+  createdBy: string;
+  approvedBy: string | null;
+  sentAt: string | null;
+  recipients: number;
+  createdAt: string;
+}
+
+export interface SystemRoom {
+  backups: {
+    lastDrill: {
+      ranAt: string;
+      passed: boolean;
+      durationSec: number;
+      backupRef: string;
+      notes: string;
+    } | null;
+    ageDays: number | null;
+    stale: boolean;
+    history: { ranAt: string; passed: boolean; durationSec: number }[];
+  };
+  queues: {
+    pendingApprovals: number;
+    openDisputes: number;
+    draftsWaiting: number;
+    resultsDue: number;
+    overdueFundingWindows: number;
+    unsentNotifications: number;
+  };
+  keys: {
+    name: string;
+    configured: boolean;
+    currentKeyId: string | null;
+    acceptedVersions: number;
+  }[];
+  canary: { key: string; rolloutPct: number; updatedAt: string }[];
+  incidents: { id: string; title: string; state: string; severity: string; startedAt: string }[];
+  audit: { staffId: string; action: string; targetRef: string; at: string }[];
+}
+
+export interface TopCallRow {
+  id: string;
+  handle: string | null;
+  displayName: string | null;
+  marketId: string;
+  question: string;
+  pot: string;
+  entryPrice: string;
+  resolvedOutcome: string;
+  featured: boolean;
+}
+
+export const ops = {
+  funding: (hours = 72) => request<FundingWindow[]>(`/admin/lifecycle/funding?hours=${hours}`),
+  composition: (marketId: string) =>
+    request<Composition>(`/admin/lifecycle/markets/${marketId}/composition`),
+
+  config: () => request<ConfigConsole>('/admin/config'),
+
+  creators: (q = '') => request<CreatorDeskRow[]>(`/admin/creators?q=${encodeURIComponent(q)}`),
+  setLevel: (userId: string, level: number, reason: string) =>
+    request<{ level: number }>(`/admin/creators/${userId}/level`, {
+      method: 'POST',
+      body: JSON.stringify({ level, reason }),
+    }),
+
+  flags: () => request<FeatureFlagRow[]>('/admin/growth/flags'),
+  saveFlag: (flag: {
+    key: string;
+    description: string;
+    enabled: boolean;
+    rolloutPct: number;
+    allowList?: string[];
+  }) =>
+    request<FeatureFlagRow>('/admin/growth/flags', {
+      method: 'POST',
+      body: JSON.stringify(flag),
+    }),
+
+  broadcasts: () => request<BroadcastRow[]>('/admin/growth/broadcasts'),
+  draftBroadcast: (body: { title: string; body: string; segment: string }) =>
+    request<BroadcastRow>('/admin/growth/broadcasts', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  broadcastReach: (id: string) =>
+    request<{ segment: string; recipients: number }>(`/admin/growth/broadcasts/${id}/reach`),
+  sendBroadcast: (id: string) =>
+    request<BroadcastRow>(`/admin/growth/broadcasts/${id}/send`, { method: 'POST' }),
+
+  system: () => request<SystemRoom>('/admin/system'),
+
+  topCalls: (week?: string) =>
+    request<{ week: string; calls: TopCallRow[] }>(
+      `/admin/top-calls${week === undefined ? '' : `?week=${week}`}`,
+    ),
+  proposeTopCalls: (week?: string) =>
+    request<{ proposed: number }>(
+      `/admin/top-calls/propose${week === undefined ? '' : `?week=${week}`}`,
+      { method: 'POST' },
+    ),
+  featureTopCall: (id: string, featured: boolean) =>
+    request<{ featured: boolean }>(`/admin/top-calls/${id}/feature`, {
+      method: 'POST',
+      body: JSON.stringify({ featured }),
+    }),
+
+  revealPii: (userId: string, fields: ('email' | 'phone')[], reason: string) =>
+    request<{ email?: string; phone?: string }>(`/admin/users/${userId}/reveal`, {
+      method: 'POST',
+      body: JSON.stringify({ fields, reason }),
+    }),
+  accessLog: (userId: string) =>
+    request<{ staffId: string; fields: string[]; reason: string; at: string }[]>(
+      `/admin/users/${userId}/access-log`,
+    ),
+};
