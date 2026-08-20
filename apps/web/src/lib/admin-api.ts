@@ -66,6 +66,27 @@ export interface QueueMarket {
     decision: string | null;
     createdAt: string;
   }[];
+  /**
+   * What the research layer makes of this market. Advisory only — it cannot
+   * settle anything, and the propose/confirm path is untouched by it.
+   *
+   * Null when nobody has built one, which the screen says out loud: "no dossier"
+   * and "a dossier that found nothing" are different facts.
+   */
+  dossier: MarketDossier | null;
+}
+
+/** A resolution dossier as the Resolution Centre shows it. */
+export interface MarketDossier {
+  proposedOutcomeId: string | null;
+  confidence: number;
+  recommendVoid: boolean;
+  reasoning: string;
+  evidence: { headline: string; url: string; sourceName: string; publishedAt: string }[];
+  conflicts: { factKey: string; claims: { sourceName: string; value: unknown }[] }[];
+  builtAt: string;
+  reviewedAt: string | null;
+  accepted: boolean | null;
 }
 
 export interface PendingApproval {
@@ -353,6 +374,15 @@ export interface StudioAnswers {
 export const admin = {
   dashboard: () => request<DashboardView>('/admin/dashboard'),
   resolutionQueue: () => request<QueueMarket[]>('/admin/resolution-queue'),
+  /** Assemble (or refresh) the dossier for one market. Advisory only. */
+  buildDossier: (marketId: string) =>
+    request<MarketDossier>(`/admin/markets/${marketId}/dossier`, { method: 'POST' }),
+  /** Record that a human read the dossier, and whether they agreed with it. */
+  recordDossierDecision: (marketId: string, accepted: boolean) =>
+    request<{ recorded: boolean }>(`/admin/markets/${marketId}/dossier/decision`, {
+      method: 'POST',
+      body: JSON.stringify({ accepted }),
+    }),
   approvals: () => request<PendingApproval[]>('/admin/approvals'),
   approve: (id: string, totpCode: string) =>
     request<{ state: string }>(`/admin/approvals/${id}/approve`, {

@@ -166,6 +166,8 @@ export default function ResolutionCentre() {
         </section>
       </div>
 
+      <DossierPanel market={market} onChanged={load} />
+
       {market.proposal !== null && (
         <FinalizeBar market={market} busy={busy} blocked={openDisputes.length > 0} onSubmit={act} />
       )}
@@ -355,5 +357,158 @@ function FinalizeBar({
         You cannot confirm a result you proposed — someone else does, or nobody is checking.
       </p>
     </div>
+  );
+}
+
+/**
+ * What the research layer makes of this market — advisory, and labelled as such.
+ *
+ * It sits *below* the propose/confirm controls on purpose. A dossier that
+ * appeared above them would read as the answer, with the human controls as
+ * confirmation of it; the order here says the opposite, which is the true
+ * relationship. Nothing on this panel can settle anything: the endpoints behind
+ * it read a row, write a row, and record that somebody looked.
+ *
+ * The two buttons are the accountability trail rather than a decision. A
+ * reading nobody ever contradicted is indistinguishable from a reading nobody
+ * read, and the engine only improves if the difference is recorded.
+ */
+function DossierPanel({ market, onChanged }: { market: QueueMarket; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const dossier = market.dossier;
+
+  async function run(work: () => Promise<unknown>): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      await work();
+      onChanged();
+    } catch (caught) {
+      setError((caught as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const named = market.outcomes.find((o) => o.id === dossier?.proposedOutcomeId);
+
+  return (
+    <section className="rounded-md border border-dashed border-border p-4">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <h3 className="text-sm font-semibold">Research dossier</h3>
+        <span className="rounded-sm bg-border px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-text-muted">
+          advisory
+        </span>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void run(() => admin.buildDossier(market.id))}
+          className="ml-auto rounded-sm border border-border px-2.5 py-1 text-xs font-semibold disabled:opacity-40"
+        >
+          {dossier === null ? 'Build' : 'Rebuild'}
+        </button>
+      </div>
+
+      {error !== null && <p className="mt-2 text-sm text-fall">{error}</p>}
+
+      {dossier === null ? (
+        <p className="mt-2 text-sm text-text-muted">
+          {/* "Nobody built one" and "one was built and found nothing" are
+              different facts, and only the second says anything about the
+              market. */}
+          No dossier has been built for this market. Building one reads what the pipeline has
+          collected; it cannot propose or settle.
+        </p>
+      ) : (
+        <div className="mt-2 space-y-2.5 text-sm">
+          <p>
+            {dossier.recommendVoid ? (
+              <span className="font-bold text-caution">Review for a void</span>
+            ) : (
+              <span className="font-bold">{named?.label ?? 'No outcome named'}</span>
+            )}{' '}
+            <span className="font-mono text-xs text-text-muted">
+              confidence {Math.round(dossier.confidence * 100)}% · built{' '}
+              {new Date(dossier.builtAt).toLocaleString('en-NG')}
+            </span>
+          </p>
+
+          <p className="text-text-muted">{dossier.reasoning}</p>
+
+          {dossier.conflicts.length > 0 && (
+            <ul className="space-y-1">
+              {dossier.conflicts.map((conflict) => (
+                <li
+                  key={conflict.factKey}
+                  className="rounded-md bg-caution-bg px-2 py-1.5 text-xs text-caution"
+                >
+                  {/* Flagged, never averaged. The criteria have to name which
+                      source settles it before anybody proposes. */}
+                  <b className="font-mono">{conflict.factKey}</b> —{' '}
+                  {conflict.claims
+                    .map((claim) => `${claim.sourceName} says ${String(claim.value)}`)
+                    .join('; ')}
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {dossier.evidence.length > 0 && (
+            <ul className="space-y-1 text-xs">
+              {dossier.evidence.slice(0, 8).map((item) => (
+                <li key={item.url}>
+                  <a
+                    href={item.url}
+                    target="_blank"
+                    rel="noreferrer noopener"
+                    className="inline-flex items-start gap-1 hover:underline"
+                  >
+                    {item.headline}
+                    <ExternalLink size={11} className="mt-0.5 shrink-0 opacity-60" />
+                  </a>{' '}
+                  <span className="text-text-muted">
+                    {item.sourceName} · {item.publishedAt.slice(0, 10)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          {dossier.reviewedAt === null ? (
+            <div className="flex flex-wrap items-center gap-2 border-t border-border pt-2.5">
+              <span className="text-xs text-text-muted">Did this reading match yours?</span>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void run(() => admin.recordDossierDecision(market.id, true))}
+                className="rounded-sm border border-border px-2.5 py-1 text-xs font-semibold disabled:opacity-40"
+              >
+                It matched
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void run(() => admin.recordDossierDecision(market.id, false))}
+                className="rounded-sm border border-border px-2.5 py-1 text-xs font-semibold disabled:opacity-40"
+              >
+                It was wrong
+              </button>
+            </div>
+          ) : (
+            <p className="border-t border-border pt-2.5 font-mono text-xs text-text-muted">
+              Marked {dossier.accepted === true ? 'matching' : 'wrong'} on{' '}
+              {new Date(dossier.reviewedAt).toLocaleString('en-NG')}.
+            </p>
+          )}
+
+          <p className="text-xs text-text-muted">
+            {/* Said on the screen, not only in the code. */}
+            Nothing here settles the market. That still takes one person proposing with a source
+            link and a second confirming, after the dispute window.
+          </p>
+        </div>
+      )}
+    </section>
   );
 }

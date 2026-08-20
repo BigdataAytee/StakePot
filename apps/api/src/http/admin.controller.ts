@@ -31,6 +31,7 @@ import { ApprovalError, ApprovalsService, type Actor } from '../approvals/approv
 import { APPROVAL_ACTIONS, APPROVAL_ACTION_TYPES } from '../approvals/approval-actions';
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { FundingWindowWorker } from '../community/funding-window.worker';
+import { DossierError, DossierService } from '../intel/dossier.service';
 import { Roles, RolesGuard, STAFF_ROLES } from '../auth/roles.guard';
 import { LedgerService } from '../ledger/ledger.service';
 import { AdminAuditService } from '../audit/admin-audit.service';
@@ -43,6 +44,11 @@ import { SupportError, SupportService } from '../support/support.service';
 import { TotpError } from '../auth/totp.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResolutionFlowError, ResolutionFlowService } from '../resolution/resolution-flow.service';
+
+/** Whether the staff member who read the dossier agreed with its reading. */
+export class DossierDecisionDto {
+  @IsBoolean() accepted!: boolean;
+}
 
 export class ProposeApprovalDto {
   @IsString() actionType!: string;
@@ -141,6 +147,7 @@ export class AdminController {
     private readonly solvency: SolvencyService,
     private readonly approvals: ApprovalsService,
     private readonly resolutions: ResolutionFlowService,
+    private readonly dossiers: DossierService,
     private readonly ledger: LedgerService,
     private readonly windows: FundingWindowWorker,
     private readonly support: SupportService,
@@ -476,8 +483,18 @@ export class AdminController {
       take: 50,
     });
 
+    // The dossiers for this page in one query. Read here rather than fetched
+    // per row by the screen: the Resolution Centre is a queue somebody works
+    // top to bottom, and a request per market is fifty requests to render one
+    // list.
+    const dossiers = await this.prisma.resolutionDossier.findMany({
+      where: { marketId: { in: markets.map((market) => market.id) } },
+    });
+    const dossierBy = new Map(dossiers.map((dossier) => [dossier.marketId, dossier]));
+
     return markets.map((market) => {
       const proposal = market.resolutions[0];
+      const dossier = dossierBy.get(market.id);
       return {
         id: market.id,
         question: market.question,
@@ -510,6 +527,23 @@ export class AdminController {
                 proposedAt: proposal.proposedAt.toISOString(),
                 finalizedAt: proposal.finalizedAt?.toISOString() ?? null,
               },
+        // Advisory only, and the screen says so. Nothing here can settle the
+        // market — the propose/confirm path below is still the only way, and it
+        // still takes two people.
+        dossier:
+          dossier === undefined
+            ? null
+            : {
+                proposedOutcomeId: dossier.proposedOutcomeId,
+                confidence: Number(dossier.confidence.toString()),
+                recommendVoid: dossier.recommendVoid,
+                reasoning: dossier.reasoning,
+                evidence: dossier.evidenceJson,
+                conflicts: dossier.conflictsJson,
+                builtAt: dossier.builtAt.toISOString(),
+                reviewedAt: dossier.reviewedAt?.toISOString() ?? null,
+                accepted: dossier.accepted,
+              },
         disputes: market.disputes.map((dispute) => ({
           id: dispute.id,
           userId: dispute.userId,
@@ -521,6 +555,66 @@ export class AdminController {
         })),
       };
     });
+  }
+
+  /**
+   * The dossier for one market: what the research layer makes of it.
+   *
+   * Advisory, and structurally incapable of being anything else. `build` writes
+   * one row in `resolution_dossiers` and nothing else — it cannot propose,
+   * cannot finalise, cannot move a naira. Settling still takes one staff member
+   * proposing with a source link and a second confirming, with the 48-hour
+   * window in between, exactly as before this existed.
+   *
+   * It was written weeks before it had an endpoint, which meant a dossier
+   * existed in the database and nowhere a person could look at it. A reading
+   * nobody can read is not a reading.
+   */
+  @Get('markets/:id/dossier')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async dossier(@Param('id') id: string) {
+    return this.dossiers.forMarket(id);
+  }
+
+  /** Assemble (or refresh) the dossier. Idempotent per market. */
+  @Post('markets/:id/dossier')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async buildDossier(@Param('id') id: string) {
+    try {
+      return await this.dossiers.build({ marketId: id });
+    } catch (error) {
+      if (error instanceof DossierError) throw new BadRequestException(error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Record that a human read it and whether they agreed.
+   *
+   * Not a settlement — the outcome is decided on the propose/confirm path
+   * below. This is the accountability trail: a reading nobody ever contradicted
+   * is indistinguishable from a reading nobody read.
+   */
+  @Post('markets/:id/dossier/decision')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async recordDossierDecision(
+    @Req() request: RequestWithUser,
+    @Param('id') id: string,
+    @Body() body: DossierDecisionDto,
+  ) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+
+    await this.dossiers.recordDecision({
+      marketId: id,
+      staffId: user.userId,
+      accepted: body.accepted,
+      ip: request.ip ?? 'unknown',
+    });
+    return { recorded: true };
   }
 
   @Post('markets/:id/resolution/propose')

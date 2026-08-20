@@ -227,4 +227,32 @@ describe.skipIf(!TEST_DATABASE_URL)('no automated path settles a market', () => 
     expect(flow).toMatch(/proposal\.proposedBy === params\.actor\.userId/);
     expect(flow).toMatch(/someone else confirms it/);
   });
+  it('the dossier endpoints on the admin controller cannot settle anything', () => {
+    // The service was proved safe long before it had an endpoint, and an
+    // endpoint is exactly where that safety gets quietly undone: the handler
+    // has the staff actor, the market id and the resolution flow already
+    // injected, so "while we are here, finalise it" is three lines away.
+    //
+    // Read as source rather than exercised, for the same reason the service
+    // test does: what must be asserted is that the path does not exist, and a
+    // behavioural test can only show that today's inputs did not take it.
+    const source = readFileSync(join(__dirname, '..', 'http', 'admin.controller.ts'), 'utf8');
+
+    const dossierHandlers = source
+      .split(/\n {2}(?=\/\*\*|@(?:Get|Post|Put|Patch|Delete)\()/)
+      .filter((block) => /this\.dossiers\./.test(block));
+
+    // Three: read it, build it, record that a human read it.
+    expect(dossierHandlers).toHaveLength(3);
+
+    for (const handler of dossierHandlers) {
+      // None of them reaches the settlement path or the money.
+      expect(handler).not.toMatch(/this\.resolutions\./);
+      expect(handler).not.toMatch(/\bledger\b/i);
+      expect(handler).not.toMatch(/\bfinali[sz]e\b/i);
+      expect(handler).not.toMatch(/\bpropose\b/);
+      // And none writes market state.
+      expect(handler).not.toMatch(/prisma\.market\.(update|updateMany)/);
+    }
+  });
 });
