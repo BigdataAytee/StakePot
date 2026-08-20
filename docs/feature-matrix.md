@@ -14,7 +14,8 @@ the code as it stands, grouped by the build-plan blocks A–J.
 Read the PARTIALs, not the counts. A block that is 80% implemented can still be
 unusable if the missing 20% is the thing a user reaches for.
 
-_Audited: 2026-08-19, branch `claude/plugin-ktnja5`. Paths are from the repo root._
+_Audited: 2026-08-19, re-audited 2026-08-20 for blocks K, M and S/T. Branch
+`claude/plugin-ktnja5`. Paths are from the repo root._
 
 _Updated after building blocks C, E, F, G, H, I and J. The five rows still
 short are named at the bottom; four of them are deferred by the spec itself
@@ -50,10 +51,20 @@ turned green when the redesign re-pointed `money` from gold. See the
 | H · Community threads (§2.15)                     | 10          | 0       | 2       |
 | I · Engagement (§2.8)                             | 7           | 0       | 0       |
 | J · Landing, routing, fintech (§7.6, §7.1, §2.16) | 13          | 1       | 0       |
+| K · Ticket-creation checklist                     | 5           | 0       | 0       |
+| M · Market intelligence layer                     | 5           | 1       | 0       |
+| S/T · Studio and ticket surface                   | 6           | 0       | 0       |
 
 The shape of it: the **money core and the engine are the strongest part** of this
-codebase — ledger, escrow, pricing, payouts, reconciliation and the four-eyes
-workflow are all real and tested. The **thinnest parts are the moments around a
+codebase — ledger, escrow, pricing, payouts and the four-eyes workflow are all
+real and tested.
+
+**One correction to that sentence, which used to include reconciliation.** §2.7's
+nightly reconciliation was written and tested and had no caller: nothing ever
+ran it, which is why the admin dashboard read `reconciliation never-run` from
+the day it was built. It runs nightly now. The lesson generalised into
+`scripts/check-wiring.mjs`, which fails the build when nothing calls a service
+— tests prove a unit works and say nothing about whether it is reachable. The **thinnest parts are the moments around a
 trade**: what a market looks like while it is still funding, what it looks like
 once it has resolved, and what the trade sheet tells you about your own limits.
 
@@ -301,6 +312,68 @@ behind._
 
 ---
 
+## Block K · The ticket-creation checklist as operating law (`docs/ticket-creation-checklist.md`)
+
+| #   | Feature                                                                                           | Status      | Where                                                               |
+| --- | ------------------------------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------- |
+| K1  | All 49 rules encoded once, shared by AI, wizard and community                                     | IMPLEMENTED | `packages/rules/src/registry.ts`, `validators.ts`                   |
+| K2  | CI fails if a documented rule has no validator                                                    | IMPLEMENTED | `packages/rules/src/__tests__/checklist-sync.test.ts`               |
+| K3  | Parts 1–3 and 6 in the generation prompt verbatim; self-rejection logged and shown                | IMPLEMENTED | `packages/rules/src/prompt.ts`, Studio Suggestions tab              |
+| K4  | Community creation identical but stricter — templates or co-pilot only, attestation, review queue | IMPLEMENTED | `question-engine.service.ts` (`checkOrigin`), `template-library.ts` |
+| K5  | Part 5 monitoring on a sweep; post-mortems carry the flags that fired                             | IMPLEMENTED | `market/health.service.ts`, `creator/autopsy.ts`                    |
+
+Two things worth naming. The wizard's **pre-publish review screen** runs the
+whole checklist with the two judgement prompts and the conflict check as
+explicit confirmations, and `publish()` refuses on `report.blocked` regardless
+of what the screen showed — the screen is a courtesy, the service is the rule.
+And the create form **collected the influence attestation and dropped it**, so
+rule 16 failed every submission made through the real UI while every
+service-level test passed by supplying it directly; it is a required DTO field
+now.
+
+---
+
+## Block M · Market intelligence layer
+
+| #   | Feature                                                      | Status      | Where                                                                                                                                              |
+| --- | ------------------------------------------------------------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M1  | Tiered source registry, bulk import, trust, kill switches    | IMPLEMENTED | `intel/source-registry.service.ts`, `POST /admin/studio/sources/import`                                                                            |
+| M2  | Continuous research pipeline — cluster, link, flag conflicts | PARTIAL     | `intel/research.service.ts`; runs on a five-minute sweep, but **no concrete fetcher exists**, so it reads nothing. See `docs/research-sources.md`. |
+| M3  | Evidence-backed AI drafts                                    | IMPLEMENTED | `intel/briefing.service.ts`, Studio Suggestions tab                                                                                                |
+| M4  | Streaming context on the live ticket                         | IMPLEMENTED | `markets.controller.ts` `:id/context`, `market/context-panel.tsx`                                                                                  |
+| M5  | Resolution dossiers — AI proposes, humans decide             | IMPLEMENTED | `intel/dossier.service.ts`, Resolution Centre panel                                                                                                |
+| M6  | Crawl health, guardrails, cost controls                      | IMPLEMENTED | `intel/crawl-health.service.ts`, Studio Research tab                                                                                               |
+
+M2 is the honest PARTIAL of this block and the only one. Everything above and
+below it is built and reachable; the pipeline has a heartbeat and screens, and
+nothing to read until a fetcher is written. The Research tab says so in a
+banner rather than rendering an empty list that looks like a quiet news week.
+
+**The safety property is structural, not a promise.** No automated path can
+settle a market: `no-automated-settlement.integration.test.ts` asserts the
+dossier service cannot reach the resolution flow, the ledger or market state,
+and asserts the same of the three dossier endpoints — verified to fail when a
+call to the resolution flow is added to one.
+
+---
+
+## Block S/T · Market Studio and the ticket surface
+
+| #   | Feature                                                            | Status      | Where                                                                 |
+| --- | ------------------------------------------------------------------ | ----------- | --------------------------------------------------------------------- |
+| S1  | Studio shell, Manage tab with Part 5 flags                         | IMPLEMENTED | `app/admin/markets/page.tsx`                                          |
+| S2  | Create wizard with the live checklist and pre-publish review       | IMPLEMENTED | `create-tab.tsx`, `market/studio.service.ts`                          |
+| S3  | Library: template curation, recurring markets; duplicate detection | IMPLEMENTED | `library-tab.tsx`, `studio.service.ts` (`repeatable`, `nextInSeries`) |
+| T1  | Ticket chart: multi-outcome lines, live dot, scrub, annotations    | IMPLEMENTED | `components/market/`                                                  |
+| T2  | Ticket information header                                          | IMPLEMENTED | `components/market/`                                                  |
+| T3  | Context panel: rules, source watch, news, key stats, activity      | IMPLEMENTED | `market/context-panel.tsx`                                            |
+
+A repeat opens as a **draft**, never as a market, and the full checklist runs on
+it — a repeat is exactly the market that gets waved through because the last one
+was fine.
+
+---
+
 ## What is left
 
 All five of the original "fix first" items are built (A1, A2, A3, dispute
@@ -336,6 +409,16 @@ recorded in the architecture). What remains:
    service is built, tested and wired into the app, with sticky percentage
    rollout that only ever adds people as a canary ramps. Making the deploy
    workflow itself consult it is a CI change rather than an application one.
+
+6. **`MarketService` is dead code kept alive by a test.** Nothing in production
+   injects it; `trade.integration.test.ts` uses `create()` for fixtures. It is
+   allowlisted in `scripts/check-wiring.mjs` marked DEBT. Clearing it means
+   moving that suite's fixtures onto the paths production actually uses.
+
+7. **The research pipeline reads nothing.** No concrete fetcher exists — see M2
+   above and `docs/research-sources.md`, which sets out what has to be written
+   and in what order. This is the single largest gap in the intelligence layer
+   and everything else in it is waiting on it.
 
 **Not a gap but worth a decision:** the admin console is light, following the
 design reference. §6.10 originally specified an ink-green dark theme, and the
