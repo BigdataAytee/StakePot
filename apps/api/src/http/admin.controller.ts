@@ -15,6 +15,7 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsObject,
   IsOptional,
   IsString,
   MaxLength,
@@ -62,6 +63,16 @@ export class OpenDraftDto {
   /** Liquidity constant L (§2.3). ~50× the typical stake for ~1-point moves. */
   @IsOptional() @IsString() liquidityParam?: string;
   @IsOptional() @IsString() seedPerOutcome?: string;
+  /**
+   * The review screen's answers to the checklist rules only a person can
+   * settle — the front-page test (18), the stranger test (25) and the conflict
+   * check (R3). Required in practice: `openFromDraft` re-runs the checklist and
+   * refuses while any of them is unanswered, so a client that omits them gets a
+   * refusal naming the questions rather than a silent publish.
+   */
+  @IsOptional() @IsObject() confirmations?: Record<string, boolean>;
+  /** Rules 5 and 16, attested by the staff member opening the market. */
+  @IsOptional() @IsBoolean() attestedNoInfluence?: boolean;
 }
 
 export class RejectDraftDto {
@@ -632,6 +643,10 @@ export class AdminController {
         ip: actor.ip,
         ...(body.liquidityParam === undefined ? {} : { liquidityParam: body.liquidityParam }),
         ...(body.seedPerOutcome === undefined ? {} : { seedPerOutcome: body.seedPerOutcome }),
+        ...(body.confirmations === undefined ? {} : { confirmations: body.confirmations }),
+        ...(body.attestedNoInfluence === undefined
+          ? {}
+          : { attestedNoInfluence: body.attestedNoInfluence }),
       }),
     );
   }

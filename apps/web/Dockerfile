@@ -12,6 +12,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 COPY packages/engine/package.json packages/engine/
+COPY packages/rules/package.json packages/rules/
 COPY packages/tokens/package.json packages/tokens/
 RUN pnpm install --frozen-lockfile
 
@@ -43,10 +44,17 @@ COPY tsconfig.base.json ./
 # "Football Prophet" with their markets under Culture), and the local build
 # kept working because a workspace symlink points at real files on disk.
 # Only the container, with its curated COPYs, showed the gap.
+#
+# `packages/rules` joined them and repeated the lesson exactly: the manifest
+# was copied, pnpm linked it, install succeeded, and "images build" went red on
+# a package the whole monorepo type-checks against. Every workspace package
+# needs both COPYs and a build step, not one of the three.
 COPY packages/engine packages/engine
+COPY packages/rules packages/rules
 COPY packages/tokens packages/tokens
 COPY apps/web apps/web
 RUN pnpm --filter @stakeam/engine build \
+ && pnpm --filter @stakeam/rules build \
  && pnpm --filter @stakeam/tokens build \
  && pnpm --filter @stakeam/web build
 
