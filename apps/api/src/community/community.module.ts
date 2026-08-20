@@ -14,6 +14,7 @@ import { CommunityService } from './community.service';
 import { FundingWindowWorker } from './funding-window.worker';
 import { CommunityQuestionModule } from './question-engine.module';
 import { SeedService } from './seed.service';
+import { TemplateLibraryService } from './template-library';
 import { MarketVoidService } from './void.service';
 
 @Module({
@@ -30,13 +31,20 @@ import { MarketVoidService } from './void.service';
     SupportModule,
     WalletModule,
   ],
-  providers: [CommunityService, FundingWindowWorker, MarketVoidService, SeedService],
+  providers: [
+    CommunityService,
+    FundingWindowWorker,
+    MarketVoidService,
+    SeedService,
+    TemplateLibraryService,
+  ],
   exports: [
     CommunityQuestionModule,
     CommunityService,
     FundingWindowWorker,
     MarketVoidService,
     SeedService,
+    TemplateLibraryService,
   ],
 })
 export class CommunityModule {}

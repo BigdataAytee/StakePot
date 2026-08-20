@@ -34,10 +34,13 @@ import { FundingWindowWorker } from '../community/funding-window.worker';
 import { blockersOf } from '../community/market-template';
 import { voidRisks } from '../community/void-risk';
 import { SeedError, SeedService } from '../community/seed.service';
+import { TemplateLibraryService } from '../community/template-library';
 import { ResolutionFlowError, ResolutionFlowService } from '../resolution/resolution-flow.service';
 import {
   QuestionEngineService,
   QuestionEngineUnavailableError,
+  SubmissionOriginError,
+  type SubmissionOrigin,
 } from '../community/question-engine.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -99,6 +102,21 @@ export class DisputeDto {
   @IsString() @MinLength(20) text!: string;
 }
 
+/**
+ * Which of the two doors a submission came through (checklist Part 4).
+ *
+ * Exactly one of these is required, and the service verifies whichever is
+ * given — a template that exists and is active, or a co-pilot run belonging to
+ * this creator that has not already been spent. Community creation is the same
+ * checklist as the Studio and stricter in this one way: nobody hand-writes a
+ * market from nothing.
+ */
+export class OriginDto {
+  @IsIn(['template', 'copilot']) kind!: 'template' | 'copilot';
+  @IsOptional() @IsString() templateId?: string;
+  @IsOptional() @IsString() runId?: string;
+}
+
 export class CreateCommunityMarketDto {
   @IsString() @MinLength(15) question!: string;
   @IsArray() @ValidateNested({ each: true }) @Type(() => OutcomeDto) outcomes!: OutcomeDto[];
@@ -109,6 +127,18 @@ export class CreateCommunityMarketDto {
   @IsISO8601() voidDate!: string;
   /** §2.4: the creator chooses the activation path at creation. */
   @IsOptional() @IsIn(['organic', 'seeded']) activationPath?: 'organic' | 'seeded';
+  /**
+   * Rules 5 and 16. The creator's own attestation that they cannot influence
+   * the result and hold no inside knowledge.
+   *
+   * Required in the DTO rather than defaulted, and that is deliberate: this
+   * used to be collected by the create form and then silently dropped on the
+   * way to the endpoint, so rule 16 failed every submission that came through
+   * the real UI while every service-level test passed. A field the client must
+   * send cannot be forgotten quietly.
+   */
+  @IsBoolean() attestedNoInfluence!: boolean;
+  @ValidateNested() @Type(() => OriginDto) origin!: OriginDto;
 }
 
 @Controller('community')
@@ -116,12 +146,26 @@ export class CommunityController {
   constructor(
     private readonly community: CommunityService,
     private readonly seeds: SeedService,
+    private readonly templates: TemplateLibraryService,
     private readonly resolutions: ResolutionFlowService,
     private readonly engine: QuestionEngineService,
     private readonly windows: FundingWindowWorker,
     private readonly config: PlatformConfigService,
     private readonly prisma: PrismaService,
   ) {}
+
+  /**
+   * The starter templates the create page offers (§2.14a).
+   *
+   * Public and unauthenticated: somebody deciding whether to sign up should be
+   * able to see what a market looks like first. Served from the same table the
+   * origin check reads, so the page cannot offer a template a submission would
+   * then be refused for citing.
+   */
+  @Get('templates')
+  async templateLibrary() {
+    return this.templates.list();
+  }
 
   /**
    * Submit a community market (§2.5, §2.9).
@@ -148,6 +192,11 @@ export class CommunityController {
       edgeCases: {},
     };
 
+    const origin: SubmissionOrigin =
+      body.origin.kind === 'template'
+        ? { kind: 'template', templateId: body.origin.templateId ?? '' }
+        : { kind: 'copilot', runId: body.origin.runId ?? '' };
+
     const priorMarkets = await this.prisma.market.count({ where: { creatorId: user.userId } });
 
     let screened;
@@ -157,6 +206,8 @@ export class CommunityController {
         creatorId: user.userId,
         isFirstMarket: priorMarkets === 0,
         activationPath: body.activationPath ?? 'organic',
+        attestedNoInfluence: body.attestedNoInfluence,
+        origin,
       });
     } catch (error) {
       // Without a key the engine cannot screen, and §2.9 is explicit that
@@ -166,6 +217,12 @@ export class CommunityController {
         throw new BadRequestException(
           'Market review is unavailable right now. Nothing was charged — try again shortly.',
         );
+      }
+      // A missing or spent origin is the creator's problem to fix, not a
+      // server fault, and the message already says which of the two doors to
+      // use — so it goes back as-is rather than as "Internal server error".
+      if (error instanceof SubmissionOriginError) {
+        throw new BadRequestException(error.message);
       }
       throw error;
     }
@@ -200,10 +257,17 @@ export class CommunityController {
   @Post('copilot')
   @UseGuards(JwtGuard)
   async copilot(@Req() request: RequestWithUser, @Body() body: CopilotDto) {
-    if (request.user === undefined) throw new BadRequestException('no authenticated user');
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
 
-    const result = await this.engineCall(() => this.engine.copilot({ text: body.text }));
+    const result = await this.engineCall(() =>
+      this.engine.copilot({ text: body.text, creatorId: user.userId }),
+    );
     return {
+      // The receipt the submission has to cite. Without it the wizard's
+      // co-pilot path would produce a template nobody can prove came from the
+      // co-pilot, which is the rule with extra steps rather than the rule.
+      runId: result.runId,
       template: result.template,
       estimates: result.estimates,
       balanced: result.balanced,

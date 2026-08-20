@@ -314,6 +314,7 @@ model User {
   following            Follower[]               @relation("Follows")
   followers            Follower[]               @relation("FollowedBy")
   autopsies            MarketAutopsy[]
+  copilotRuns          CopilotRun[]
   comments             Comment[]
   reputation           Reputation[]
   squadsOwned          Squad[]
@@ -1790,4 +1791,38 @@ model MarketHealthFlag {
   @@unique([marketId, rule])
   @@index([marketId, clearedAt])
   @@map("market_health_flags")
+}
+
+/// One run of the §2.14a co-pilot: what a creator typed, and what it made of it.
+///
+/// The co-pilot used to file nothing, on the sound reasoning that somebody
+/// still thinking should not be filling a review queue. That stops being true
+/// the moment the co-pilot becomes one of only two doors into community
+/// creation (checklist Part 4): "the AI structured this" has to be a fact the
+/// service can check, not a claim the client makes about itself.
+///
+/// So the run is recorded and its id is what a submission cites. What the
+/// creator typed is kept beside what the model returned because that pair is
+/// the most useful thing a reviewer can see — a question that drifted a long
+/// way from the sentence behind it is worth a second look, and neither half
+/// says so on its own.
+model CopilotRun {
+  id        String @id @default(cuid())
+  creatorId String
+  /// The creator's own words. Their submission, not somebody else's data.
+  inputText String
+  /// The template the model returned, before any editing the creator did.
+  proposalJson Json
+
+  /// Set when a submission cites this run. One run, one submission: a single
+  /// co-pilot call must not become a season ticket for hand-written markets.
+  usedAt      DateTime?
+  usedByDraft String?
+
+  createdAt DateTime @default(now())
+
+  creator User @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([creatorId, createdAt])
+  @@map("copilot_runs")
 }

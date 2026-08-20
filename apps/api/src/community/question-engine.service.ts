@@ -48,7 +48,33 @@ export interface GeneratedDraft {
   readonly refusals: readonly string[];
 }
 
+/**
+ * How a community submission got here.
+ *
+ * Part 4 of the checklist: community creation runs the same rules as the
+ * Studio and is stricter in one way — a creator picks a template or works
+ * through the co-pilot, and cannot hand-write a market from nothing.
+ *
+ * The reason is not that free text produces bad questions; it is that free
+ * text produces questions nobody has *shaped*. A template arrives with its
+ * criteria already written by somebody who knew what settles it, and a
+ * co-pilot run arrives having been through the checklist once already. The
+ * creator edits either freely afterwards — every edit is re-screened — but
+ * the starting point is one of the two.
+ */
+/** A submission that did not come through a template or the co-pilot. */
+export class SubmissionOriginError extends Error {}
+
+export type SubmissionOrigin =
+  | { readonly kind: 'template'; readonly templateId: string }
+  | { readonly kind: 'copilot'; readonly runId: string };
+
 export interface CopilotResult {
+  /**
+   * The receipt. A submission cites it to prove the co-pilot shaped this, and
+   * without one — or without a template id — nothing may be submitted at all.
+   */
+  readonly runId: string;
   readonly template: MarketTemplate;
   readonly estimates: readonly number[];
   readonly balanced: boolean;
@@ -110,6 +136,8 @@ export class QuestionEngineService {
     activationPath?: 'organic' | 'seeded';
     /** Rules 5 and 16, attested by the creator on the way in. */
     attestedNoInfluence?: boolean;
+    /** Which of the two doors this came through — see `checkOrigin`. */
+    origin: SubmissionOrigin;
     now?: Date;
   }): Promise<{
     draftId: string;
@@ -118,6 +146,10 @@ export class QuestionEngineService {
     assessment: Assessment | null;
   }> {
     const now = params.now ?? new Date();
+
+    // Before anything else, and before any model call is paid for: a community
+    // submission has to have come from a template or from the co-pilot.
+    await this.checkOrigin(params.origin, params.creatorId);
     const report = screenTemplate(
       params.template,
       { now, attestedNoInfluence: params.attestedNoInfluence ?? false },
@@ -136,6 +168,7 @@ export class QuestionEngineService {
     // where they get asked.
     if (report.failures.length > 0) {
       const draft = await this.fileCommunityDraft(params, report, null, 'rejected');
+      await this.spendOrigin(params.origin, draft.id);
       return { draftId: draft.id, state: 'rejected', report, assessment: null };
     }
 
@@ -147,6 +180,7 @@ export class QuestionEngineService {
         : 'suggested';
 
     const draft = await this.fileCommunityDraft(params, report, { ...assessment, balanced }, state);
+    await this.spendOrigin(params.origin, draft.id);
     return { draftId: draft.id, state, report, assessment };
   }
 
@@ -342,7 +376,7 @@ export class QuestionEngineService {
    * estimate the wizard's meter shows. It files nothing — this is the creator
    * still typing, and a draft row per keystroke would be noise in the queue.
    */
-  async copilot(params: { text: string; now?: Date }): Promise<CopilotResult> {
+  async copilot(params: { text: string; creatorId: string; now?: Date }): Promise<CopilotResult> {
     const now = params.now ?? new Date();
     if (params.text.trim().length < 10) {
       throw new Error('say a bit more about what you want people to call');
@@ -351,7 +385,22 @@ export class QuestionEngineService {
     const proposal = await this.ask().restructure({ text: params.text.trim(), now });
     const template = templateOf(proposal);
 
+    // Recorded, where it used to be discarded. The reasoning for discarding it
+    // was good — somebody still thinking should not be filling a review queue
+    // — and it stopped holding the moment the co-pilot became one of only two
+    // doors into community creation: "the AI structured this" has to be a fact
+    // the service can check rather than a claim the client makes about itself.
+    // The run is not a draft and never reaches the queue; it is a receipt.
+    const run = await this.prisma.copilotRun.create({
+      data: {
+        creatorId: params.creatorId,
+        inputText: params.text.trim(),
+        proposalJson: JSON.parse(JSON.stringify(template)) as Prisma.InputJsonValue,
+      },
+    });
+
     return {
+      runId: run.id,
       template,
       estimates: proposal.balanceEstimates,
       balanced: isBalanced(proposal.balanceEstimates, await this.bounds()),
@@ -369,11 +418,18 @@ export class QuestionEngineService {
     };
   }
 
-  /** Re-check an edited template: the meter has to move while they type. */
+  /**
+   * Re-check an edited template: the meter has to move while they type.
+   *
+   * No `runId` in the return, unlike the co-pilot's. A re-check is the creator
+   * editing something a template or a co-pilot run already shaped, so it issues
+   * no new receipt — and reusing the co-pilot's whole return type here would
+   * have made it look like it did.
+   */
   async checkBalance(params: {
     template: MarketTemplate;
     now?: Date;
-  }): Promise<Omit<CopilotResult, 'template'>> {
+  }): Promise<Omit<CopilotResult, 'template' | 'runId'>> {
     const now = params.now ?? new Date();
     const assessment = await this.ask().assess(params.template);
 
@@ -562,6 +618,61 @@ export class QuestionEngineService {
   }
 
   // ---------------------------------------------------------------- internals
+
+  /**
+   * Prove the submission came through one of the two doors.
+   *
+   * Checked at the service rather than the wizard, and this is the whole point
+   * of the rule existing in code: a client that skipped the template picker and
+   * posted straight to the endpoint has skipped the shaping, and a UI-only rule
+   * would let it. The error names the two doors, because "refused" without a
+   * way forward is how a creator concludes the platform is broken.
+   */
+  private async checkOrigin(origin: SubmissionOrigin, creatorId: string): Promise<void> {
+    if (origin.kind === 'template') {
+      const template = await this.prisma.ticketTemplate.findUnique({
+        where: { id: origin.templateId },
+      });
+      if (template === null || !template.active) {
+        throw new SubmissionOriginError(
+          'That template is no longer available. Pick one from the library, or describe the market and let the co-pilot structure it.',
+        );
+      }
+      return;
+    }
+
+    const run = await this.prisma.copilotRun.findUnique({ where: { id: origin.runId } });
+    if (run === null || run.creatorId !== creatorId) {
+      throw new SubmissionOriginError(
+        'Start from a template, or describe the market and let the co-pilot structure it — a market cannot be submitted from scratch.',
+      );
+    }
+    if (run.usedAt !== null) {
+      // One run, one submission. Otherwise a single co-pilot call becomes a
+      // season ticket for hand-written markets, which is the rule with extra
+      // steps rather than the rule.
+      throw new SubmissionOriginError(
+        'That co-pilot draft has already been submitted. Run it again for a new market.',
+      );
+    }
+  }
+
+  /**
+   * Burn a co-pilot run once it has produced a submission.
+   *
+   * After the draft is filed, not before: a submission that the screen refuses
+   * has still consumed the run, because the refusal is about the question
+   * rather than about the run, and re-posting the same rejected market on the
+   * same receipt is exactly what the one-use rule is for. Templates are a
+   * library and are not consumed.
+   */
+  private async spendOrigin(origin: SubmissionOrigin, draftId: string): Promise<void> {
+    if (origin.kind !== 'copilot') return;
+    await this.prisma.copilotRun.update({
+      where: { id: origin.runId },
+      data: { usedAt: new Date(), usedByDraft: draftId },
+    });
+  }
 
   private async bounds() {
     return {

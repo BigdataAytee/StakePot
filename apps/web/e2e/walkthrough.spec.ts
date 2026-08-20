@@ -409,6 +409,17 @@ test.describe('the walkthrough', () => {
     await expect(page.getByRole('heading', { name: 'Talk your own' })).toBeVisible({
       timeout: 15_000,
     });
+
+    // The starter templates come from the API now, not from the bundle —
+    // checklist Part 4 makes "you started from a template" something the server
+    // verifies, and a list only the client held could not be checked against.
+    // So the assertion is that they actually arrive: a create page with no
+    // starting points is a blank form, which is the reason most people never
+    // make a market.
+    await expect(page.getByRole('button', { name: /Naira threshold/ })).toBeVisible({
+      timeout: 15_000,
+    });
+
     // The co-pilot and the reviewer both need the question engine, which has no
     // key in this environment — so the wizard is walked as far as it goes here,
     // and the create → fund → resolve arc for a *community* market is proven at

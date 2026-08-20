@@ -10,11 +10,16 @@ import { PlatformConfigService } from '../platform-config/platform-config.servic
 import type { PrismaService } from '../prisma/prisma.service';
 import { resetDatabase } from '../testing/reset';
 import { WalletService } from '../wallet/wallet.service';
-import { QuestionEngineService } from './question-engine.service';
+import {
+  QuestionEngineService,
+  SubmissionOriginError,
+  type SubmissionOrigin,
+} from './question-engine.service';
 import { SeedService } from './seed.service';
+import { TemplateLibraryService } from './template-library';
 import { MarketVoidService } from './void.service';
 import type { MarketTemplate } from './market-template';
-import { approvalAnswers } from '../testing/templates';
+import { approvalAnswers, compliantTemplate } from '../testing/templates';
 import type { Assessment, GenerationRequest, Proposal, QuestionModel } from './question-model';
 import { CreatorService } from '../creator/creator.service';
 import { EmailSender } from '../notifications/email.sender';
@@ -156,6 +161,131 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
       new BriefingService(prisma),
       model,
     );
+
+  /** A model that likes what it is shown — the screen path needs one. */
+  const goodAssessment = (): Assessment => ({
+    balanceEstimates: [0.55, 0.45],
+    engagementScore: 0.7,
+    influenceable: false,
+    sourceSettles: true,
+    duplicateOfLiveMarket: false,
+    concerns: [],
+    verdict: 'looks_good',
+    reason: 'A published figure on a known date, with the argument still live.',
+  });
+
+  // ------------------------------------ checklist Part 4: the two doors in
+
+  describe('community submissions come through a template or the co-pilot', () => {
+    async function creator(email: string): Promise<string> {
+      const user = await prisma.user.create({
+        data: { email, pwHash: 'x', role: 'user', tier: 1 },
+      });
+      return user.id;
+    }
+
+    const submission = (creatorId: string, origin: SubmissionOrigin) => ({
+      template: compliantTemplate(),
+      creatorId,
+      isFirstMarket: true,
+      attestedNoInfluence: true,
+      origin,
+    });
+
+    it('refuses a market hand-written straight at the endpoint', async () => {
+      const engine = engineWith(new StubModel([], goodAssessment()));
+      const id = await creator('handwritten@example.ng');
+
+      // A client that skipped the template picker and posted the JSON itself.
+      // This is the whole reason the rule lives in the service: a wizard-only
+      // rule would wave it through, and the market would be one nobody shaped.
+      await expect(
+        engine.screen(submission(id, { kind: 'copilot', runId: 'made-up' })),
+      ).rejects.toBeInstanceOf(SubmissionOriginError);
+      await expect(
+        engine.screen(submission(id, { kind: 'template', templateId: 'made-up' })),
+      ).rejects.toBeInstanceOf(SubmissionOriginError);
+
+      // And nothing was filed, so a refused origin cannot fill the queue.
+      expect(await prisma.marketDraft.count()).toBe(0);
+    });
+
+    it('accepts a submission that started from a template in the library', async () => {
+      await new TemplateLibraryService(prisma).sync();
+      const engine = engineWith(new StubModel([], goodAssessment()));
+      const id = await creator('templated@example.ng');
+
+      const screened = await engine.screen(
+        submission(id, { kind: 'template', templateId: 'fx-threshold' }),
+      );
+      expect(screened.state).toBe('suggested');
+
+      // A template is a library, not a ticket: picking the same starting point
+      // twice is normal and must not be rationed.
+      const again = await engine.screen(
+        submission(id, { kind: 'template', templateId: 'fx-threshold' }),
+      );
+      expect(again.state).toBe('suggested');
+    });
+
+    it("will not let one creator spend another creator's co-pilot run", async () => {
+      const engine = engineWith(new StubModel([], goodAssessment()));
+      const mine = await creator('mine@example.ng');
+      const theirs = await creator('theirs@example.ng');
+      const run = await prisma.copilotRun.create({
+        data: { creatorId: theirs, inputText: 'who go win', proposalJson: {} },
+      });
+
+      await expect(
+        engine.screen(submission(mine, { kind: 'copilot', runId: run.id })),
+      ).rejects.toBeInstanceOf(SubmissionOriginError);
+    });
+
+    it('spends a co-pilot run once, even when the submission is refused', async () => {
+      const engine = engineWith(new StubModel([], goodAssessment()));
+      const id = await creator('spender@example.ng');
+      const run = await prisma.copilotRun.create({
+        data: { creatorId: id, inputText: 'who go win', proposalJson: {} },
+      });
+
+      // A market the checklist refuses. The run is still spent: the refusal is
+      // about the question, and re-posting the same rejected market on the same
+      // receipt is exactly what the one-use rule is for.
+      const refused = await engine.screen({
+        ...submission(id, { kind: 'copilot', runId: run.id }),
+        template: compliantTemplate({ sourceName: 'widely reported' }),
+      });
+      expect(refused.state).toBe('rejected');
+
+      const spent = await prisma.copilotRun.findUniqueOrThrow({ where: { id: run.id } });
+      expect(spent.usedAt).not.toBeNull();
+      expect(spent.usedByDraft).toBe(refused.draftId);
+
+      await expect(
+        engine.screen(submission(id, { kind: 'copilot', runId: run.id })),
+      ).rejects.toThrow(/already been submitted/);
+    });
+
+    it('fails rule 16 when the creator has not attested (and passes when they have)', async () => {
+      await new TemplateLibraryService(prisma).sync();
+      const engine = engineWith(new StubModel([], goodAssessment()));
+      const id = await creator('attesting@example.ng');
+      const origin = { kind: 'template', templateId: 'fx-threshold' } as const;
+
+      // The create form collected this attestation and dropped it on the way to
+      // the endpoint, so rule 16 failed every submission made through the real
+      // UI while every service-level test passed by passing it directly.
+      const without = await engine.screen({
+        ...submission(id, origin),
+        attestedNoInfluence: false,
+      });
+      expect(without.state).toBe('rejected');
+      expect(without.report.findings.find((finding) => finding.rule === '16')?.status).toBe('fail');
+
+      const with_ = await engine.screen(submission(id, origin));
+      expect(with_.report.findings.find((finding) => finding.rule === '16')?.status).toBe('pass');
+    });
+  });
 
   it('files a good proposal as a scored suggestion', async () => {
     const engine = engineWith(new StubModel([goodProposal()]));
@@ -363,9 +493,9 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
     await expect(engine.generate({ slots: ['economic_banker'] })).rejects.toThrow(
       /ANTHROPIC_API_KEY/,
     );
-    await expect(engine.copilot({ text: 'who go win the election for my LGA' })).rejects.toThrow(
-      /ANTHROPIC_API_KEY/,
-    );
+    await expect(
+      engine.copilot({ text: 'who go win the election for my LGA', creatorId: 'nobody' }),
+    ).rejects.toThrow(/ANTHROPIC_API_KEY/);
   });
 
   it('turns what a creator typed into a full template (§2.14a)', async () => {
@@ -395,8 +525,23 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
       ]),
     );
 
-    const result = await engine.copilot({ text: 'who go win the Surulere LGA chairmanship' });
+    const creator = await prisma.user.create({
+      data: { email: `copilot-${Date.now()}@example.ng`, pwHash: 'x', role: 'user', tier: 1 },
+    });
+    const result = await engine.copilot({
+      text: 'who go win the Surulere LGA chairmanship',
+      creatorId: creator.id,
+    });
     expect(result.template.outcomes).toHaveLength(2);
+
+    // The receipt. Without it the co-pilot path would produce a template
+    // nobody can prove came from the co-pilot, and Part 4's "templates or the
+    // co-pilot, nothing hand-written" would be a claim the client makes about
+    // itself.
+    const run = await prisma.copilotRun.findUniqueOrThrow({ where: { id: result.runId } });
+    expect(run.creatorId).toBe(creator.id);
+    expect(run.inputText).toBe('who go win the Surulere LGA chairmanship');
+    expect(run.usedAt).toBeNull();
     expect(result.template.otherLabel).toBe('Any other candidate');
     expect(result.balanced).toBe(true);
     // The co-pilot's output is held to the same checklist a staff draft is, so

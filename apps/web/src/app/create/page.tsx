@@ -13,7 +13,7 @@ import { BalanceMeter } from '@/components/balance-meter';
 import { RuleReportPanel } from '@/components/rules/rule-report';
 import { PageShell, PageTitle } from '@/components/market/page-shell';
 import { API_URL } from '@/lib/api';
-import { TICKET_TEMPLATES, type TicketTemplate } from '@/lib/templates';
+import { fetchTemplates, type TicketTemplate } from '@/lib/templates';
 
 /**
  * Community market creation (§2.5, §2.14a).
@@ -48,6 +48,13 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 interface CopilotResponse {
+  /**
+   * The co-pilot's receipt, cited by the submission.
+   *
+   * Absent on `balance-check`, which re-scores an edit rather than issuing a
+   * new one — so the receipt from the original run is the one that travels.
+   */
+  runId?: string;
   template: {
     question: string;
     outcomes: { label: string; criteria: string }[];
@@ -102,6 +109,24 @@ export default function CreatePage() {
   // meeting it for the first time as a refusal at submit.
   const [report, setReport] = useState<RuleReport | null>(null);
   const [conflictAttested, setConflictAttested] = useState(false);
+  /**
+   * Which of the two doors this draft came through (checklist Part 4).
+   *
+   * Community creation runs the same checklist as the Studio and is stricter
+   * in one way: a creator starts from a template or from the co-pilot, and
+   * cannot hand-write a market from nothing. The API verifies whichever is
+   * cited, so this is a receipt to carry rather than the rule itself.
+   */
+  const [origin, setOrigin] = useState<
+    { kind: 'template'; templateId: string } | { kind: 'copilot'; runId: string } | null
+  >(null);
+  const [library, setLibrary] = useState<TicketTemplate[]>([]);
+
+  useEffect(() => {
+    void fetchTemplates()
+      .then(setLibrary)
+      .catch(() => setLibrary([]));
+  }, []);
 
   // §2.14b's feed. Public, so it renders before anybody signs in — the whole
   // point is to show a would-be creator that there is demand waiting.
@@ -171,6 +196,7 @@ export default function CreatePage() {
       setRationale(body.rationale);
       setReport(body.report);
       setTemplate(null);
+      if (body.runId !== undefined) setOrigin({ kind: 'copilot', runId: body.runId });
     } catch (caught) {
       setError((caught as Error).message);
     } finally {
@@ -222,6 +248,7 @@ export default function CreatePage() {
 
   function applyTemplate(picked: TicketTemplate): void {
     setTemplate(picked);
+    setOrigin({ kind: 'template', templateId: picked.id });
     form.reset({
       question: picked.question,
       outcomes: picked.outcomes,
@@ -243,10 +270,27 @@ export default function CreatePage() {
     }
 
     try {
+      if (origin === null) {
+        // The service refuses this anyway; saying so here means the creator
+        // reads it beside the two buttons that fix it rather than after a
+        // round trip.
+        setError(
+          'Start from a template above, or describe the market and let the co-pilot structure it.',
+        );
+        return;
+      }
+
       const response = await fetch(`${API_URL}/community/markets`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify(values),
+        body: JSON.stringify({
+          ...values,
+          // Rules 5 and 16. Collected here and, until now, dropped on the way
+          // out — so rule 16 failed every submission that came through this
+          // form while every service-level test passed.
+          attestedNoInfluence: conflictAttested,
+          origin,
+        }),
       });
       const body = (await response.json()) as { state?: string; reason?: string; message?: string };
       if (!response.ok) throw new Error(body.message ?? `Submission failed (${response.status})`);
@@ -343,7 +387,7 @@ export default function CreatePage() {
           Start from a template
         </h2>
         <div className="mt-3 grid grid-cols-2 gap-2">
-          {TICKET_TEMPLATES.map((option) => (
+          {library.map((option) => (
             <button
               key={option.id}
               type="button"
