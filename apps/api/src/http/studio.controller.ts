@@ -15,6 +15,7 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsISO8601,
   IsObject,
   IsOptional,
   IsString,
@@ -29,6 +30,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CrawlHealthService } from '../intel/crawl-health.service';
 import { ResearchService } from '../intel/research.service';
 import { SourceRegistryError, SourceRegistryService } from '../intel/source-registry.service';
+import { ApprovalError, ApprovalsService } from '../approvals/approvals.service';
+import { FreezeError, MarketFreezeService } from '../market/freeze.service';
 import { MarketHealthService } from '../market/health.service';
 import { StudioError, StudioService } from '../market/studio.service';
 
@@ -138,6 +141,31 @@ export class SourceSwitchDto {
   @IsOptional() @IsString() @MaxLength(400) reason?: string;
 }
 
+/**
+ * An emergency freeze: stop trading now, on any market, with a reason.
+ *
+ * Above the controller like every DTO in this file. `emitDecoratorMetadata`
+ * reads a parameter's type where the method is defined, so one declared below
+ * the class sits in its temporal dead zone and the API dies on boot having
+ * compiled, typechecked and passed every test.
+ */
+export class FreezeNowDto {
+  @IsString() @MaxLength(400) reason!: string;
+}
+
+/** Move a freeze time that has not arrived yet. */
+export class AmendFreezeDto {
+  @IsISO8601() freezeAt!: string;
+  @IsOptional() @IsISO8601() eventDate?: string;
+  @IsString() @MaxLength(400) reason!: string;
+}
+
+/** Propose reopening a frozen market. Two people, or it does not happen. */
+export class UnfreezeDto {
+  @IsISO8601() freezeAt!: string;
+  @IsString() @MaxLength(400) reason!: string;
+}
+
 @Controller('admin/studio')
 export class StudioController {
   constructor(
@@ -147,6 +175,8 @@ export class StudioController {
     private readonly crawl: CrawlHealthService,
     private readonly research: ResearchService,
     private readonly sources: SourceRegistryService,
+    private readonly freezes: MarketFreezeService,
+    private readonly approvals: ApprovalsService,
   ) {}
 
   /** Run the whole checklist over whatever the wizard currently has. */
@@ -246,6 +276,170 @@ export class StudioController {
       if (error instanceof StudioError) throw new BadRequestException(error.message);
       throw error;
     }
+  }
+
+  /**
+   * Stop trading on a market now.
+   *
+   * The cases this is for: a result has leaked, a fixture was abandoned, or the
+   * outcome is known to somebody before the clock says it should be. All three
+   * have the same shape — the market's own countdown is wrong, and every minute
+   * it stays open is a minute an informed trader can take money off an
+   * uninformed one.
+   *
+   * One person, deliberately. Freezing is the *safe* direction: the worst a bad
+   * freeze does is stop trading early on a market that will settle normally
+   * anyway, and requiring a second signature would mean waiting for one while
+   * the leak spreads. Reopening is the direction that needs two.
+   */
+  @Post('markets/:id/freeze')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async freezeNow(
+    @Param('id') id: string,
+    @Req() request: RequestWithUser,
+    @Body() body: FreezeNowDto,
+  ) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+    try {
+      return await this.freezes.freeze({
+        marketId: id,
+        reason: body.reason,
+        actor: { userId: user.userId, ip: request.ip ?? 'unknown' },
+      });
+    } catch (error) {
+      if (error instanceof FreezeError) throw new BadRequestException(error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Move a freeze time that has not arrived.
+   *
+   * A fixture rescheduled. Audited and announced to holders, because a trader
+   * planning around a countdown is owed the news that it moved — an audit row
+   * is not something they read.
+   */
+  @Post('markets/:id/freeze-at')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async amendFreeze(
+    @Param('id') id: string,
+    @Req() request: RequestWithUser,
+    @Body() body: AmendFreezeDto,
+  ) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+    try {
+      return await this.freezes.amend({
+        marketId: id,
+        freezeAt: new Date(body.freezeAt),
+        ...(body.eventDate === undefined ? {} : { eventDate: new Date(body.eventDate) }),
+        reason: body.reason,
+        actor: { userId: user.userId, ip: request.ip ?? 'unknown' },
+      });
+    } catch (error) {
+      if (error instanceof FreezeError) throw new BadRequestException(error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Propose reopening a frozen market. Returns a proposal, not a reopened
+   * market.
+   *
+   * Through the four-eyes workflow rather than as its own endpoint, so it lands
+   * in the same inbox as a void and a bond forfeiture and cannot be executed by
+   * whoever asked for it. If the event really did start, reopening hands an
+   * informed trader a market full of people who have not seen the score — which
+   * is the asymmetry the freeze exists to prevent, performed on purpose.
+   */
+  @Post('markets/:id/unfreeze')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('admin')
+  async proposeUnfreeze(
+    @Param('id') id: string,
+    @Req() request: RequestWithUser,
+    @Body() body: UnfreezeDto,
+  ) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+    try {
+      const approval = await this.approvals.propose({
+        actionType: 'market.unfreeze',
+        payload: { marketId: id, freezeAt: new Date(body.freezeAt).toISOString() },
+        reason: body.reason,
+        actor: { userId: user.userId, role: user.role as never, ip: request.ip ?? 'unknown' },
+      });
+      return { approvalId: approval.id, state: approval.state };
+    } catch (error) {
+      if (error instanceof ApprovalError) throw new BadRequestException(error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * The freeze desk: what is about to stop, what has stopped, and what should
+   * have.
+   *
+   * The third list is the one worth having. A market past its event date and
+   * still trading means the sweep is not running — and the symptom of that is
+   * an absence, which is invisible unless something counts it. The money path
+   * refuses those trades anyway, so this is a defect alarm rather than an open
+   * door; but a defect alarm nobody can see is a defect.
+   */
+  @Get('freezes')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async freezeDesk() {
+    const now = new Date();
+    const soon = new Date(now.getTime() + 6 * 3_600_000);
+
+    const [freezingSoon, frozen, overdue] = await Promise.all([
+      this.prisma.market.findMany({
+        where: {
+          state: { in: ['seeding', 'funding', 'active'] },
+          freezeAt: { gt: now, lte: soon },
+        },
+        orderBy: { freezeAt: 'asc' },
+        take: 50,
+      }),
+      this.prisma.market.findMany({
+        where: { state: 'frozen' },
+        orderBy: { frozenAt: 'asc' },
+        take: 100,
+      }),
+      this.prisma.market.findMany({
+        where: {
+          state: { in: ['seeding', 'funding', 'active'] },
+          OR: [{ freezeAt: { lte: now } }, { freezeAt: null, eventDate: { lte: now } }],
+        },
+        orderBy: { eventDate: 'asc' },
+        take: 50,
+      }),
+    ]);
+
+    const row = (market: (typeof frozen)[number]) => ({
+      id: market.id,
+      question: market.question,
+      shelf: market.shelf,
+      state: market.state,
+      eventDate: market.eventDate.toISOString(),
+      freezeAt: market.freezeAt?.toISOString() ?? null,
+      frozenAt: market.frozenAt?.toISOString() ?? null,
+      freezeReason: market.freezeReason,
+      pot: market.potTotal.toString(),
+    });
+
+    return {
+      freezingSoon: freezingSoon.map(row),
+      frozen: frozen.map(row),
+      // Past its time and still open. Either the sweep is not running or it is
+      // failing on these rows; both need somebody to look.
+      overdue: overdue.map(row),
+      builtAt: now.toISOString(),
+    };
   }
 
   /**

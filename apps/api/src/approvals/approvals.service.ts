@@ -270,6 +270,54 @@ export class ApprovalsService {
         return;
       }
 
+      case 'market.unfreeze': {
+        const { marketId, freezeAt } = parsed as { marketId: string; freezeAt: string };
+        const reopensAt = new Date(freezeAt);
+        await tx.$queryRaw`SELECT id FROM markets WHERE id = ${marketId} FOR UPDATE`;
+        const market = await tx.market.findUnique({ where: { id: marketId } });
+        if (market === null) throw new ApprovalError('no such market');
+        if (market.state !== 'frozen') {
+          // Only pre-settlement, and `frozen` is the only state that qualifies.
+          // Reopening a market that is in its dispute window or already settled
+          // would mean trading against a known result.
+          throw new ApprovalError(
+            `this market is ${market.state} — only a frozen market can be reopened`,
+          );
+        }
+        if (reopensAt.getTime() <= Date.now()) {
+          throw new ApprovalError('the new freeze time has to be in the future');
+        }
+        if (reopensAt.getTime() > market.voidDate.getTime()) {
+          throw new ApprovalError('trading cannot stay open past the void date');
+        }
+
+        await tx.market.update({
+          where: { id: marketId },
+          data: {
+            state: 'active',
+            frozenAt: null,
+            freezeReason: null,
+            freezeAt: reopensAt,
+            // The event moved with it. Leaving `eventDate` in the past would
+            // leave the market failing every "past its event" check the moment
+            // it reopened.
+            eventDate: new Date(Math.max(reopensAt.getTime(), market.eventDate.getTime())),
+          },
+        });
+        // On the chart, not only in the audit log. A market that stopped and
+        // started again is a fact about the price history, and a reader
+        // comparing two points across the gap deserves to see it.
+        await tx.marketAnnotation.create({
+          data: {
+            marketId,
+            type: 'freeze',
+            label: `Trading reopened — ${context.reason}`,
+            pinnedBy: context.actor.userId,
+          },
+        });
+        return;
+      }
+
       case 'bond.forfeit': {
         const { marketId } = parsed as { marketId: string };
         const bond = await tx.bond.findUnique({ where: { marketId } });

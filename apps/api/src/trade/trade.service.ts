@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Trade } from '@prisma/client';
 import { Decimal, buy, sell, type TradeResult } from '@stakeam/engine';
+import { frozenMessage, isTradingFrozen } from '@stakeam/rules';
 
 import { LedgerService, type Tx } from '../ledger/ledger.service';
 import { release } from '../ledger/posting';
@@ -274,17 +275,31 @@ export class TradeService {
       where: { id: marketId },
       include: { outcomes: { orderBy: { ordinal: 'asc' } } },
     });
+    // §2.3 and checklist rule 22, checked here and not only in the job that
+    // flips the state.
+    //
+    // Two things make this the load-bearing check rather than a second opinion.
+    // The sweep runs on a schedule and a schedule can be late, so a market can
+    // be past its freeze time and still read `active`. And this runs *inside*
+    // the transaction, after the row lock, at execution time — so a trade that
+    // was submitted before the freeze and waited its turn behind other trades
+    // is refused on the way out, which is the case a check at the endpoint
+    // would wave through.
+    //
+    // It blocks sells as well as buys because `lockAndLoad` is the one path
+    // into both. A half-freeze would be worse than none: it would let somebody
+    // who has seen the score dump a losing position onto somebody who has not.
+    if (
+      isTradingFrozen({
+        freezeAt: market.freezeAt,
+        eventDate: market.eventDate,
+        state: market.state,
+      })
+    ) {
+      throw new TradeError(frozenMessage(market.freezeReason));
+    }
     if (market.state !== 'active') {
       throw new TradeError(`market is ${market.state} — trading is closed`);
-    }
-
-    // §7.2's countdown is a promise: trading freezes when the event starts. The
-    // job that flips the market's state runs on a sweep and can be late, so the
-    // money path checks the clock itself rather than trusting the flag — a trade
-    // placed after kick-off by someone watching the match is the exact abuse
-    // this closes.
-    if (market.eventDate.getTime() <= Date.now()) {
-      throw new TradeError('this market froze when the event started');
     }
 
     // §2.5: "Creator cannot place directional stakes in own market (enforced at

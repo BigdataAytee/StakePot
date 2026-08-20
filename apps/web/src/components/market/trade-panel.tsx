@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
+import { useFreeze } from './freeze-notice';
 import type { MarketDetail, OutcomeView } from '@/lib/api';
 import { closedReason, exactMoney, kobo, money, percent } from '@/lib/format';
 import { binaryPair } from '@/lib/home';
@@ -44,6 +45,11 @@ export function TradePanel({
 }) {
   const config = usePublicConfig();
   const router = useRouter();
+  // The same rules the API enforces with, ticking client-side. The state column
+  // is flipped by a scheduled sweep that can be late, so a panel that trusted
+  // it alone would keep offering a Buy button the API refuses.
+  const freeze = useFreeze(market);
+  const frozen = freeze.frozen;
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -283,20 +289,28 @@ export function TradePanel({
             type="button"
             onClick={() => void submit()}
             disabled={
-              submitting || (token !== null && (preview === null || blocker?.hard === true))
+              frozen ||
+              submitting ||
+              (token !== null && (preview === null || blocker?.hard === true))
             }
             className={`mt-2 w-full rounded-lg py-3 text-md font-bold text-paper transition-transform active:scale-press disabled:opacity-45 ${tone}`}
           >
-            {token === null
-              ? 'Sign in to stake'
-              : queued
-                ? 'Order placed — confirming…'
-                : submitting
-                  ? 'Placing…'
-                  : preview === null
-                    ? `Buy ${outcome.label}`
-                    : `Buy ${outcome.label} · ${exactMoney(preview.total)}`}
+            {frozen
+              ? 'Trading closed'
+              : token === null
+                ? 'Sign in to stake'
+                : queued
+                  ? 'Order placed — confirming…'
+                  : submitting
+                    ? 'Placing…'
+                    : preview === null
+                      ? `Buy ${outcome.label}`
+                      : `Buy ${outcome.label} · ${exactMoney(preview.total)}`}
           </button>
+          {/* The reason beside the disabled button, not somewhere else on the
+              page. A button that has greyed out with no explanation reads as
+              broken, and the person looking at it has money on the market. */}
+          {frozen && <p className="mt-1.5 text-center text-xs text-text-muted">{freeze.message}</p>}
         </>
       )}
     </aside>

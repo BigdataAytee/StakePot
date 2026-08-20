@@ -2,6 +2,7 @@
 
 import type { MarketSummary, OutcomeView } from '@/lib/api';
 import { kobo } from '@/lib/format';
+import { useFreeze } from './freeze-notice';
 import { useTradeIntent } from '@/store/trade-intent';
 
 /**
@@ -34,6 +35,10 @@ export function SideButton({
   size: 'big' | 'mini';
 }) {
   const open = useTradeIntent((state) => state.open);
+  // A card can sit on screen through the freeze — the grid does not reload every
+  // second — so the button has to answer the clock rather than the state column
+  // it was rendered from.
+  const { frozen } = useFreeze(market);
 
   const skin =
     tone === 'no'
@@ -46,15 +51,20 @@ export function SideButton({
   return (
     <button
       type="button"
+      disabled={frozen}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
         open(market, outcome);
       }}
-      aria-label={`Buy ${outcome.label} on ${market.question} at ${kobo(outcome.price)}`}
-      className={`relative z-10 font-bold transition-colors ${shape} ${skin}`}
+      aria-label={
+        frozen
+          ? `Trading closed on ${market.question}`
+          : `Buy ${outcome.label} on ${market.question} at ${kobo(outcome.price)}`
+      }
+      className={`relative z-10 font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-45 ${shape} ${skin}`}
     >
-      {size === 'big' ? `Buy ${outcome.label}` : 'Buy'}
+      {frozen ? 'Closed' : size === 'big' ? `Buy ${outcome.label}` : 'Buy'}
     </button>
   );
 }

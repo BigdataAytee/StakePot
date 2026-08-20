@@ -34,6 +34,28 @@ export const APPROVAL_ACTIONS = {
     money: true,
     summary: 'Forfeit a creator’s conduct bond to platform fees',
   },
+  /**
+   * Reopening a frozen market.
+   *
+   * The dangerous direction, and the only reason it exists at all is the case
+   * where the freeze itself was the mistake — a fixture postponed after we
+   * froze, a market frozen on a leak that turned out to be nothing. Everything
+   * about that is asymmetric: if the event *did* start, whoever presses this is
+   * handing an informed trader a market full of people who have not seen the
+   * score.
+   *
+   * So it takes two people, and the payload must carry a new freeze time. A
+   * market reopened without moving its clock re-freezes on the next sweep,
+   * which would make this look broken rather than refused.
+   */
+  'market.unfreeze': {
+    schema: z.object({
+      marketId: z.string().min(1),
+      freezeAt: z.string().datetime(),
+    }),
+    money: true,
+    summary: 'Reopen a frozen market for trading',
+  },
   'ledger.adjust': {
     schema: z.object({
       userId: z.string().min(1),

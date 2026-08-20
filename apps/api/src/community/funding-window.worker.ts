@@ -10,6 +10,7 @@ import { LedgerAuditService } from '../hardening/ledger-audit.service';
 import { LeaderboardService } from '../leaderboard/leaderboard.service';
 import { ResearchService } from '../intel/research.service';
 import { MarketHealthService } from '../market/health.service';
+import { MarketFreezeService } from '../market/freeze.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { ResolutionFlowService } from '../resolution/resolution-flow.service';
@@ -82,6 +83,7 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
     private readonly community: CommunityService,
     private readonly seeds: SeedService,
     private readonly resolutions: ResolutionFlowService,
+    private readonly freezes: MarketFreezeService,
     private readonly support: SupportService,
     private readonly nudges: NudgeService,
     private readonly opportunities: OpportunityService,
@@ -136,7 +138,12 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       case 'dispute':
         return this.resolutions.closeDisputeWindow(marketId);
       case 'freeze-sweep':
-        return { frozen: await this.resolutions.freezeDueMarkets() };
+        // §2.3 and checklist rule 22: trading stops when the event starts.
+        // The money path checks the clock itself, so a late sweep costs
+        // accuracy on the screens rather than protection — but it is the sweep
+        // that makes every query, report and badge agree without each of them
+        // doing date arithmetic.
+        return this.freezes.sweep();
       case 'nudge-sweep':
         // §2.14d. The rules decide what is worth saying; the service's own
         // throttle decides who actually hears it.

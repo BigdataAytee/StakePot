@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@stakeam/engine';
+import { freezeAtFor } from '@stakeam/rules';
 
 import { type Tx } from '../ledger/ledger.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -120,6 +121,7 @@ export class CommunityService {
     const feeBps = await this.config.get('community_fee_bps');
     const windowHours =
       params.fundingWindowHours ?? (await this.config.get('funding_window_hours'));
+    const freezeBuffer = await this.config.get('freeze_buffer_seconds');
 
     const labels = [
       ...params.template.outcomes.map((o) => ({ label: o.label, isOther: false })),
@@ -148,6 +150,10 @@ export class CommunityService {
           criteriaJson: criteria,
           edgeCasesJson: params.template.edgeCases as Prisma.InputJsonValue,
           eventDate: new Date(params.template.eventDate),
+          // Rule 22, the same for both shelves: trading stops before the event,
+          // by the buffer. A community market that froze on a different rule
+          // from an official one would be two promises on one ticket layout.
+          freezeAt: freezeAtFor(new Date(params.template.eventDate), freezeBuffer),
           voidDate: new Date(params.template.voidDate),
           liquidityParam: new Prisma.Decimal(params.liquidityParam),
           feeBps,

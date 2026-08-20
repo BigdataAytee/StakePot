@@ -1,13 +1,19 @@
 'use client';
 
 import { AlertTriangle, Eye } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { CreateTab } from './create-tab';
 import { LibraryTab } from './library-tab';
 import { ResearchTab } from './research-tab';
 import { SuggestionsTab } from './suggestions-tab';
-import { admin, type StudioDraft, type StudioMarketRow } from '@/lib/admin-api';
+import {
+  admin,
+  type FreezeDesk,
+  type FreezeRow,
+  type StudioDraft,
+  type StudioMarketRow,
+} from '@/lib/admin-api';
 import { money } from '@/lib/format';
 
 /**
@@ -106,15 +112,22 @@ function ManageTab() {
   const [rows, setRows] = useState<StudioMarketRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [onlyFlagged, setOnlyFlagged] = useState(false);
+  const [desk, setDesk] = useState<FreezeDesk | null>(null);
 
-  useEffect(() => {
+  const load = useCallback(() => {
     void admin
       .studioMarkets()
       .then(setRows)
       .catch((caught: Error) => setError(caught.message));
+    void admin
+      .freezeDesk()
+      .then(setDesk)
+      .catch((caught: Error) => setError(caught.message));
   }, []);
 
-  if (error !== null) return <p className="text-sm text-fall">{error}</p>;
+  useEffect(load, [load]);
+
+  if (error !== null && rows === null) return <p className="text-sm text-fall">{error}</p>;
   if (rows === null) return <p className="text-sm text-text-muted">Loading…</p>;
 
   const flagged = rows.filter((row) => row.flags.length > 0);
@@ -122,6 +135,7 @@ function ManageTab() {
 
   return (
     <div className="space-y-3">
+      {desk !== null && <FreezeDeskPanel desk={desk} onChanged={load} />}
       <div className="flex flex-wrap items-baseline gap-3">
         <p className="text-sm text-text-muted">
           {rows.length} open · <b className="text-text">{flagged.length}</b> needing a look
@@ -150,6 +164,158 @@ function ManageTab() {
         </ul>
       )}
     </div>
+  );
+}
+
+/**
+ * The freeze desk.
+ *
+ * Three lists, and the third is the reason the panel exists. A market past its
+ * freeze time and still reading `active` means the sweep is not running — and
+ * the symptom of that is an absence, which stays invisible unless something
+ * counts it. The money path refuses those trades whatever the column says, so
+ * this is a defect alarm rather than an open door; but a defect alarm nobody
+ * can see is a defect.
+ */
+function FreezeDeskPanel({ desk, onChanged }: { desk: FreezeDesk; onChanged: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  async function act(run: () => Promise<unknown>, done: string): Promise<void> {
+    setBusy(true);
+    setNote(null);
+    try {
+      await run();
+      setNote(done);
+      onChanged();
+    } catch (caught) {
+      setNote((caught as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function freezeNow(row: FreezeRow): void {
+    const reason = window.prompt(
+      `Stop trading on "${row.question}" now. Why? This is recorded and shown on the chart.`,
+      '',
+    );
+    if (reason === null || reason.trim().length < 3) return;
+    void act(() => admin.freezeMarket(row.id, reason), 'Frozen.');
+  }
+
+  function unfreeze(row: FreezeRow): void {
+    const reason = window.prompt(
+      `Reopening "${row.question}" needs a second approver. Why should it reopen?`,
+      '',
+    );
+    if (reason === null || reason.trim().length < 10) return;
+    const when = window.prompt(
+      'New freeze time (ISO, e.g. 2026-08-21T15:00:00Z). It must be in the future.',
+      '',
+    );
+    if (when === null || when.trim() === '') return;
+    void act(
+      () => admin.proposeUnfreeze(row.id, { freezeAt: new Date(when).toISOString(), reason }),
+      'Proposed. It needs a second approver in the Approvals inbox.',
+    );
+  }
+
+  const clock = (iso: string | null) =>
+    iso === null
+      ? '—'
+      : new Date(iso).toLocaleString('en-NG', { dateStyle: 'medium', timeStyle: 'short' });
+
+  return (
+    <section className="rounded-xl border border-border bg-surface-raised p-3.5">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <h3 className="text-sm font-semibold">Freeze desk</h3>
+        <p className="text-xs text-text-muted">
+          Trading stops when the event starts, less the buffer. Freezing takes one person; reopening
+          takes two.
+        </p>
+      </div>
+      {note !== null && <p className="mt-2 text-xs text-caution">{note}</p>}
+
+      {desk.overdue.length > 0 && (
+        <div className="mt-2.5 rounded-md bg-fall/10 p-2.5">
+          <p className="text-xs font-bold text-fall">
+            {desk.overdue.length} past its freeze time and still open — the sweep is not doing its
+            job. Trades are refused anyway; this needs looking at.
+          </p>
+          <ul className="mt-1.5 space-y-1">
+            {desk.overdue.map((row) => (
+              <li key={row.id} className="flex flex-wrap items-baseline gap-2 text-xs">
+                <span className="flex-1 truncate">{row.question}</span>
+                <span className="font-mono text-text-muted">due {clock(row.freezeAt)}</span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => freezeNow(row)}
+                  className="rounded-sm border border-fall px-2 py-0.5 font-semibold text-fall disabled:opacity-40"
+                >
+                  Freeze now
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="mt-2.5 grid gap-3 min-[900px]:grid-cols-2">
+        <div>
+          <h4 className="font-mono text-[10px] uppercase tracking-widest text-text-muted">
+            Freezing within 6h
+          </h4>
+          <ul className="mt-1 space-y-1">
+            {desk.freezingSoon.length === 0 && (
+              <li className="text-xs text-text-muted">Nothing due in the next six hours.</li>
+            )}
+            {desk.freezingSoon.map((row) => (
+              <li key={row.id} className="flex flex-wrap items-baseline gap-2 text-xs">
+                <span className="flex-1 truncate">{row.question}</span>
+                <span className="font-mono text-text-muted">{clock(row.freezeAt)}</span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => freezeNow(row)}
+                  className="rounded-sm border border-border px-2 py-0.5 disabled:opacity-40"
+                >
+                  Freeze now
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div>
+          <h4 className="font-mono text-[10px] uppercase tracking-widest text-text-muted">
+            Frozen, not yet settled
+          </h4>
+          <ul className="mt-1 space-y-1">
+            {desk.frozen.length === 0 && (
+              <li className="text-xs text-text-muted">Nothing waiting on a result.</li>
+            )}
+            {desk.frozen.map((row) => (
+              <li key={row.id} className="flex flex-wrap items-baseline gap-2 text-xs">
+                <span className="flex-1 truncate">{row.question}</span>
+                <span className="font-mono text-text-muted">
+                  {row.freezeReason ?? 'frozen'} · {clock(row.frozenAt)}
+                </span>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => unfreeze(row)}
+                  className="rounded-sm border border-border px-2 py-0.5 disabled:opacity-40"
+                >
+                  Propose reopen
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </section>
   );
 }
 

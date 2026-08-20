@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { freezeAtFor } from '@stakeam/rules';
 
 import { AdminAuditService } from '../audit/admin-audit.service';
 import { SeedService } from '../community/seed.service';
@@ -87,6 +88,11 @@ export class OfficialMarketService {
     }
 
     const feeBps = await this.config.get('official_fee_bps');
+    // Rule 22: trading stops when the event starts, less the buffer. Written at
+    // creation rather than derived at read time, because it can be amended —
+    // and once it has been, the amended time is the one the money path obeys.
+    const eventDate = new Date(template.eventDate);
+    const freezeAt = freezeAtFor(eventDate, await this.config.get('freeze_buffer_seconds'));
     const liquidityParam = params.liquidityParam ?? '50000';
 
     const labels = [
@@ -105,7 +111,8 @@ export class OfficialMarketService {
         sourceUrl: template.sourceUrl,
         criteriaJson: criteria,
         edgeCasesJson: template.edgeCases as Prisma.InputJsonValue,
-        eventDate: new Date(template.eventDate),
+        eventDate,
+        freezeAt,
         voidDate: new Date(template.voidDate),
         liquidityParam: new Prisma.Decimal(liquidityParam),
         feeBps,

@@ -29,11 +29,31 @@ export function MobileBuyBar({
   market,
   livePrices,
   onBuy,
+  frozen = false,
+  frozenMessage,
 }: {
   market: MarketDetail;
   livePrices: Record<string, string>;
   onBuy: (outcome: OutcomeView) => void;
+  /** Past its freeze time, whatever the state column has caught up to. */
+  frozen?: boolean;
+  frozenMessage?: string;
 }) {
+  // Order matters. The frozen branch has to run *before* the state gate,
+  // because a frozen market fails `state === 'active'` — checking the state
+  // first made the bar disappear at exactly the moment it had something to say,
+  // which on a phone is the only way to trade and reads as the app breaking.
+  if (frozen && market.state !== 'resolved' && market.state !== 'voided') {
+    return (
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-border bg-surface px-4 pb-[calc(12px+env(safe-area-inset-bottom))] pt-3 text-center min-[860px]:hidden">
+        <p className="text-sm font-semibold">{frozenMessage ?? 'Trading closed'}</p>
+        <p className="mt-0.5 text-xs text-text-muted">
+          Your position stays visible and settles when the result is in.
+        </p>
+      </div>
+    );
+  }
+
   if (market.state !== 'active') return null;
 
   const binary = binaryPair(market);

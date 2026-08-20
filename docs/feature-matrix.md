@@ -382,6 +382,39 @@ was fine.
 
 ---
 
+## Block P · Market freeze (§2.3, checklist rule 22)
+
+| #   | Feature                                                                  | Status      | Where                                                      |
+| --- | ------------------------------------------------------------------------ | ----------- | ---------------------------------------------------------- |
+| P1  | `freezeAt` at creation, event less a configurable buffer, state `frozen` | IMPLEMENTED | `packages/rules/src/freeze.ts`, `freeze_buffer_seconds`    |
+| P2  | Server-side refusal of buys **and** sells at execution time              | IMPLEMENTED | `trade.service.ts` `lockAndLoad`                           |
+| P3  | Scheduled sweep, idempotent, with annotation, audit and notification     | IMPLEMENTED | `market/freeze.service.ts`, `freeze-sweep` job             |
+| P4  | Countdown from creation, final-hour clock, badge, inline refusals        | IMPLEMENTED | `components/market/freeze-notice.tsx`                      |
+| P5  | Emergency freeze, four-eyes unfreeze, freeze desk                        | IMPLEMENTED | `POST /admin/studio/markets/:id/freeze`, `market.unfreeze` |
+
+**Where the rule actually binds is the trade transaction, not the job.** The
+sweep runs on a schedule and a schedule can be late, so the money path reads
+the clock itself, inside the transaction, after the row lock — which is what
+refuses a trade that queued before the freeze and reached the front after it.
+`market/freeze.integration.test.ts` drives that case through the real Redis
+queue.
+
+Two decisions worth recording. The freeze is **the earlier of `freezeAt` and
+`eventDate`**, so no amendment or hand-edit can leave a market trading after its
+event has started. And it blocks **exits as well as entries**: a half-freeze
+would let somebody who has seen the score sell a losing position to somebody who
+has not, which is worse than no freeze at all because it looks protective.
+
+Freezing takes one person and a reason; reopening takes two, through the same
+approvals inbox as a void or a bond forfeiture, and only from `frozen` — never
+from a dispute window or a settled market.
+
+**Not done, and deliberately:** no withdrawal lock near settlement. Escrow
+already holds staked funds from the moment of the trade, and free balance stays
+withdrawable throughout.
+
+---
+
 ## What is left
 
 All five of the original "fix first" items are built (A1, A2, A3, dispute

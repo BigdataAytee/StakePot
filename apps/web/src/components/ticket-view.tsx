@@ -14,6 +14,7 @@ import { takeTrade } from '@/lib/pending-trade';
 import { MarketIcon } from '@/components/market/market-icon';
 import { SiteHeader } from '@/components/market/site-header';
 import { ChallengeButton } from '@/components/market/challenge-button';
+import { useFreeze } from '@/components/market/freeze-notice';
 import { FundingActivation } from '@/components/market/funding-activation';
 import { MobileBuyBar } from '@/components/market/mobile-buy-bar';
 import { ResolutionStatus } from '@/components/market/resolution-status';
@@ -250,7 +251,13 @@ export function TicketView({
     recordView(initial.id, source);
   }, [initial.id]);
 
-  const tradingOpen = initial.state === 'active';
+  // Not `state === 'active'` alone. The sweep that flips the state runs on a
+  // schedule and can be late, so a market can be past its freeze time and still
+  // read `active` — and a page that offered a Buy button in that window would
+  // be offering one the API refuses. The rules module answers this question for
+  // the screen exactly as it does for the trade transaction.
+  const freeze = useFreeze(initial);
+  const tradingOpen = initial.state === 'active' && !freeze.frozen;
 
   // §7.2e: a market still gathering backers has no price history worth
   // reading, so the chart area becomes the activation view instead.
@@ -334,6 +341,16 @@ export function TicketView({
           </p>
         )}
 
+        {/* Said once, at the top, before anything a reader might act on. The
+            positions and the chart stay exactly where they were — only trading
+            stops, and the panel below repeats the reason beside its own
+            disabled button. */}
+        {freeze.frozen && initial.state !== 'resolved' && initial.state !== 'voided' && (
+          <p className="mt-3 rounded-md bg-caution-bg px-2.5 py-2 text-sm text-caution">
+            <b>{freeze.message}.</b> Your position stays visible and settles when the result is in.
+          </p>
+        )}
+
         <QuoteStrip
           price={Number.parseFloat(
             (dial === null ? initial.outcomes[0]?.price : (prices[dial.id] ?? dial.price)) ?? '0',
@@ -345,6 +362,8 @@ export function TicketView({
           traders={initial.traderCount}
           feeBps={initial.feeBps}
           eventDate={initial.eventDate}
+          freezeAt={initial.freezeAt}
+          state={initial.state}
           tradingOpen={tradingOpen}
           stateLabel={STATE_LABEL[initial.state] ?? initial.state}
           target={targetOf(context)}
@@ -460,6 +479,8 @@ export function TicketView({
       <MobileBuyBar
         market={initial}
         livePrices={prices}
+        frozen={freeze.frozen}
+        frozenMessage={freeze.message}
         onBuy={(outcome) => {
           setPicked(outcome.id);
           setIntent({ outcome, side: 'buy' });

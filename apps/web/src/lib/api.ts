@@ -26,6 +26,15 @@ export interface MarketSummary {
   /** When the funding window closes — Path B's participation floor deadline. */
   fundingClosesAt: string | null;
   eventDate: string;
+  /**
+   * When trading stops (§2.3, rule 22): the event less a buffer. Sent as data,
+   * not as a rendered sentence, so the countdown, the badge and the sheet's
+   * refusal are all derived from the same fact the API enforces on.
+   */
+  freezeAt: string | null;
+  /** When it actually froze, and the reason recorded with it. */
+  frozenAt: string | null;
+  freezeReason: string | null;
   voidDate: string;
   pot: string;
   /** Liquidity constant L. The Trade Ticket prices its preview with it. */

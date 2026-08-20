@@ -478,32 +478,6 @@ export class ResolutionFlowService {
     return { outcome: openDisputes > 0 ? 'disputed' : 'due' };
   }
 
-  /**
-   * Freeze markets whose event has started (§7.2's countdown, §2.4's lifecycle).
-   *
-   * The trade path refuses a trade at or after the event date on its own, so
-   * this is not the control — it is the state catching up with the control, so
-   * the shelf and the ticket say `frozen` rather than `live` while the match is
-   * being played.
-   */
-  async freezeDueMarkets(now = new Date()): Promise<number> {
-    const due = await this.prisma.market.findMany({
-      where: { state: 'active', eventDate: { lte: now } },
-      select: { id: true },
-    });
-
-    for (const market of due) {
-      await this.prisma.market.update({
-        where: { id: market.id },
-        data: { state: 'pending_resolution' },
-      });
-      await this.prisma.marketAnnotation.create({
-        data: { marketId: market.id, type: 'freeze', label: 'Trading frozen — the event started' },
-      });
-    }
-    return due.length;
-  }
-
   private async lock(tx: Tx, marketId: string) {
     await tx.$queryRaw`SELECT id FROM markets WHERE id = ${marketId} FOR UPDATE`;
     return tx.market.findUniqueOrThrow({ where: { id: marketId } });

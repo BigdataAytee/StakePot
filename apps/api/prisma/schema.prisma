@@ -385,6 +385,21 @@ model Market {
   criteriaJson       Json
   edgeCasesJson      Json
   eventDate          DateTime
+  /// When trading actually stops: the event start, less a configurable buffer
+  /// (`freeze_buffer_seconds`, default 2 minutes).
+  ///
+  /// Not the same column as `eventDate` and not derivable from it at read time,
+  /// because it can be amended — a fixture is rescheduled, or an admin freezes
+  /// early on a leak — and the amended time is what the money path must obey.
+  /// Nullable only for rows written before freeze times existed; the rules
+  /// module falls back to `eventDate` for those, which errs closed.
+  freezeAt           DateTime?
+  /// When the freeze actually happened, and why. Null while trading is open.
+  /// `frozenAt` is what makes the sweep idempotent: a late job re-running over
+  /// a market that is already frozen does nothing rather than re-annotating,
+  /// re-auditing and re-notifying everyone who holds a position.
+  frozenAt           DateTime?
+  freezeReason       String?
   voidDate           DateTime
   state              MarketState    @default(draft)
   activationPath     ActivationPath @default(organic)

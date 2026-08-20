@@ -273,7 +273,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
         amount: '100',
         requestId: 'after-proposal',
       }),
-    ).rejects.toThrow(/trading is closed/);
+    ).rejects.toThrow(/Trading closed/);
 
     // 2. The window is real: nobody can finalise inside it.
     await expect(
@@ -471,11 +471,14 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
         amount: '500',
         requestId: 'late-trade',
       }),
-    ).rejects.toThrow(/froze when the event started/);
+    ).rejects.toThrow(/Trading closed/);
 
-    expect(await flow.freezeDueMarkets()).toBe(1);
-    const frozen = await prisma.market.findUniqueOrThrow({ where: { id: marketId } });
-    expect(frozen.state).toBe('pending_resolution');
+    // The sweep that flips the state is `MarketFreezeService`, exercised in
+    // `market/freeze.integration.test.ts`. What matters here is that the money
+    // path does not wait for it: the market still reads `active` above, and the
+    // trade is refused anyway.
+    const still = await prisma.market.findUniqueOrThrow({ where: { id: marketId } });
+    expect(still.state).toBe('active');
   });
 
   describe('four-eyes approvals', () => {
@@ -555,6 +558,73 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       const stuck = await prisma.approval.findUniqueOrThrow({ where: { id: again.id } });
       expect(stuck.state).toBe('pending');
       expect(stuck.executedAt).toBeNull();
+    });
+
+    it('reopens a frozen market only on a second signature, and only pre-settlement', async () => {
+      const finance = await person('u-finance@example.ng', 'finance');
+      const boss = await staffWith2fa('u-admin@example.ng', 'admin');
+      const creator = await person('u-creator@example.ng');
+      const { marketId } = await liveMarket(creator.userId);
+
+      await prisma.market.update({
+        where: { id: marketId },
+        data: { state: 'frozen', frozenAt: new Date(), freezeReason: 'the event started' },
+      });
+      const reopensAt = new Date(Date.now() + 6 * 3_600_000);
+
+      const approval = await approvals.propose({
+        actionType: 'market.unfreeze',
+        payload: { marketId, freezeAt: reopensAt.toISOString() },
+        reason: 'The fixture was postponed after we froze; nothing has been played.',
+        actor: finance,
+      });
+
+      // One signature does nothing. Reopening hands an informed trader a market
+      // full of people who have not seen the score, which is the asymmetry the
+      // freeze exists to prevent — performed deliberately.
+      await expect(approvals.approve({ approvalId: approval.id, actor: finance })).rejects.toThrow(
+        /four eyes means a second person/,
+      );
+      expect((await prisma.market.findUniqueOrThrow({ where: { id: marketId } })).state).toBe(
+        'frozen',
+      );
+
+      await approvals.approve({ approvalId: approval.id, actor: boss, totpCode: boss.code() });
+
+      const reopened = await prisma.market.findUniqueOrThrow({ where: { id: marketId } });
+      expect(reopened.state).toBe('active');
+      expect(reopened.frozenAt).toBeNull();
+      expect(reopened.freezeReason).toBeNull();
+      // The clock moved with it. Reopening without a new freeze time would
+      // re-freeze on the next sweep, which reads as the control being broken.
+      expect(reopened.freezeAt?.toISOString()).toBe(reopensAt.toISOString());
+      const marked = await prisma.marketAnnotation.findFirst({
+        where: { marketId, type: 'freeze' },
+        orderBy: { ts: 'desc' },
+      });
+      expect(marked?.label).toMatch(/reopened/i);
+    });
+
+    it('refuses to reopen anything that is not frozen', async () => {
+      const finance = await person('v-finance@example.ng', 'finance');
+      const boss = await staffWith2fa('v-admin@example.ng', 'admin');
+      const creator = await person('v-creator@example.ng');
+      const { marketId } = await liveMarket(creator.userId);
+
+      await prisma.market.update({ where: { id: marketId }, data: { state: 'dispute_window' } });
+
+      const approval = await approvals.propose({
+        actionType: 'market.unfreeze',
+        payload: { marketId, freezeAt: new Date(Date.now() + 3_600_000).toISOString() },
+        reason: 'Somebody asked for the market to be reopened for more trading.',
+        actor: finance,
+      });
+
+      // A market in its dispute window has a proposed result. Reopening it
+      // would be trading against a known outcome.
+      await expect(
+        approvals.approve({ approvalId: approval.id, actor: boss, totpCode: boss.code() }),
+      ).rejects.toThrow(/only a frozen market can be reopened/);
     });
 
     it('voids a live market through the workflow and refunds everyone', async () => {

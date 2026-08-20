@@ -352,6 +352,31 @@ export interface CrawlHealth {
   builtAt: string;
 }
 
+/** One market on the freeze desk. */
+export interface FreezeRow {
+  id: string;
+  question: string;
+  shelf: string;
+  state: string;
+  eventDate: string;
+  freezeAt: string | null;
+  frozenAt: string | null;
+  freezeReason: string | null;
+  pot: string;
+}
+
+export interface FreezeDesk {
+  freezingSoon: FreezeRow[];
+  frozen: FreezeRow[];
+  /**
+   * Past its freeze time and still open. The money path refuses those trades
+   * anyway, so this is a defect alarm — the sweep is not running, or is failing
+   * on these rows — rather than an open door.
+   */
+  overdue: FreezeRow[];
+  builtAt: string;
+}
+
 /** The reading behind an AI draft, as the Studio's evidence panel shows it. */
 export interface DraftEvidence {
   brief: string;
@@ -525,6 +550,29 @@ export const admin = {
     reason?: string;
   }) =>
     request<{ affected: number }>('/admin/studio/sources/enabled', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /** Freezing soon, frozen, and anything that should have frozen and has not. */
+  freezeDesk: () => request<FreezeDesk>('/admin/studio/freezes'),
+  /**
+   * Stop trading now. One person and a reason: freezing is the safe direction,
+   * and waiting for a second signature while a result leaks is not.
+   */
+  freezeMarket: (id: string, reason: string) =>
+    request<{ froze: boolean; state: string }>(`/admin/studio/markets/${id}/freeze`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+  /** Move a freeze time that has not arrived. Audited and announced. */
+  amendFreeze: (id: string, body: { freezeAt: string; eventDate?: string; reason: string }) =>
+    request<{ freezeAt: string; eventDate: string }>(`/admin/studio/markets/${id}/freeze-at`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  /** Propose reopening. Returns a proposal for somebody else to approve. */
+  proposeUnfreeze: (id: string, body: { freezeAt: string; reason: string }) =>
+    request<{ approvalId: string; state: string }>(`/admin/studio/markets/${id}/unfreeze`, {
       method: 'POST',
       body: JSON.stringify(body),
     }),

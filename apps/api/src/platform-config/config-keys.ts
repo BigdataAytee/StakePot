@@ -62,6 +62,16 @@ export const CONFIG_SCHEMAS = {
   syndicate_max_sponsors: z.number().int().positive(),
   syndicate_round_hours: z.number().int().positive(),
 
+  /**
+   * How far before the event trading stops (§2.3, checklist rule 22).
+   *
+   * Not zero, and the reason is mechanical rather than cautious: a trade takes
+   * time to travel, queue behind the market's row lock and execute, so freezing
+   * exactly at kick-off lets a request sent a moment before execute a moment
+   * after — with the whistle already blown.
+   */
+  freeze_buffer_seconds: z.number().int().nonnegative(),
+
   // Resolution, disputes and config governance (§2.6, §6.4b)
   /** How long participants have to dispute a proposed resolution. */
   dispute_window_hours: z.number().int().positive(),

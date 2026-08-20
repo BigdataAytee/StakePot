@@ -100,6 +100,11 @@ export const CONFIG_KEY_NOTES: Record<string, ConfigNote> = {
     what: 'Distinct participants required at window close.',
     risk: 'The re-check that voids thin markets. Raising it voids more; lowering it lets two-person markets run.',
   },
+  freeze_buffer_seconds: {
+    blast: 'money',
+    what: 'How long before the event starts that trading stops.',
+    risk: 'Too short and a trade sent before kick-off can execute after it. Too long and traders lose minutes they were promised on the ticket — the countdown they saw is this number.',
+  },
   dispute_window_hours: {
     blast: 'market',
     what: 'How long members have to dispute a proposed result.',

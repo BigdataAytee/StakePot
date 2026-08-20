@@ -1,7 +1,8 @@
 'use client';
 
 import { Sparkline } from '@/components/sparkline';
-import { countdown, dateTime, money, percent, settlesOn, untilFreeze } from '@/lib/format';
+import { countdown, dateTime, money, percent, settlesOn } from '@/lib/format';
+import { FreezeCountdown } from './freeze-notice';
 import { PriceChange } from './price-change';
 
 /**
@@ -30,6 +31,8 @@ export function QuoteStrip({
   traders,
   feeBps,
   eventDate,
+  freezeAt,
+  state,
   tradingOpen,
   stateLabel,
   target,
@@ -43,6 +46,8 @@ export function QuoteStrip({
   traders: number;
   feeBps: number;
   eventDate: string;
+  freezeAt?: string | null;
+  state?: string;
   tradingOpen: boolean;
   stateLabel: string;
   /**
@@ -112,9 +117,12 @@ export function QuoteStrip({
           Fee <b className="font-mono text-text">{(feeBps / 100).toFixed(1)}%</b>
         </span>
         {tradingOpen ? (
-          <span>
-            Freezes in <b className="font-mono text-text">{untilFreeze(eventDate)}</b>
-          </span>
+          // Shown from creation, not only inside a day: "Freezes 15:00 WAT Sat"
+          // is a promise the ticket makes on the day it opens, and it turns
+          // into a live countdown of its own accord in the final hour.
+          <FreezeCountdown
+            market={{ freezeAt: freezeAt ?? null, eventDate, state: state ?? 'active' }}
+          />
         ) : (
           <span className="font-semibold uppercase tracking-wide">{stateLabel}</span>
         )}

@@ -1,8 +1,11 @@
+'use client';
+
 import Link from 'next/link';
 
 import type { MarketSummary } from '@/lib/api';
 import { STATE_LABEL, money, settlesOn } from '@/lib/format';
 import { binaryPair } from '@/lib/home';
+import { FreezeCountdown, FrozenBadge, useFreeze } from './freeze-notice';
 import { LiveChanceGauge, LivePercent } from './live-percent';
 import { PriceChange } from './price-change';
 import { MarketIcon } from './market-icon';
@@ -24,7 +27,12 @@ import { WatchStar } from './watch-star';
  * buttons still work, and the keyboard gets one tab stop per destination.
  */
 export function MarketCard({ market }: { market: MarketSummary }) {
-  const tradeable = market.state === 'active';
+  // Not `state === 'active'` alone. The sweep that flips the column runs on a
+  // schedule and a card can sit on screen through the freeze, so the buttons
+  // answer the clock — otherwise the grid offers a Buy the API refuses.
+  const freeze = useFreeze(market);
+  const tradeable = market.state === 'active' && !freeze.frozen;
+  const settled = market.state === 'resolved' || market.state === 'voided';
   // A Yes/No pair keeps its own order so that green always means Yes; anything
   // else is ranked, because there the leader is the story.
   const binary = binaryPair(market);
@@ -62,7 +70,9 @@ export function MarketCard({ market }: { market: MarketSummary }) {
 
       {!tradeable ? (
         <p className="flex-1 text-sm font-semibold uppercase tracking-wide text-text-muted">
-          {STATE_LABEL[market.state] ?? market.state}
+          {freeze.frozen && !settled
+            ? 'Frozen — trading closed'
+            : (STATE_LABEL[market.state] ?? market.state)}
         </p>
       ) : binary !== null ? (
         <div className="flex gap-2">
@@ -92,12 +102,21 @@ export function MarketCard({ market }: { market: MarketSummary }) {
       )}
 
       <div className="mt-0.5 flex items-center gap-2 text-xs text-text-muted">
+        {freeze.frozen && !settled && <FrozenBadge />}
         {money(market.volume24h)} Vol.
         {/* When it pays out. The one fact a reader needs to know whether this
             question is worth a view today or in six weeks, and it was not on
             the card at all. */}
         <span aria-hidden>·</span>
         <span className="whitespace-nowrap">Settles {settlesOn(market.eventDate)}</span>
+        {/* Shown from the day the market opens, and it becomes a live
+            countdown of its own accord in the final hour. */}
+        {!freeze.frozen && (
+          <>
+            <span aria-hidden>·</span>
+            <FreezeCountdown market={market} className="whitespace-nowrap" />
+          </>
+        )}
         <WatchStar marketId={market.id} question={market.question} />
       </div>
     </article>

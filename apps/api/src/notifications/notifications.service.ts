@@ -22,6 +22,12 @@ export const NOTIFICATION_TYPES = {
   refund: { title: 'Refunded in full', channels: ['in_app', 'push', 'email'] },
   dispute_update: { title: 'Dispute update', channels: ['in_app', 'push'] },
   market_activated: { title: 'Market is open', channels: ['in_app', 'push'] },
+  /*
+   * §2.3's freeze. In-app and push, not email: it is time-critical and short —
+   * somebody watching a match wants to know now that their position is locked,
+   * and an email about it arriving tomorrow is noise.
+   */
+  market_frozen: { title: 'Your position is locked', channels: ['in_app', 'push'] },
   support_reply: { title: 'Support replied', channels: ['in_app', 'push', 'email'] },
   // §2.14's creator platform. Deliberately in-app and push only: a creator's
   // standing changing is worth an alert, not an email, and a nudge that arrives

@@ -5,6 +5,7 @@ import { ArrowUpDown, X } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
+import { useFreeze } from './market/freeze-notice';
 import type { OutcomeView } from '@/lib/api';
 
 import { exactMoney, kobo, money, percent } from '@/lib/format';
@@ -34,6 +35,15 @@ export interface TradeMarket {
   state: string;
   pot: string;
   liquidity: string;
+  /**
+   * Required, not optional. The sheet is the last screen between a person and
+   * a trade, so it is the one place that must not be able to open on a market
+   * it cannot answer the freeze question about — and an optional field would
+   * make that a runtime accident rather than a compile error.
+   */
+  eventDate: string;
+  freezeAt?: string | null;
+  freezeReason?: string | null;
   outcomes: OutcomeView[];
 }
 
@@ -115,6 +125,7 @@ export function TradeSheet({
   }, [intent]);
 
   const outcome = intent?.outcome ?? null;
+  const freeze = useFreeze(market);
   const price = outcome === null ? 0 : Number.parseFloat(livePrices[outcome.id] ?? outcome.price);
 
   /**
@@ -236,303 +247,329 @@ export function TradeSheet({
           >
             <div className="mx-auto mb-4 h-1 w-10 rounded-sm bg-border" aria-hidden />
 
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm text-text-muted">{market.question}</p>
-                <div className="mt-1 flex items-center gap-2">
-                  <span className="text-lg font-bold">
-                    {side === 'buy' ? 'Buy' : 'Sell'} {outcome.label}
-                  </span>
+            {/*
+              Frozen: the sheet opens and says why, rather than not opening.
+              A tap that produces nothing reads as a broken app, and the person
+              tapping has money on this market — they are owed the sentence.
+            */}
+            {freeze.frozen ? (
+              <div className="py-4 text-center">
+                <p className="text-md font-bold">{freeze.message}</p>
+                <p className="mt-1.5 text-sm text-text-muted">
+                  No new stakes and no exits. Your position stays visible and settles when the
+                  result is in.
+                </p>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="mt-4 w-full rounded-lg border border-border py-3 text-md font-bold"
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm text-text-muted">{market.question}</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="text-lg font-bold">
+                        {side === 'buy' ? 'Buy' : 'Sell'} {outcome.label}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSide(side === 'buy' ? 'sell' : 'buy')}
+                        className="grid size-11 shrink-0 place-items-center rounded-md border border-border text-text-muted hover:text-text"
+                        aria-label="Switch between buying and selling"
+                      >
+                        <ArrowUpDown size={14} />
+                      </button>
+                    </div>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setSide(side === 'buy' ? 'sell' : 'buy')}
-                    className="grid size-11 shrink-0 place-items-center rounded-md border border-border text-text-muted hover:text-text"
-                    aria-label="Switch between buying and selling"
+                    onClick={onClose}
+                    aria-label="Close"
+                    className="-mr-2 -mt-2 grid size-11 shrink-0 place-items-center rounded-md text-text-muted hover:text-text"
                   >
-                    <ArrowUpDown size={14} />
+                    <X size={18} />
                   </button>
                 </div>
-              </div>
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="Close"
-                className="-mr-2 -mt-2 grid size-11 shrink-0 place-items-center rounded-md text-text-muted hover:text-text"
-              >
-                <X size={18} />
-              </button>
-            </div>
 
-            <div className="flex items-baseline justify-between gap-3">
-              <label className="text-sm text-text-muted" htmlFor="trade-amount">
-                {side === 'sell'
-                  ? 'How many shares?'
-                  : mode === 'shares'
-                    ? 'How many shares?'
-                    : 'How much are you putting in?'}
-              </label>
-              {/* §7.2d's advanced toggle. Selling is already shares-first, so
+                <div className="flex items-baseline justify-between gap-3">
+                  <label className="text-sm text-text-muted" htmlFor="trade-amount">
+                    {side === 'sell'
+                      ? 'How many shares?'
+                      : mode === 'shares'
+                        ? 'How many shares?'
+                        : 'How much are you putting in?'}
+                  </label>
+                  {/* §7.2d's advanced toggle. Selling is already shares-first, so
                   it has nothing to switch between. */}
-              {side === 'buy' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMode(mode === 'amount' ? 'shares' : 'amount');
-                    setAmount('');
-                  }}
-                  className="-mr-2 flex h-11 items-center px-2 text-xs font-semibold text-brand hover:underline"
-                >
-                  {mode === 'amount' ? 'Enter shares' : 'Enter amount'}
-                </button>
-              )}
-            </div>
+                  {side === 'buy' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode(mode === 'amount' ? 'shares' : 'amount');
+                        setAmount('');
+                      }}
+                      className="-mr-2 flex h-11 items-center px-2 text-xs font-semibold text-brand hover:underline"
+                    >
+                      {mode === 'amount' ? 'Enter shares' : 'Enter amount'}
+                    </button>
+                  )}
+                </div>
 
-            <div className="relative mt-1">
-              <input
-                id="trade-amount"
-                inputMode="decimal"
-                value={amount}
-                onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
-                placeholder="0"
-                disabled={closed}
-                // `key` on the tick restarts the flash: an animation already
-                // running does not replay, and the third tap of ₦500 is the
-                // one that most needs to look like it landed.
-                key={tick}
-                className={`w-full rounded-md border bg-surface px-3 py-3 pr-12 font-mono text-xl tabular-nums outline-none focus:border-brand focus-visible:ring-1 focus-visible:ring-brand ${
-                  tick > 0 ? 'motion-safe:animate-chip-tick border-brand' : 'border-border'
-                }`}
-              />
-              {amount !== '' && !closed && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAmount('');
-                    setTick(0);
-                  }}
-                  aria-label="Clear the amount"
-                  className="absolute right-1 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-md text-text-muted hover:bg-chip hover:text-text"
-                >
-                  <X size={16} />
-                </button>
-              )}
-            </div>
-
-            {side === 'buy' && mode === 'amount' && (
-              <div className="mt-2 flex gap-2">
-                {AMOUNT_CHIPS.map((chip) => (
-                  <button
-                    key={chip}
-                    type="button"
+                <div className="relative mt-1">
+                  <input
+                    id="trade-amount"
+                    inputMode="decimal"
+                    value={amount}
+                    onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
+                    placeholder="0"
                     disabled={closed}
-                    // Adds rather than replaces. A row of chips that each
-                    // overwrite the field can only ever express four amounts;
-                    // adding lets four chips reach any multiple of ₦500, which
-                    // is how people actually arrive at a number — ₦500 twice
-                    // and a ₦1k is ₦2,000, and nobody had to open a keyboard.
-                    onClick={() => {
-                      const current = Number.parseFloat(amount);
-                      const next = (Number.isFinite(current) ? current : 0) + chip;
-                      setAmount(String(Math.round(next * 100) / 100));
-                      setTick((count) => count + 1);
-                    }}
-                    className="h-11 flex-1 rounded-md border border-border bg-surface font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
-                  >
-                    +₦{chip >= 1000 ? `${chip / 1000}k` : chip}
-                  </button>
-                ))}
-              </div>
-            )}
+                    // `key` on the tick restarts the flash: an animation already
+                    // running does not replay, and the third tap of ₦500 is the
+                    // one that most needs to look like it landed.
+                    key={tick}
+                    className={`w-full rounded-md border bg-surface px-3 py-3 pr-12 font-mono text-xl tabular-nums outline-none focus:border-brand focus-visible:ring-1 focus-visible:ring-brand ${
+                      tick > 0 ? 'motion-safe:animate-chip-tick border-brand' : 'border-border'
+                    }`}
+                  />
+                  {amount !== '' && !closed && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAmount('');
+                        setTick(0);
+                      }}
+                      aria-label="Clear the amount"
+                      className="absolute right-1 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-md text-text-muted hover:bg-chip hover:text-text"
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
 
-            {side === 'buy' && mode === 'shares' && (
-              <div className="mt-2 flex gap-2">
-                {SHARE_STEPS.map((step) => (
-                  <button
-                    key={step}
-                    type="button"
-                    disabled={closed}
-                    onClick={() => {
-                      const current = Number.parseFloat(amount);
-                      const next = (Number.isFinite(current) ? current : 0) + step;
-                      // A stepper cannot take you below nothing.
-                      setAmount(next <= 0 ? '' : String(Math.round(next * 100) / 100));
-                    }}
-                    className="h-11 flex-1 rounded-md border border-border bg-surface font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
-                  >
-                    {step > 0 ? `+${step}` : step}
-                  </button>
-                ))}
-              </div>
-            )}
+                {side === 'buy' && mode === 'amount' && (
+                  <div className="mt-2 flex gap-2">
+                    {AMOUNT_CHIPS.map((chip) => (
+                      <button
+                        key={chip}
+                        type="button"
+                        disabled={closed}
+                        // Adds rather than replaces. A row of chips that each
+                        // overwrite the field can only ever express four amounts;
+                        // adding lets four chips reach any multiple of ₦500, which
+                        // is how people actually arrive at a number — ₦500 twice
+                        // and a ₦1k is ₦2,000, and nobody had to open a keyboard.
+                        onClick={() => {
+                          const current = Number.parseFloat(amount);
+                          const next = (Number.isFinite(current) ? current : 0) + chip;
+                          setAmount(String(Math.round(next * 100) / 100));
+                          setTick((count) => count + 1);
+                        }}
+                        className="h-11 flex-1 rounded-md border border-border bg-surface font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
+                      >
+                        +₦{chip >= 1000 ? `${chip / 1000}k` : chip}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
-            {/* §7.2d: "slider or chips for partial/full exit". A slider,
+                {side === 'buy' && mode === 'shares' && (
+                  <div className="mt-2 flex gap-2">
+                    {SHARE_STEPS.map((step) => (
+                      <button
+                        key={step}
+                        type="button"
+                        disabled={closed}
+                        onClick={() => {
+                          const current = Number.parseFloat(amount);
+                          const next = (Number.isFinite(current) ? current : 0) + step;
+                          // A stepper cannot take you below nothing.
+                          setAmount(next <= 0 ? '' : String(Math.round(next * 100) / 100));
+                        }}
+                        className="h-11 flex-1 rounded-md border border-border bg-surface font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
+                      >
+                        {step > 0 ? `+${step}` : step}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/* §7.2d: "slider or chips for partial/full exit". A slider,
                 because a position is a continuous quantity and 25/50/100 are
                 three of the infinitely many exits somebody might want. */}
-            {side === 'sell' && intent.held !== undefined && (
-              <div className="mt-3">
-                <input
-                  type="range"
-                  min={0}
-                  max={Number.parseFloat(intent.held)}
-                  step={Number.parseFloat(intent.held) / 100}
-                  value={Number.parseFloat(amount) || 0}
-                  onChange={(event) => setAmount(event.target.value)}
-                  aria-label="How much of this position to sell"
-                  className="w-full accent-fall"
-                />
-                <div className="mt-1 flex justify-between text-xs text-text-muted">
-                  <span>0</span>
-                  <button
-                    type="button"
-                    onClick={() => setAmount(intent.held as string)}
-                    className="font-semibold text-brand hover:underline"
-                  >
-                    Sell all {Number.parseFloat(intent.held).toFixed(2)}
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <dl className="mt-4 space-y-2 border-t border-border pt-4 text-sm">
-              <Row
-                label="Price per share"
-                value={`${kobo(price)} · ${Math.round(percent(price))}%`}
-              />
-              {preview !== null && side === 'buy' && (
-                <>
-                  <Row label="Shares you get" value={preview.shares.toFixed(2)} />
-                  <Row label="Total" value={exactMoney(preview.total)} emphasis />
-                  {preview.estWin !== null && (
-                    <Row
-                      label="Est. to win"
-                      value={exactMoney(preview.estWin)}
-                      hint="estimate"
-                      emphasis
+                {side === 'sell' && intent.held !== undefined && (
+                  <div className="mt-3">
+                    <input
+                      type="range"
+                      min={0}
+                      max={Number.parseFloat(intent.held)}
+                      step={Number.parseFloat(intent.held) / 100}
+                      value={Number.parseFloat(amount) || 0}
+                      onChange={(event) => setAmount(event.target.value)}
+                      aria-label="How much of this position to sell"
+                      className="w-full accent-fall"
                     />
-                  )}
-                </>
-              )}
-              {preview !== null && side === 'sell' && (
-                <>
-                  <Row label="Proceeds" value={exactMoney(preview.gross)} />
+                    <div className="mt-1 flex justify-between text-xs text-text-muted">
+                      <span>0</span>
+                      <button
+                        type="button"
+                        onClick={() => setAmount(intent.held as string)}
+                        className="font-semibold text-brand hover:underline"
+                      >
+                        Sell all {Number.parseFloat(intent.held).toFixed(2)}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <dl className="mt-4 space-y-2 border-t border-border pt-4 text-sm">
                   <Row
-                    label={`Early-exit fee${
-                      config === null ? '' : ` (${(config.exitFeeRate * 100).toFixed(0)}%)`
-                    }`}
-                    value={`−${exactMoney(preview.fee)}`}
+                    label="Price per share"
+                    value={`${kobo(price)} · ${Math.round(percent(price))}%`}
                   />
-                  <Row label="You receive" value={exactMoney(preview.total)} emphasis />
-                </>
-              )}
-            </dl>
+                  {preview !== null && side === 'buy' && (
+                    <>
+                      <Row label="Shares you get" value={preview.shares.toFixed(2)} />
+                      <Row label="Total" value={exactMoney(preview.total)} emphasis />
+                      {preview.estWin !== null && (
+                        <Row
+                          label="Est. to win"
+                          value={exactMoney(preview.estWin)}
+                          hint="estimate"
+                          emphasis
+                        />
+                      )}
+                    </>
+                  )}
+                  {preview !== null && side === 'sell' && (
+                    <>
+                      <Row label="Proceeds" value={exactMoney(preview.gross)} />
+                      <Row
+                        label={`Early-exit fee${
+                          config === null ? '' : ` (${(config.exitFeeRate * 100).toFixed(0)}%)`
+                        }`}
+                        value={`−${exactMoney(preview.fee)}`}
+                      />
+                      <Row label="You receive" value={exactMoney(preview.total)} emphasis />
+                    </>
+                  )}
+                </dl>
 
-            {preview !== null && side === 'buy' && Math.abs(preview.priceAfter - price) > 0.005 && (
-              <p className="mt-3 text-sm text-text-muted">
-                This trade moves {outcome.label} to{' '}
-                <span className="font-mono">{Math.round(percent(preview.priceAfter))}%</span>.
-              </p>
-            )}
+                {preview !== null &&
+                  side === 'buy' &&
+                  Math.abs(preview.priceAfter - price) > 0.005 && (
+                    <p className="mt-3 text-sm text-text-muted">
+                      This trade moves {outcome.label} to{' '}
+                      <span className="font-mono">{Math.round(percent(preview.priceAfter))}%</span>.
+                    </p>
+                  )}
 
-            {/* §2.15a's reason prompt: "optional one-line 'why?' at trade time,
+                {/* §2.15a's reason prompt: "optional one-line 'why?' at trade time,
                 feeding the thread — the best forecasting education new users
                 can get." Optional and public, said plainly, because it posts
                 under their name with the position attached. */}
-            {side === 'buy' && !closed && (
-              <div className="mt-4">
-                <label className="block text-sm font-semibold" htmlFor="trade-reason">
-                  Why? <span className="font-normal text-text-muted">(optional)</span>
-                </label>
-                <input
-                  id="trade-reason"
-                  value={reason}
-                  onChange={(event) => setReason(event.target.value)}
-                  maxLength={500}
-                  placeholder="One line. It goes on the thread with your position."
-                  className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm outline-none focus:border-brand"
-                />
-              </div>
-            )}
+                {side === 'buy' && !closed && (
+                  <div className="mt-4">
+                    <label className="block text-sm font-semibold" htmlFor="trade-reason">
+                      Why? <span className="font-normal text-text-muted">(optional)</span>
+                    </label>
+                    <input
+                      id="trade-reason"
+                      value={reason}
+                      onChange={(event) => setReason(event.target.value)}
+                      maxLength={500}
+                      placeholder="One line. It goes on the thread with your position."
+                      className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm outline-none focus:border-brand"
+                    />
+                  </div>
+                )}
 
-            {blocker !== null && (
-              <p
-                className={`mt-3 rounded-md px-3 py-2 text-sm ${
-                  blocker.hard ? 'bg-fall-bg text-fall' : 'bg-chip text-text-muted'
-                }`}
-              >
-                {blocker.message}
-              </p>
-            )}
+                {blocker !== null && (
+                  <p
+                    className={`mt-3 rounded-md px-3 py-2 text-sm ${
+                      blocker.hard ? 'bg-fall-bg text-fall' : 'bg-chip text-text-muted'
+                    }`}
+                  >
+                    {blocker.message}
+                  </p>
+                )}
 
-            {error !== null && <p className="mt-3 text-sm text-fall">{error}</p>}
+                {error !== null && <p className="mt-3 text-sm text-fall">{error}</p>}
 
-            {/*
+                {/*
               The signed-out prompt. It was a red sentence set by a failed
               submit — the colour of a refusal, the behaviour of nothing at
               all — so it read as an error the person had caused and offered
               no way out of it. It is now stated before they press anything,
               and both routes out of it are one tap.
             */}
-            {token === null && !closed && (
-              <p className="mt-3 rounded-md bg-chip px-3 py-2.5 text-sm text-text-muted">
-                You need an account to stake.{' '}
-                <button
-                  type="button"
-                  onClick={() => signIn('/login')}
-                  className="font-bold text-brand underline"
-                >
-                  Sign in
-                </button>{' '}
-                or{' '}
-                <button
-                  type="button"
-                  onClick={() => signIn('/signup')}
-                  className="font-bold text-brand underline"
-                >
-                  create one
-                </button>
-                . We&apos;ll bring you back here with this amount ready.
-              </p>
-            )}
+                {token === null && !closed && (
+                  <p className="mt-3 rounded-md bg-chip px-3 py-2.5 text-sm text-text-muted">
+                    You need an account to stake.{' '}
+                    <button
+                      type="button"
+                      onClick={() => signIn('/login')}
+                      className="font-bold text-brand underline"
+                    >
+                      Sign in
+                    </button>{' '}
+                    or{' '}
+                    <button
+                      type="button"
+                      onClick={() => signIn('/signup')}
+                      className="font-bold text-brand underline"
+                    >
+                      create one
+                    </button>
+                    . We&apos;ll bring you back here with this amount ready.
+                  </p>
+                )}
 
-            {/*
+                {/*
               Said where the money is committed, not in a policy page.
               §2.16's honesty rule, and the one line that has to survive every
               future round of copy polish: a market position is not a deposit,
               and the sentence that says so belongs directly above the button
               that takes it.
             */}
-            {!closed && (
-              <p className="mt-3 text-xs leading-snug text-text-muted">
-                Positions can lose their full value. Winners are paid from the pot.
-              </p>
-            )}
+                {!closed && (
+                  <p className="mt-3 text-xs leading-snug text-text-muted">
+                    Positions can lose their full value. Winners are paid from the pot.
+                  </p>
+                )}
 
-            <button
-              type="button"
-              onClick={() => void submit()}
-              disabled={
-                closed ||
-                submitting ||
-                // Signed out, the button is a sign-in link in disguise, so it
-                // must not inherit the quote's disabled state: there is nothing
-                // to quote until they have an account, and a greyed-out button
-                // is how the old dead end looked.
-                (token !== null && (preview === null || blocker?.hard === true))
-              }
-              className={`mt-4 h-12 w-full rounded-lg text-md font-bold text-paper transition-transform active:scale-press disabled:opacity-45 ${tone}`}
-            >
-              {closed
-                ? `Trading is ${market.state === 'resolved' ? 'over' : 'frozen'}`
-                : token === null
-                  ? 'Sign in to stake'
-                  : queued
-                    ? 'Order placed — confirming…'
-                    : submitting
-                      ? 'Placing…'
-                      : side === 'buy'
-                        ? 'Place trade'
-                        : 'Sell shares'}
-            </button>
+                <button
+                  type="button"
+                  onClick={() => void submit()}
+                  disabled={
+                    closed ||
+                    submitting ||
+                    // Signed out, the button is a sign-in link in disguise, so it
+                    // must not inherit the quote's disabled state: there is nothing
+                    // to quote until they have an account, and a greyed-out button
+                    // is how the old dead end looked.
+                    (token !== null && (preview === null || blocker?.hard === true))
+                  }
+                  className={`mt-4 h-12 w-full rounded-lg text-md font-bold text-paper transition-transform active:scale-press disabled:opacity-45 ${tone}`}
+                >
+                  {closed
+                    ? `Trading is ${market.state === 'resolved' ? 'over' : 'frozen'}`
+                    : token === null
+                      ? 'Sign in to stake'
+                      : queued
+                        ? 'Order placed — confirming…'
+                        : submitting
+                          ? 'Placing…'
+                          : side === 'buy'
+                            ? 'Place trade'
+                            : 'Sell shares'}
+                </button>
+              </>
+            )}
           </motion.div>
         </>
       )}

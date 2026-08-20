@@ -512,6 +512,9 @@ export class MarketsController {
     activationPath: string;
     fundingClosesAt: Date | null;
     eventDate: Date;
+    freezeAt: Date | null;
+    frozenAt: Date | null;
+    freezeReason: string | null;
     voidDate: Date;
     potTotal: { toString(): string };
     liquidityParam: { toString(): string };
@@ -542,6 +545,12 @@ export class MarketsController {
       activationPath: market.activationPath,
       fundingClosesAt: market.fundingClosesAt?.toISOString() ?? null,
       eventDate: market.eventDate.toISOString(),
+      // §2.3, checklist rule 22. Sent as data rather than as a rendered
+      // sentence so the countdown ticks client-side and the badge, the
+      // disabled button and the sheet's refusal all derive from one fact.
+      freezeAt: market.freezeAt?.toISOString() ?? null,
+      frozenAt: market.frozenAt?.toISOString() ?? null,
+      freezeReason: market.freezeReason,
       voidDate: market.voidDate.toISOString(),
       pot: market.potTotal.toString(),
       // The Trade Ticket needs L and shares outstanding to quote the §2.3

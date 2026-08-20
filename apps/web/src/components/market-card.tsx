@@ -1,8 +1,11 @@
+'use client';
+
 import Link from 'next/link';
 
 import type { MarketSummary } from '@/lib/api';
-import { STATE_LABEL, kobo, money, untilFreeze } from '@/lib/format';
+import { STATE_LABEL, kobo, money } from '@/lib/format';
 import { ArgumentBar } from './argument-bar';
+import { FreezeCountdown, FrozenBadge, useFreeze } from './market/freeze-notice';
 import { Sparkline } from './sparkline';
 
 /**
@@ -15,7 +18,12 @@ import { Sparkline } from './sparkline';
  */
 export function MarketCard({ market }: { market: MarketSummary }) {
   const headline = market.outcomes[0];
-  const live = market.state === 'active';
+  // Past its freeze time counts as not live even while the state column still
+  // says `active` — the sweep that flips it runs on a schedule and can be late,
+  // and a card that reads ACTIVE beside a market the API refuses is a card that
+  // sends somebody to a dead Buy button.
+  const freeze = useFreeze(market);
+  const live = market.state === 'active' && !freeze.frozen;
 
   return (
     <Link
@@ -23,15 +31,19 @@ export function MarketCard({ market }: { market: MarketSummary }) {
       className="block rounded-lg border border-border bg-surface-raised p-4 transition-colors hover:border-rise focus-visible:outline focus-visible:outline-2 focus-visible:outline-rise"
     >
       <div className="flex items-center justify-between gap-3">
-        <span
-          className={`rounded-sm px-1.5 py-0.5 font-mono text-xs ${
-            live ? 'bg-rise text-paper' : 'bg-border text-text-muted'
-          }`}
-        >
-          {STATE_LABEL[market.state] ?? market.state.toUpperCase()}
-        </span>
+        {!live && freeze.frozen && market.state !== 'resolved' && market.state !== 'voided' ? (
+          <FrozenBadge />
+        ) : (
+          <span
+            className={`rounded-sm px-1.5 py-0.5 font-mono text-xs ${
+              live ? 'bg-rise text-paper' : 'bg-border text-text-muted'
+            }`}
+          >
+            {STATE_LABEL[market.state] ?? market.state.toUpperCase()}
+          </span>
+        )}
         <span className="font-mono text-xs text-text-muted">
-          {live ? untilFreeze(market.eventDate) : market.shelf}
+          {live ? <FreezeCountdown market={market} /> : market.shelf}
         </span>
       </div>
 

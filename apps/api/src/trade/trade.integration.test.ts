@@ -278,7 +278,7 @@ describe.skipIf(!TEST_DATABASE_URL)('binary official market, end to end', () => 
         amount: '100',
         requestId: 'req-frozen',
       }),
-    ).rejects.toThrow(/trading is closed/);
+    ).rejects.toThrow(/Trading closed/);
   });
 
   it('resolves: fee on the losing pool, payouts per share, platform cost zero', async () => {
