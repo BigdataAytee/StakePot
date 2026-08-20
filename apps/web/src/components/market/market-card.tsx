@@ -5,7 +5,7 @@ import Link from 'next/link';
 import type { MarketSummary } from '@/lib/api';
 import { STATE_LABEL, money, settlesOn } from '@/lib/format';
 import { binaryPair } from '@/lib/home';
-import { FreezeCountdown, FrozenBadge, useFreeze } from './freeze-notice';
+import { FreezeCountdown, useFreeze } from './freeze-notice';
 import { LiveChanceGauge, LivePercent } from './live-percent';
 import { PriceChange } from './price-change';
 import { MarketIcon } from './market-icon';
@@ -33,6 +33,8 @@ export function MarketCard({ market }: { market: MarketSummary }) {
   const freeze = useFreeze(market);
   const tradeable = market.state === 'active' && !freeze.frozen;
   const settled = market.state === 'resolved' || market.state === 'voided';
+  /** Inside the final hour, where a clock is the fact worth carrying. */
+  const closingSoon = freeze.phase === 'closing' || freeze.phase === 'final';
   // A Yes/No pair keeps its own order so that green always means Yes; anything
   // else is ranked, because there the leader is the story.
   const binary = binaryPair(market);
@@ -69,6 +71,9 @@ export function MarketCard({ market }: { market: MarketSummary }) {
       </div>
 
       {!tradeable ? (
+        /* Where the buttons would be, because that is the question a reader
+           is asking when they find none. Said once: this line replaced a
+           duplicate FROZEN pill on the footer row below. */
         <p className="flex-1 text-sm font-semibold uppercase tracking-wide text-text-muted">
           {freeze.frozen && !settled
             ? 'Frozen — trading closed'
@@ -101,21 +106,25 @@ export function MarketCard({ market }: { market: MarketSummary }) {
         </div>
       )}
 
+      {/*
+        Two facts and the star, and the second one changes rather than stacks.
+        The reference's footer carries volume alone; a settle date earned its
+        place because a reader scanning a grid needs to know whether a question
+        pays out this week or in six. A freeze time then made it three, which
+        at 390px wrapped "₦0 Vol." onto two lines — and three time-ish facts on
+        one line is not information, it is a data dump the eye slides off.
+
+        So the time slot holds whichever fact is actually live: the countdown
+        once trading is about to stop, the settle date the rest of the time.
+        They answer the same question at different distances.
+      */}
       <div className="mt-0.5 flex items-center gap-2 text-xs text-text-muted">
-        {freeze.frozen && !settled && <FrozenBadge />}
-        {money(market.volume24h)} Vol.
-        {/* When it pays out. The one fact a reader needs to know whether this
-            question is worth a view today or in six weeks, and it was not on
-            the card at all. */}
+        <span className="whitespace-nowrap">{money(market.volume24h)} Vol.</span>
         <span aria-hidden>·</span>
-        <span className="whitespace-nowrap">Settles {settlesOn(market.eventDate)}</span>
-        {/* Shown from the day the market opens, and it becomes a live
-            countdown of its own accord in the final hour. */}
-        {!freeze.frozen && (
-          <>
-            <span aria-hidden>·</span>
-            <FreezeCountdown market={market} className="whitespace-nowrap" />
-          </>
+        {closingSoon ? (
+          <FreezeCountdown market={market} className="whitespace-nowrap" />
+        ) : (
+          <span className="whitespace-nowrap">Settles {settlesOn(market.eventDate)}</span>
         )}
         <WatchStar marketId={market.id} question={market.question} />
       </div>

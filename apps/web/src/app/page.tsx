@@ -78,7 +78,15 @@ export default async function MarketsHome({
   const ordered = [...shown].sort(comparatorFor(sort));
 
   return (
-    <>
+    /*
+       A column that fills the viewport, so the footer sits on the bottom edge
+       rather than wherever the content happens to stop. With three markets on
+       the shelf it was landing a third of the way down a laptop screen with
+       500px of nothing under it, which reads as a page that failed to load
+       rather than a shelf that is small today. `flex-1` on the main region is
+       what does the work; everything else is unchanged.
+    */
+    <div className="flex min-h-screen flex-col">
       <Suspense fallback={<div className="h-[60px] border-b border-border" />}>
         <SiteHeader />
       </Suspense>
@@ -94,7 +102,7 @@ export default async function MarketsHome({
         />
       </Suspense>
 
-      <main className={`px-4 pb-[72px] sm:px-5 md:pb-0 ${PAGE_WIDTH}`}>
+      <main className={`flex-1 px-4 pb-[72px] sm:px-5 md:pb-0 ${PAGE_WIDTH}`}>
         {/* One subscription for the whole page, governed by the header switch. */}
         <LiveFeed marketIds={ordered.map((market) => market.id)} />
 
@@ -179,6 +187,6 @@ export default async function MarketsHome({
       {/* One sheet for the whole grid — a price button opens it in place
           rather than sending the reader off to a page first. */}
       <TradeSheetHost />
-    </>
+    </div>
   );
 }

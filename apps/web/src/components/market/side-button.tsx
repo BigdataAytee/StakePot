@@ -45,8 +45,24 @@ export function SideButton({
       ? 'bg-fall-bg text-fall hover:bg-fall hover:text-paper'
       : 'bg-rise-bg text-rise hover:bg-rise hover:text-paper';
 
+  /*
+   * Sizes read straight off the reference: `.ynbig` is 13px/700 at an 8px
+   * radius, `.minibtn` 11px/700 at 6px. Ours had drifted up to 14px, and a
+   * pair of full-width tinted blocks a size too large is what made every card
+   * read as two buttons with a question attached rather than a question with
+   * two ways in.
+   *
+   * The heights are ours, and only where a thumb is involved: a 38px primary
+   * action is a coin-toss to hit, so `min-h-11` puts the big pair on the 44px
+   * floor — then releases it at `sm:`, where a pointer is precise and the
+   * reference's tighter button is the right one. The mini chip keeps its small
+   * mark while a pseudo-element carries the target out to 44, the same trick
+   * the star uses, for the same reason.
+   */
   const shape =
-    size === 'big' ? 'flex-1 rounded-md py-2.5 text-base' : 'rounded-sm px-2.5 py-1 text-xs';
+    size === 'big'
+      ? 'flex-1 inline-flex min-h-11 items-center justify-center rounded-md py-2.5 text-note sm:min-h-0'
+      : "relative rounded-sm px-2.5 py-1 text-fine before:absolute before:left-1/2 before:top-1/2 before:h-11 before:min-w-[44px] before:-translate-x-1/2 before:-translate-y-1/2 before:content-['']";
 
   return (
     <button

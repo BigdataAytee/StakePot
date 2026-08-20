@@ -41,7 +41,15 @@ export function CategoryTabs({
   return (
     <nav aria-label="Categories" className="border-b border-border bg-surface">
       <div className={`px-4 sm:px-5 ${PAGE_WIDTH}`}>
-        <div className="flex gap-0.5 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        {/*
+          Bled to the screen edge on a phone, and that is the affordance.
+          Inside the page padding the row clipped flush against it, so
+          "Culture" ended at the margin and looked like the last tab —
+          the Watchlist beyond it was unreachable because nothing said it
+          was there. A half-visible next item is the oldest and quietest
+          way to say "keep going", and it costs no chrome.
+        */}
+        <div className="-mx-4 flex gap-0.5 overflow-x-auto px-4 [-ms-overflow-style:none] [scrollbar-width:none] sm:mx-0 sm:px-0 [&::-webkit-scrollbar]:hidden">
           {items.map((item) => {
             const on = item.key === active;
             return (

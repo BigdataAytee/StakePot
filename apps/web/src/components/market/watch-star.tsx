@@ -36,7 +36,15 @@ export function WatchStar({
         toggle(marketId);
       }}
       style={{ width: size, height: size }}
-      className="relative z-10 flex shrink-0 items-center justify-center rounded-sm hover:bg-chip"
+      /*
+       * The mark stays the reference's 26px; the *target* is 44. A star this
+       * size is comfortable to look at and a coin-toss to hit with a thumb,
+       * and the two are not the same measurement — so the hit area is extended
+       * past the visual with a pseudo-element rather than by inflating the
+       * icon. `z-10` keeps it above the card's stretched link, which would
+       * otherwise swallow the tap and navigate instead of starring.
+       */
+      className="relative z-10 flex shrink-0 items-center justify-center rounded-sm before:absolute before:left-1/2 before:top-1/2 before:h-11 before:w-11 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] hover:bg-chip"
     >
       <svg
         viewBox="0 0 24 24"
