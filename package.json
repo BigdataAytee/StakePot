@@ -2,7 +2,7 @@
   "name": "stakeam",
   "version": "0.1.0",
   "private": true,
-  "description": "StakeAm \u2014 Nigeria's prediction market. Phase 0 scaffold.",
+  "description": "StakeAm — Nigeria's prediction market. Phase 0 scaffold.",
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=20.11.0"
@@ -17,7 +17,7 @@
     "test:load": "k6 run scripts/load/smoke.js",
     "test:load:peak": "k6 run scripts/load/peak.js",
     "lint": "pnpm -r lint && pnpm run lint:vocabulary && pnpm run lint:wiring",
-    "//typecheck": "The apps resolve @stakeam/* through dist, so the libraries have to exist before tsc runs. Without this, typecheck fails on a clean checkout \u2014 which is exactly what CI is.",
+    "//typecheck": "The apps resolve @stakeam/* through dist, so the libraries have to exist before tsc runs. Without this, typecheck fails on a clean checkout — which is exactly what CI is.",
     "pretypecheck": "pnpm run libs",
     "typecheck": "pnpm -r typecheck",
     "migrate": "pnpm --filter @stakeam/api migrate",
@@ -45,12 +45,13 @@
       "deepmerge-ts": ">=8.0.0"
     }
   },
-  "//scale-trigger": "kafkajs \u2014 architecture \u00a712 scale trigger ONLY. Deliberately NOT installed in Phase 0. Add to apps/api dependencies when the events table / trade fan-out exceeds what Redis Streams can carry, and not before.",
+  "//scale-trigger": "kafkajs — architecture §12 scale trigger ONLY. Deliberately NOT installed in Phase 0. Add to apps/api dependencies when the events table / trade fan-out exceeds what Redis Streams can carry, and not before.",
   "devDependencies": {
     "@eslint/js": "^9.39.5",
     "@types/node": "^26.2.0",
     "eslint": "^9.39.0",
     "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.6",
     "prettier": "^3.6.2",
