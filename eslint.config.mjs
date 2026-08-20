@@ -40,6 +40,18 @@ export default tseslint.config(
     },
   },
   {
+    // The other rule set the product cannot get wrong. `packages/rules` is the
+    // single copy of the ticket-creation checklist, read by the AI engine, the
+    // admin wizard and the community wizard alike — an `any` here is a hole in
+    // all three at once.
+    files: ['packages/rules/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/explicit-module-boundary-types': 'error',
+      'no-console': 'error',
+    },
+  },
+  {
     // Integration stubs intentionally declare unimplemented signatures.
     files: ['apps/api/src/integrations/**/*.stub.ts'],
     rules: {

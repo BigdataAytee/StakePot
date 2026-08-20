@@ -1,0 +1,23 @@
+{
+  "name": "@stakeam/rules",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The ticket-creation checklist as code — one rule set for the AI engine, the admin wizard and community creation.",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch --preserveWatchOutput",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src --max-warnings=0",
+    "migrate": "node -e \"console.log('no database in packages/rules — run pnpm --filter @stakeam/api migrate')\""
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  }
+}
