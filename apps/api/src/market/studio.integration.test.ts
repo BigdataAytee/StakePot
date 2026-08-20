@@ -173,4 +173,76 @@ describe.skipIf(!TEST_DATABASE_URL)('market studio (integration)', () => {
     const after = entry.afterJson as { report?: { findings?: unknown[] } };
     expect(after.report?.findings?.length).toBeGreaterThan(20);
   });
+  // ------------------------------------------------ S3: running one again
+
+  it('rolls a settled market forward into a draft, and publishes nothing', async () => {
+    const published = await studio.publish({
+      draft: compliantTemplate(),
+      staffId,
+      ip: '10.0.0.1',
+      ...answers,
+      warningReason: 'the shelf is short an economy market this cycle',
+    });
+    const before = await prisma.market.findUniqueOrThrow({
+      where: { id: published.marketId },
+      include: { outcomes: true },
+    });
+    await prisma.market.update({ where: { id: before.id }, data: { state: 'resolved' } });
+
+    const next = await studio.nextInSeries({ marketId: before.id, cadence: 'monthly' });
+
+    // A draft, not a market: the count is unchanged, and what comes back has to
+    // go through the wizard's checklist like anything typed by hand.
+    expect(await prisma.market.count()).toBe(1);
+    expect(next.question).toBe(before.question);
+    expect(next.sourceName).toBe(before.sourceName);
+    expect(next.outcomes.map((outcome) => outcome.label).sort()).toEqual(
+      before.outcomes
+        .filter((o) => !o.isOther)
+        .map((o) => o.label)
+        .sort(),
+    );
+
+    const rolled = new Date(next.eventDate);
+    const original = before.eventDate;
+    expect(rolled.getTime()).toBeGreaterThan(original.getTime());
+    expect(rolled.getUTCDate()).toBe(original.getUTCDate());
+
+    // The void window is carried, not reset: it was chosen for how long this
+    // source takes to publish, and that does not change because the date did.
+    expect(new Date(next.voidDate).getTime() - rolled.getTime()).toBe(
+      before.voidDate.getTime() - original.getTime(),
+    );
+  });
+
+  it('offers a lopsided settle back with the advice attached, not just the number', async () => {
+    const published = await studio.publish({
+      draft: compliantTemplate(),
+      staffId,
+      ip: '10.0.0.1',
+      ...answers,
+      warningReason: 'the shelf is short an economy market this cycle',
+    });
+    await prisma.market.update({
+      where: { id: published.marketId },
+      data: { state: 'resolved' },
+    });
+    await prisma.marketOutcomeLog.create({
+      data: {
+        marketId: published.marketId,
+        initialSplit: '0.5',
+        finalSplit: '0.88',
+        volume: '250000',
+        disputeCount: 0,
+      },
+    });
+
+    const repeatable = await studio.repeatable();
+
+    expect(repeatable).toHaveLength(1);
+    // Checklist rule 35: a market that ran past 75/25 wants its threshold
+    // retuned rather than repeated, and an operator offered the market back
+    // without that sentence will repeat it.
+    expect(repeatable[0]?.retune).toMatch(/Move the threshold/);
+  });
 });

@@ -4,9 +4,10 @@ import { AlertTriangle, Eye } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { CreateTab } from './create-tab';
+import { LibraryTab } from './library-tab';
 import { ResearchTab } from './research-tab';
 import { SuggestionsTab } from './suggestions-tab';
-import { admin, type StudioMarketRow } from '@/lib/admin-api';
+import { admin, type StudioDraft, type StudioMarketRow } from '@/lib/admin-api';
 import { money } from '@/lib/format';
 
 /**
@@ -23,11 +24,13 @@ import { money } from '@/lib/format';
  * a Studio you cannot send somebody a link into is one they have to be talked
  * through.
  */
-const TABS = ['Manage', 'Create', 'Suggestions', 'Research'] as const;
+const TABS = ['Manage', 'Create', 'Library', 'Suggestions', 'Research'] as const;
 type Tab = (typeof TABS)[number];
 
 export default function MarketStudio() {
   const [tab, setTab] = useState<Tab>('Manage');
+  /** A repeat handed over from the Library, waiting for the wizard. */
+  const [seed, setSeed] = useState<StudioDraft | undefined>(undefined);
 
   // Read once on mount rather than through a router hook: the tab is a
   // deep-link target, not a route, and re-rendering the whole studio on every
@@ -75,7 +78,17 @@ export default function MarketStudio() {
       </div>
 
       {tab === 'Manage' && <ManageTab />}
-      {tab === 'Create' && <CreateTab />}
+      {/* Keyed on the seed so handing over a repeat remounts the wizard with
+          it, rather than leaving the previous draft half-overwritten. */}
+      {tab === 'Create' && <CreateTab key={seed?.question ?? 'blank'} seed={seed} />}
+      {tab === 'Library' && (
+        <LibraryTab
+          onReuse={(draft) => {
+            setSeed(draft);
+            choose('Create');
+          }}
+        />
+      )}
       {tab === 'Suggestions' && <SuggestionsTab />}
       {tab === 'Research' && <ResearchTab />}
     </div>

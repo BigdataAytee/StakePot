@@ -268,6 +268,29 @@ export interface StandingFlag extends HealthFlag {
   since: string | null;
 }
 
+/** A starter template as the Studio's Library tab lists it. */
+export interface LibraryTemplate {
+  id: string;
+  category: string;
+  active: boolean;
+  name: string;
+  question: string;
+}
+
+/** A settled market offered back, with what it did last time. */
+export interface RepeatableMarket {
+  id: string;
+  question: string;
+  sourceName: string;
+  eventDate: string;
+  volume: string;
+  finalSplit: number | null;
+  disputes: number;
+  warningsFired: string[];
+  /** Said plainly when the last run suggests moving the threshold. */
+  retune: string | null;
+}
+
 /** The pipeline's own vital signs — see the Studio's Research tab. */
 export interface CrawlHealth {
   sources: {
@@ -433,6 +456,16 @@ export const admin = {
       `/admin/studio/markets${state === undefined || state === '' ? '' : `?state=${state}`}`,
     ),
   /** Is the research pipeline actually finding anything? */
+  /** The starter templates, retired ones included. */
+  studioTemplates: () => request<LibraryTemplate[]>('/admin/studio/templates'),
+  /** Settled markets worth running again, with what happened last time. */
+  studioSeries: () => request<RepeatableMarket[]>('/admin/studio/series'),
+  /** The next one in a series, as a draft for the wizard. Publishes nothing. */
+  nextInSeries: (marketId: string, cadence: 'weekly' | 'fortnightly' | 'monthly') =>
+    request<StudioDraft>(`/admin/studio/markets/${marketId}/next`, {
+      method: 'POST',
+      body: JSON.stringify({ cadence }),
+    }),
   crawlHealth: () => request<CrawlHealth>('/admin/studio/crawl'),
   /** Run a research pass now instead of waiting for the five-minute sweep. */
   runCrawlPass: () =>

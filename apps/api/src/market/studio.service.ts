@@ -1,6 +1,12 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { review, type ReviewContext, type RuleReport, type TicketDraft } from '@stakeam/rules';
+import {
+  LOPSIDED_SPLIT,
+  review,
+  type ReviewContext,
+  type RuleReport,
+  type TicketDraft,
+} from '@stakeam/rules';
 
 import { AdminAuditService } from '../audit/admin-audit.service';
 import { duplicateOf } from '../community/draft-ranking';
@@ -40,6 +46,147 @@ export class StudioService {
     private readonly seeds: SeedService,
     private readonly audit: AdminAuditService,
   ) {}
+
+  /**
+   * The starter templates, retired ones included.
+   *
+   * The public `/community/templates` endpoint returns only what is active,
+   * because a creator should never be offered a template a submission would be
+   * refused for citing. Staff need the other half: a retired template is a
+   * decision somebody made, and it is only reviewable if it is visible.
+   */
+  async templates() {
+    const rows = await this.prisma.ticketTemplate.findMany({ orderBy: { id: 'asc' } });
+    return rows.map((row) => {
+      const template = row.templateJson as { name?: string; question?: string } | null;
+      return {
+        id: row.id,
+        category: row.category,
+        active: row.active,
+        name: template?.name ?? row.id,
+        question: template?.question ?? '',
+      };
+    });
+  }
+
+  /**
+   * Markets worth running again, with what happened last time.
+   *
+   * The MPC meets every two months whether or not anybody drafts a question
+   * about it, and re-typing the same market from scratch each cycle is how the
+   * criteria drift. So this offers the settled ones back — but never on their
+   * own. Each carries its final split, its volume, and any Part 5 flag that
+   * fired, because checklist rule 35 says a market that ran past 75/25 wants
+   * its threshold retuned rather than repeated, and an operator cannot retune
+   * what they cannot see.
+   */
+  async repeatable(limit = 20) {
+    const settled = await this.prisma.market.findMany({
+      where: { shelf: 'official', state: 'resolved' },
+      orderBy: { eventDate: 'desc' },
+      take: limit,
+      include: { outcomes: { orderBy: { ordinal: 'asc' } } },
+    });
+    if (settled.length === 0) return [];
+
+    const ids = settled.map((market) => market.id);
+    const [logs, flags] = await Promise.all([
+      this.prisma.marketOutcomeLog.findMany({ where: { marketId: { in: ids } } }),
+      this.prisma.marketHealthFlag.findMany({
+        where: { marketId: { in: ids } },
+        select: { marketId: true, rule: true },
+      }),
+    ]);
+
+    const logBy = new Map(logs.map((log) => [log.marketId, log]));
+    const flagsBy = new Map<string, string[]>();
+    for (const flag of flags) {
+      flagsBy.set(flag.marketId, [...(flagsBy.get(flag.marketId) ?? []), flag.rule]);
+    }
+
+    return settled.map((market) => {
+      const log = logBy.get(market.id);
+      const fired = [...new Set(flagsBy.get(market.id) ?? [])].sort();
+      const finalSplit = log === undefined ? null : Number(log.finalSplit.toString());
+      return {
+        id: market.id,
+        question: market.question,
+        sourceName: market.sourceName,
+        eventDate: market.eventDate.toISOString(),
+        volume: log === undefined ? '0' : log.volume.toString(),
+        finalSplit,
+        disputes: log?.disputeCount ?? 0,
+        warningsFired: fired,
+        // The advice, said once and plainly, so it is not left as an inference
+        // from two numbers on a row.
+        retune:
+          finalSplit !== null && finalSplit > LOPSIDED_SPLIT
+            ? `Ran ${Math.round(finalSplit * 100)}/${100 - Math.round(finalSplit * 100)}. Move the threshold before running it again.`
+            : fired.includes('35')
+              ? 'Was flagged lopsided while it was live, even though it settled closer. Worth a look at the threshold.'
+              : null,
+      };
+    });
+  }
+
+  /**
+   * The next market in a series, as a draft — never as a published market.
+   *
+   * Copies the question, the outcomes and the criteria, and rolls the dates
+   * forward by the cadence the operator picked. It publishes nothing: what
+   * comes back goes into the wizard, where the whole checklist runs on it like
+   * any other draft. That matters more than the convenience — a repeat is
+   * exactly the kind of market that gets published on the strength of the last
+   * one having been fine.
+   *
+   * The date is arithmetic on the previous event date rather than a guess at
+   * when the next MPC sits, and the operator is expected to correct it. Rule 2
+   * catches a date in the past; nothing but a person catches a date that is
+   * merely wrong, which is why this hands over a draft rather than a market.
+   */
+  async nextInSeries(params: {
+    marketId: string;
+    cadence: 'weekly' | 'fortnightly' | 'monthly';
+  }): Promise<TicketDraft> {
+    const market = await this.prisma.market.findUnique({
+      where: { id: params.marketId },
+      include: { outcomes: { orderBy: { ordinal: 'asc' } } },
+    });
+    if (market === null) throw new StudioError('that market no longer exists');
+
+    const criteria = asRecord(market.criteriaJson);
+    const roll = (from: Date): Date => {
+      const next = new Date(from.getTime());
+      if (params.cadence === 'weekly') next.setUTCDate(next.getUTCDate() + 7);
+      else if (params.cadence === 'fortnightly') next.setUTCDate(next.getUTCDate() + 14);
+      else next.setUTCMonth(next.getUTCMonth() + 1);
+      return next;
+    };
+
+    const eventDate = roll(market.eventDate);
+    // The void window is kept at whatever the last one used rather than reset
+    // to a default: it was chosen for how long this source takes to publish,
+    // and that does not change because the date did.
+    const voidGapMs = market.voidDate.getTime() - market.eventDate.getTime();
+
+    return {
+      question: market.question,
+      outcomes: market.outcomes
+        .filter((outcome) => !outcome.isOther)
+        .map((outcome) => ({
+          label: outcome.label,
+          criteria: criteria[outcome.label] ?? '',
+        })),
+      ...(market.outcomes.find((outcome) => outcome.isOther) === undefined
+        ? {}
+        : { otherLabel: market.outcomes.find((outcome) => outcome.isOther)?.label }),
+      sourceName: market.sourceName,
+      sourceUrl: market.sourceUrl,
+      eventDate: eventDate.toISOString(),
+      voidDate: new Date(eventDate.getTime() + voidGapMs).toISOString(),
+      edgeCases: asRecord(market.edgeCasesJson) as Record<string, string>,
+    };
+  }
 
   /**
    * Run the whole checklist over a draft, with the facts only the database
@@ -238,4 +385,11 @@ export class StudioService {
 function dayKey(date: Date): string | null {
   if (!Number.isFinite(date.getTime())) return null;
   return new Date(date.getTime() + 3_600_000).toISOString().slice(0, 10);
+}
+
+/** A jsonb column as an object, or an empty one. Never null, never an array. */
+function asRecord(value: unknown): Record<string, string> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, string>)
+    : {};
 }

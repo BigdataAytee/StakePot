@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Param,
   Post,
   Query,
   Req,
@@ -95,6 +96,19 @@ export class PublishDto extends ReviewDto {
  * moment — this compiled, typechecked and passed every test, then died on boot
  * with "Cannot access 'SourceSwitchDto' before initialization".
  */
+/**
+ * How far to roll the dates when repeating a market.
+ *
+ * Above the controller like every DTO here, and for a reason worth writing
+ * down once: `emitDecoratorMetadata` reads a parameter's type where the method
+ * is defined, so one declared below the class it is used in sits in its
+ * temporal dead zone and the API dies on boot having compiled, typechecked and
+ * passed every test.
+ */
+export class NextInSeriesDto {
+  @IsIn(['weekly', 'fortnightly', 'monthly']) cadence!: 'weekly' | 'fortnightly' | 'monthly';
+}
+
 export class SourceSwitchDto {
   @IsIn(['source', 'tier', 'all']) scope!: 'source' | 'tier' | 'all';
   @IsOptional() @IsString() sourceId?: string;
@@ -170,6 +184,48 @@ export class StudioController {
   @Roles('resolver', 'admin')
   async crawlHealth() {
     return this.crawl.report();
+  }
+
+  /**
+   * The template library, retired entries included.
+   *
+   * Read-only here. Retiring one is a decision that changes what every creator
+   * is offered, and it stays on the creators-desk route that already audits it
+   * — widening a mutation's roles to save a screen one fetch is how a
+   * permission matrix stops meaning anything.
+   */
+  @Get('templates')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async templates() {
+    return this.studio.templates();
+  }
+
+  /** Settled markets worth running again, with what happened last time. */
+  @Get('series')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async series() {
+    return this.studio.repeatable();
+  }
+
+  /**
+   * The next one in a series, as a draft for the wizard.
+   *
+   * Publishes nothing. What comes back goes through the same checklist as
+   * anything typed by hand, which is the point: a repeat is exactly the market
+   * that gets waved through because the last one was fine.
+   */
+  @Post('markets/:id/next')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async nextInSeries(@Param('id') id: string, @Body() body: NextInSeriesDto) {
+    try {
+      return await this.studio.nextInSeries({ marketId: id, cadence: body.cadence });
+    } catch (error) {
+      if (error instanceof StudioError) throw new BadRequestException(error.message);
+      throw error;
+    }
   }
 
   /**

@@ -48,9 +48,12 @@ function blankDraft(): StudioDraft {
   };
 }
 
-export function CreateTab() {
+export function CreateTab({ seed }: { seed?: StudioDraft | undefined } = {}) {
   const [step, setStep] = useState<Step>('Question');
-  const [draft, setDraft] = useState<StudioDraft>(blankDraft);
+  // Seeded when the Library hands over a repeat. The wizard is otherwise
+  // identical: the whole checklist still runs, because a market that ran fine
+  // last quarter is exactly the one nobody re-reads.
+  const [draft, setDraft] = useState<StudioDraft>(seed ?? blankDraft);
   const [edgeText, setEdgeText] = useState('');
   const [answers, setAnswers] = useState<Record<string, boolean>>({});
   const [attested, setAttested] = useState(false);
