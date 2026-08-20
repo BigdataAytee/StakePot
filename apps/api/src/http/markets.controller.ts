@@ -11,6 +11,8 @@ import { PriceCacheService } from '../realtime/price-cache.service';
 import { PriceWindowService } from '../market/price-window.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { PULSE_WINDOW_MINUTES, pulseOf } from './pulse';
+import { newestFirst, readMatchedFills } from '../orderbook/activity';
+import { KOBO_PER_SHARE } from '../orderbook/matching';
 
 /** Timeframes the §7.2 chart offers: 1H · 6H · 1D · 1W · ALL. */
 const TIMEFRAME_HOURS: Record<string, number | null> = {
@@ -373,16 +375,28 @@ export class MarketsController {
     const rows = await this.prisma.$queryRaw<
       { ts: bigint; buys: bigint; sells: bigint; volume: Prisma.Decimal | null }[]
     >`
+      WITH events AS (
+        SELECT "createdAt", side::text AS side, cost AS naira
+        FROM trades
+        WHERE "marketId" = ${id}
+          -- §2.4: a seed takes no side and moves no price. A bar for it would
+          -- draw the market's opening liquidity as if somebody had taken a view.
+          AND side <> 'seed'
+          AND "createdAt" >= ${since}
+        UNION ALL
+        -- Matched fills, counted once from the taker's side and valued at the
+        -- pair's whole stake — ₦1 a share, which is the money the trade moved.
+        -- See orderbook/activity.ts. Every matched fill opens a position, so it
+        -- is a buy in the sense this bar is coloured by: enter, not exit.
+        SELECT "createdAt", 'buy' AS side, shares AS naira
+        FROM order_fills
+        WHERE "marketId" = ${id} AND "createdAt" >= ${since}
+      )
       SELECT (floor(extract(epoch FROM "createdAt") / ${bucket}) * ${bucket})::bigint AS ts,
              count(*) FILTER (WHERE side = 'buy')::bigint  AS buys,
              count(*) FILTER (WHERE side = 'sell')::bigint AS sells,
-             sum(cost) AS volume
-      FROM trades
-      WHERE "marketId" = ${id}
-        -- §2.4: a seed takes no side and moves no price. A bar for it would
-        -- draw the market's opening liquidity as if somebody had taken a view.
-        AND side <> 'seed'
-        AND "createdAt" >= ${since}
+             sum(naira) AS volume
+      FROM events
       GROUP BY 1
       ORDER BY 1
       LIMIT 500
@@ -418,22 +432,19 @@ export class MarketsController {
   @Get(':id/pulse')
   async pulse(@Param('id') id: string) {
     const now = new Date();
+    const since = new Date(now.getTime() - PULSE_WINDOW_MINUTES * 60_000);
 
-    const [outcomes, recent, ticker] = await Promise.all([
+    const [outcomes, recent, potTicker, fillWindow, fillTicker] = await Promise.all([
       this.prisma.outcome.findMany({
         where: { marketId: id },
-        select: { id: true, label: true },
+        select: { id: true, label: true, ordinal: true },
       }),
       // The window plus one row for the last trade however old it is, in one
       // query: the ticker's own rows are the tail, and `pulseOf` takes the
       // latest `createdAt` it can see. An hour of trades on a busy market is a
       // few hundred rows on an index this query is already covered by.
       this.prisma.trade.findMany({
-        where: {
-          marketId: id,
-          side: { not: 'seed' },
-          createdAt: { gte: new Date(now.getTime() - PULSE_WINDOW_MINUTES * 60_000) },
-        },
+        where: { marketId: id, side: { not: 'seed' }, createdAt: { gte: since } },
         select: { userId: true, side: true, createdAt: true },
         orderBy: { createdAt: 'desc' },
         take: 1000,
@@ -453,9 +464,58 @@ export class MarketsController {
           createdAt: true,
         },
       }),
+      /*
+        And the same two reads against the book.
+
+        A market that matches peer-to-peer was reporting the pot's traffic and
+        calling it the market's: somebody could watch a fill land and see
+        "2 trades/hr" underneath it. The pulse is a claim about how busy a
+        market is, and a claim that counts one of its two venues is false in
+        the direction that makes a busy market look dead.
+      */
+      this.prisma.orderFill.findMany({
+        where: { marketId: id, createdAt: { gte: since } },
+        select: {
+          id: true,
+          takerUserId: true,
+          takerSide: true,
+          outcomeId: true,
+          priceKobo: true,
+          shares: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1000,
+      }),
+      this.prisma.orderFill.findMany({
+        where: { marketId: id },
+        select: {
+          id: true,
+          takerUserId: true,
+          takerSide: true,
+          outcomeId: true,
+          priceKobo: true,
+          shares: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 15,
+      }),
     ]);
 
     const labels = new Map(outcomes.map((outcome) => [outcome.id, outcome.label]));
+    const asFill = (row: (typeof fillWindow)[number]) => ({
+      id: row.id,
+      takerUserId: row.takerUserId,
+      takerSide: row.takerSide as 'buy' | 'sell',
+      outcomeId: row.outcomeId,
+      priceKobo: row.priceKobo,
+      shares: new Decimal(row.shares.toString()),
+      createdAt: row.createdAt,
+    });
+
+    const matchedWindow = readMatchedFills(fillWindow.map(asFill), outcomes);
+    const matchedTicker = readMatchedFills(fillTicker.map(asFill), outcomes);
 
     // A market whose last trade was yesterday has an empty window, and "when
     // did anything last happen" is the one figure a quiet market most needs to
@@ -463,33 +523,65 @@ export class MarketsController {
     // window did not already return: a trade counted twice is a market
     // reporting twice the activity it has, which on the pressure bar is a
     // crowd that does not exist.
-    const cutoff = now.getTime() - PULSE_WINDOW_MINUTES * 60_000;
+    const cutoff = since.getTime();
     const seen = [
       ...recent,
-      ...ticker
+      ...potTicker
         .filter((trade) => trade.createdAt.getTime() < cutoff)
-        .map((trade) => ({
-          userId: trade.userId,
-          side: trade.side,
-          createdAt: trade.createdAt,
-        })),
+        .map((trade) => ({ userId: trade.userId, side: trade.side, createdAt: trade.createdAt })),
+      ...matchedWindow.map((row) => ({
+        userId: row.userId,
+        side: row.side,
+        createdAt: row.createdAt,
+      })),
+      ...matchedTicker
+        .filter((row) => row.createdAt.getTime() < cutoff)
+        .map((row) => ({ userId: row.userId, side: row.side, createdAt: row.createdAt })),
     ];
 
-    return {
-      ...pulseOf(seen, now),
-      ticker: ticker.map((trade) => ({
+    /*
+      One feed, two venues, labelled.
+
+      `venue` is not decoration. A matched row is a claim on an exact ₦1 a
+      share and a pot row is a claim on a share of a pot, and the whole product
+      keeps those apart everywhere else — a ticker that quietly mixed them
+      would be the one place it did not.
+    */
+    const ticker = [
+      ...potTicker.map((trade) => ({
         id: trade.id,
         // The same per-market alias the activity feed uses, for the same
         // reason: a trade is not a post, and nobody signed up to have their
         // positions read off a public stream under a name.
         actor: pseudonym(id, trade.userId),
+        venue: 'pot' as const,
         side: trade.side,
         outcomeId: trade.outcomeId,
         label: labels.get(trade.outcomeId) ?? '',
         shares: trade.shares.toString(),
         cost: trade.cost.toString(),
         price: trade.priceAfter.toString(),
-        ts: trade.createdAt.toISOString(),
+        ts: trade.createdAt,
+      })),
+      ...matchedTicker.map((row) => ({
+        id: row.id,
+        actor: pseudonym(id, row.userId),
+        venue: 'matched' as const,
+        side: row.side,
+        outcomeId: row.outcomeId,
+        label: row.label,
+        shares: row.shares.toString(),
+        cost: row.naira.toString(),
+        price: new Decimal(row.priceKobo).div(KOBO_PER_SHARE).toString(),
+        ts: row.createdAt,
+      })),
+    ];
+
+    return {
+      ...pulseOf(seen, now),
+      ticker: newestFirst(ticker, (row) => row.ts, 15).map((row) => ({
+        ...row,
+        ts: row.ts.toISOString(),
       })),
     };
   }
@@ -516,7 +608,7 @@ export class MarketsController {
         sourceName: true,
         outcomes: {
           orderBy: { ordinal: 'asc' },
-          select: { id: true, label: true },
+          select: { id: true, label: true, ordinal: true },
         },
       },
     });
@@ -524,7 +616,7 @@ export class MarketsController {
 
     const labels = new Map(market.outcomes.map((o) => [o.id, o.label]));
 
-    const [windows, biggest, holders, activity, coverage] = await Promise.all([
+    const [windows, biggest, holders, activity, fills, coverage] = await Promise.all([
       // Since it opened, not since yesterday: "high" on a quote page means the
       // highest it has ever been, and a 24h high labelled "High" would be a
       // different number every morning for a price that had not moved.
@@ -555,6 +647,23 @@ export class MarketsController {
           shares: true,
           cost: true,
           priceAfter: true,
+          createdAt: true,
+        },
+      }),
+      // And the book's side of the same feed. Read the same way the pulse
+      // reads it — once, from the taker — so the two lists cannot disagree
+      // about what happened on the same market.
+      this.prisma.orderFill.findMany({
+        where: { marketId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: {
+          id: true,
+          takerUserId: true,
+          takerSide: true,
+          outcomeId: true,
+          priceKobo: true,
+          shares: true,
           createdAt: true,
         },
       }),
@@ -620,21 +729,51 @@ export class MarketsController {
         latest: latestOfficialFigure(coverage),
         readings: officialSeries(coverage),
       }),
-      activity: activity.map((trade) => ({
-        id: trade.id,
-        // Pseudonymous, and per-market. A trade is not a post: somebody who
-        // has said nothing in the thread has not agreed to have their
-        // positions read off a public feed. Salting with the market id stops
-        // the same handle being followed from one market to the next.
-        actor: pseudonym(id, trade.userId),
-        side: trade.side,
-        outcomeId: trade.outcomeId,
-        label: labels.get(trade.outcomeId) ?? '',
-        shares: trade.shares.toString(),
-        cost: trade.cost.toString(),
-        price: trade.priceAfter.toString(),
-        ts: trade.createdAt.toISOString(),
-      })),
+      activity: newestFirst(
+        [
+          ...activity.map((trade) => ({
+            id: trade.id,
+            // Pseudonymous, and per-market. A trade is not a post: somebody who
+            // has said nothing in the thread has not agreed to have their
+            // positions read off a public feed. Salting with the market id stops
+            // the same handle being followed from one market to the next.
+            actor: pseudonym(id, trade.userId),
+            venue: 'pot' as const,
+            side: trade.side,
+            outcomeId: trade.outcomeId,
+            label: labels.get(trade.outcomeId) ?? '',
+            shares: trade.shares.toString(),
+            cost: trade.cost.toString(),
+            price: trade.priceAfter.toString(),
+            ts: trade.createdAt,
+          })),
+          ...readMatchedFills(
+            fills.map((fill) => ({
+              id: fill.id,
+              takerUserId: fill.takerUserId,
+              takerSide: fill.takerSide as 'buy' | 'sell',
+              outcomeId: fill.outcomeId,
+              priceKobo: fill.priceKobo,
+              shares: new Decimal(fill.shares.toString()),
+              createdAt: fill.createdAt,
+            })),
+            market.outcomes,
+          ).map((row) => ({
+            id: row.id,
+            actor: pseudonym(id, row.userId),
+            venue: 'matched' as const,
+            side: row.side as string,
+            outcomeId: row.outcomeId,
+            label: row.label,
+            shares: row.shares.toString(),
+            cost: row.naira.toString(),
+            price: new Decimal(row.priceKobo).div(KOBO_PER_SHARE).toString(),
+            ts: row.createdAt,
+          })),
+        ],
+        (row) => row.ts,
+        12,
+      ).map((row) => ({ ...row, ts: row.ts.toISOString() })),
     };
   }
 

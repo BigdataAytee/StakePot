@@ -102,6 +102,14 @@ export interface ActivityEntry {
   id: string;
   /** A per-market pseudonym. Never a handle — a trade is not a post. */
   actor: string;
+  /**
+   * Where it filled.
+   *
+   * Not decoration: a matched row is a claim on an exact ₦1 a share and a pot
+   * row is a claim on a share of a pot. Every other surface keeps those apart,
+   * and a feed that quietly mixed them would be the one place that did not.
+   */
+  venue?: 'matched' | 'pot';
   side: 'buy' | 'sell' | 'seed';
   outcomeId: string;
   label: string;

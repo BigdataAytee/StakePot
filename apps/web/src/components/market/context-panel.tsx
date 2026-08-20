@@ -362,6 +362,11 @@ function Activity({ context }: { context: MarketContext | null }) {
               {entry.side === 'buy' ? 'bought' : 'sold'}
             </span>
             <b>{entry.label}</b>
+            {entry.venue === 'matched' && (
+              <span className="rounded-sm bg-rise/15 px-1 font-mono text-fine font-bold text-rise">
+                matched
+              </span>
+            )}
             <span className="text-text-muted">
               for <span className="font-mono text-text">{money(entry.cost)}</span>
             </span>

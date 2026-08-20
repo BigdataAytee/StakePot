@@ -17,6 +17,8 @@ import { resetDatabase } from '../testing/reset';
 import { ResolutionService } from '../trade/resolution.service';
 import { TradeService } from '../trade/trade.service';
 import { OrderBookService } from './orderbook.service';
+import { MarketsController } from '../http/markets.controller';
+import { PriceWindowService } from '../market/price-window.service';
 
 /**
  * The matching layer against the real database.
@@ -559,6 +561,64 @@ describe.skipIf(!TEST_DATABASE_URL)('order book (integration)', () => {
     // Everything is settled and nothing is stranded.
     expect((await escrowIn(market.id)).abs().lt('1e-9')).toBe(true);
     await assertNothingInvented(market.id);
+  });
+
+  it('counts a matched fill on the pulse, the ticker and the volume bars', async () => {
+    const market = await makeMarket();
+    const [yes] = market.outcomes;
+    const { trades } = tradingOn([market.id]);
+    await stageFillableBook(trades, market, 'feed');
+    const taker = await makeTrader('feed-taker@example.ng');
+
+    const controller = new MarketsController(
+      prisma,
+      { read: async () => null } as unknown as PriceCacheService,
+      new PriceWindowService(prisma),
+    );
+
+    const before = await controller.pulse(market.id);
+
+    // A purely matched buy: ₦600 lifts the whole of the resting ask at 60.
+    const report = await trades.buy({
+      marketId: market.id,
+      outcomeId: yes!.id,
+      userId: taker,
+      amount: '600',
+      requestId: 'feed-fill',
+      limitKobo: 60,
+    });
+    expect(report.matched).not.toBeNull();
+    expect(report.trade).toBeNull();
+
+    const after = await controller.pulse(market.id);
+
+    /*
+      The regression this exists for.
+
+      Every one of these read the trade record, and a purely matched fill
+      writes no trade — so a market could show a fill land and "2 trades/hr"
+      underneath it. A pulse that counts one of two venues is false in the
+      direction that makes a busy market look dead.
+    */
+    expect(after.tradesPerHour).toBeGreaterThan(before.tradesPerHour);
+    expect(after.lastTradeAt).not.toBe(before.lastTradeAt);
+
+    const matched = after.ticker.find((row) => row.venue === 'matched');
+    expect(matched).toBeDefined();
+    // Read back as the trade that was made, and valued at the pair's whole
+    // stake — ₦1 a share, which is the money that moved.
+    expect(matched?.label).toBe(yes!.label);
+    expect(matched?.cost).toBe('1000');
+    expect(matched?.side).toBe('buy');
+
+    const context = await controller.context(market.id);
+    expect(context.activity.some((row) => row.venue === 'matched')).toBe(true);
+
+    const flow = await controller.flow(market.id, '1D');
+    const volume = flow.buckets.reduce((total, bucket) => total + Number(bucket.volume), 0);
+    // The pot legs from staging plus the pair's ₦1,000. The bars would have
+    // been ₦1,000 short of the market's own activity.
+    expect(volume).toBeGreaterThanOrEqual(1000);
   });
 
   it('leaves the market pot-only when the flag is off', async () => {

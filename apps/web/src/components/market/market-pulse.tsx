@@ -207,6 +207,15 @@ function Ticker({ pulse }: { pulse: MarketPulse }) {
                 {trade.side === 'buy' ? 'bought' : 'sold'}
               </span>
               <span className="min-w-0 flex-1 truncate">{trade.label}</span>
+              {/* Marked, because the two are different promises everywhere else
+                on this product and a stream is no place to start blurring
+                them. Absent on a pot row rather than labelled "pot": the pot
+                is the default and a badge on every line would be noise. */}
+              {trade.venue === 'matched' && (
+                <span className="rounded-sm bg-rise/15 px-1 font-mono text-fine font-bold text-rise">
+                  matched
+                </span>
+              )}
               <span className="whitespace-nowrap font-mono tabular-nums">{money(trade.cost)}</span>
               <span className="whitespace-nowrap font-mono tabular-nums text-text-muted">
                 {Math.round(Number.parseFloat(trade.price) * 100)}%
