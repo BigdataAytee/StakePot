@@ -10,6 +10,7 @@ import { sourceWatchOf } from '../intel/source-watch';
 import { PriceCacheService } from '../realtime/price-cache.service';
 import { PriceWindowService } from '../market/price-window.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PULSE_WINDOW_MINUTES, pulseOf } from './pulse';
 
 /** Timeframes the §7.2 chart offers: 1H · 6H · 1D · 1W · ALL. */
 const TIMEFRAME_HOURS: Record<string, number | null> = {
@@ -327,6 +328,101 @@ export class MarketsController {
   }
 
   /**
+   * A market's pulse — how busy it is, right now.
+   *
+   * Separate from `context` because it answers a different question on a
+   * different clock. Context is what this market is about and changes when the
+   * world does; the pulse is what the room is doing and changes every time
+   * somebody trades. Folding it into the context response would mean either
+   * refetching sixty news items to learn that one trade landed, or letting the
+   * activity feed go stale to avoid it.
+   *
+   * Everything below is counted from executed trades. Nothing here is a price,
+   * nothing here is derived from a price, and nothing here can move one — see
+   * the note at the top of `pulse.ts`. Seeds are excluded throughout: a seed
+   * takes no side and moves no price (§2.4), so counting it as activity would
+   * report a busy market to somebody looking at one where nobody has traded.
+   */
+  @Get(':id/pulse')
+  async pulse(@Param('id') id: string) {
+    const now = new Date();
+
+    const [outcomes, recent, ticker] = await Promise.all([
+      this.prisma.outcome.findMany({
+        where: { marketId: id },
+        select: { id: true, label: true },
+      }),
+      // The window plus one row for the last trade however old it is, in one
+      // query: the ticker's own rows are the tail, and `pulseOf` takes the
+      // latest `createdAt` it can see. An hour of trades on a busy market is a
+      // few hundred rows on an index this query is already covered by.
+      this.prisma.trade.findMany({
+        where: {
+          marketId: id,
+          side: { not: 'seed' },
+          createdAt: { gte: new Date(now.getTime() - PULSE_WINDOW_MINUTES * 60_000) },
+        },
+        select: { userId: true, side: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+        take: 1000,
+      }),
+      this.prisma.trade.findMany({
+        where: { marketId: id, side: { not: 'seed' } },
+        orderBy: { createdAt: 'desc' },
+        take: 15,
+        select: {
+          id: true,
+          userId: true,
+          outcomeId: true,
+          side: true,
+          shares: true,
+          cost: true,
+          priceAfter: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+
+    const labels = new Map(outcomes.map((outcome) => [outcome.id, outcome.label]));
+
+    // A market whose last trade was yesterday has an empty window, and "when
+    // did anything last happen" is the one figure a quiet market most needs to
+    // be able to answer. The ticker rows carry it — but only the ones the
+    // window did not already return: a trade counted twice is a market
+    // reporting twice the activity it has, which on the pressure bar is a
+    // crowd that does not exist.
+    const cutoff = now.getTime() - PULSE_WINDOW_MINUTES * 60_000;
+    const seen = [
+      ...recent,
+      ...ticker
+        .filter((trade) => trade.createdAt.getTime() < cutoff)
+        .map((trade) => ({
+          userId: trade.userId,
+          side: trade.side,
+          createdAt: trade.createdAt,
+        })),
+    ];
+
+    return {
+      ...pulseOf(seen, now),
+      ticker: ticker.map((trade) => ({
+        id: trade.id,
+        // The same per-market alias the activity feed uses, for the same
+        // reason: a trade is not a post, and nobody signed up to have their
+        // positions read off a public stream under a name.
+        actor: pseudonym(id, trade.userId),
+        side: trade.side,
+        outcomeId: trade.outcomeId,
+        label: labels.get(trade.outcomeId) ?? '',
+        shares: trade.shares.toString(),
+        cost: trade.cost.toString(),
+        price: trade.priceAfter.toString(),
+        ts: trade.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  /**
    * The ticket's context panel (§7.2f, extended): what the price has done since
    * it opened, how the room is positioned, and what has just happened.
    *
@@ -450,6 +546,7 @@ export class MarketsController {
         sourceName: market.sourceName,
         question: market.question,
         latest: latestOfficialFigure(coverage),
+        readings: officialSeries(coverage),
       }),
       activity: activity.map((trade) => ({
         id: trade.id,
@@ -678,4 +775,40 @@ function latestOfficialFigure(
     if (value !== undefined) return { value, publishedAt: row.item.publishedAt };
   }
   return null;
+}
+
+/**
+ * Every figure the resolving body has published for this market, for plotting
+ * against the threshold.
+ *
+ * Tier 1 only, for the same reason as the latest figure: a newspaper reporting
+ * a CBN print is not the CBN, and a line built from second-hand numbers would
+ * be a chart of what the press said rather than of what happened.
+ *
+ * The first value of `factsJson` is the reading, which is the convention the
+ * extraction rules write to. An item with no facts extracted is skipped rather
+ * than guessed at — an absent point leaves a gap, and a guessed one puts a
+ * wrong number on a money screen.
+ */
+function officialSeries(
+  coverage: readonly {
+    item: {
+      publishedAt: Date;
+      factsJson: unknown;
+      source: { name: string; tier: string };
+    };
+  }[],
+): { value: string | number; publishedAt: Date; outlet: string }[] {
+  const points: { value: string | number; publishedAt: Date; outlet: string }[] = [];
+
+  for (const row of coverage) {
+    if (row.item.source.tier !== 'resolution') continue;
+    const facts = row.item.factsJson;
+    if (facts === null || typeof facts !== 'object' || Array.isArray(facts)) continue;
+    const [value] = Object.values(facts as Record<string, string | number>);
+    if (value === undefined) continue;
+    points.push({ value, publishedAt: row.item.publishedAt, outlet: row.item.source.name });
+  }
+
+  return points;
 }

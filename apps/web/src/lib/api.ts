@@ -136,6 +136,13 @@ export interface SourceWatch {
   threshold: { label: string; value: number; direction: 'below' | 'above' } | null;
   /** Null whenever either half is missing, which is most of the time. */
   meetsThreshold: boolean | null;
+  /**
+   * Every reading the named body has published, oldest first.
+   *
+   * The underlying quantity, not the price — a naira rate or a CPI print,
+   * moving on its own schedule and in its own units. Empty for most markets.
+   */
+  series: { value: number; at: string; outlet: string }[];
 }
 
 export interface MarketContext {
@@ -151,6 +158,32 @@ export interface MarketContext {
     ts: string;
   } | null;
   activity: ActivityEntry[];
+}
+
+/**
+ * How busy a market is right now, counted from executed trades and from
+ * nothing else.
+ *
+ * Every field here is activity. None of it is a price, none of it is derived
+ * from one, and none of it may be read as one — see apps/api/src/http/pulse.ts.
+ */
+export interface MarketPulse {
+  /** The server's clock when this was read, so the client can age it. */
+  now: string;
+  windowMinutes: number;
+  tradesPerHour: number;
+  trend: 'rising' | 'falling' | 'steady';
+  tradersActive: number;
+  activeMinutes: number;
+  lastTradeAt: string | null;
+  pressure: {
+    buys: number;
+    sells: number;
+    /** Buys as a share of buys and sells. Null when nothing has traded. */
+    buyShare: number | null;
+    windowMinutes: number;
+  };
+  ticker: ActivityEntry[];
 }
 
 export interface SponsorView {
@@ -218,6 +251,8 @@ export const api = {
   seed: (id: string) => get<SeedComposition>(`/community/markets/${id}/seed`),
   /** Everything under the chart: key stats, biggest move, recent activity. */
   context: (id: string) => get<MarketContext>(`/markets/${id}/context`),
+  /** How busy the market is right now — trade counts, never a price. */
+  pulse: (id: string) => get<MarketPulse>(`/markets/${id}/pulse`),
   /** Omit `outcomeId` to get every outcome's series — the multi-line overlay. */
   history: (id: string, outcomeId: string | undefined, tf: string) =>
     get<PricePoint[]>(

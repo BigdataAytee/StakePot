@@ -54,6 +54,15 @@ export function thresholdOf(question: string): Threshold | null {
   };
 }
 
+/** One published reading, plotted against the threshold. */
+export interface WatchPoint {
+  readonly value: number;
+  /** When the source published it — not when we read it. */
+  readonly at: string;
+  /** Who published it, so no number on the screen is unattributed. */
+  readonly outlet: string;
+}
+
 export interface SourceWatch {
   readonly sourceName: string;
   /** The latest figure that source published, as written. Null if none. */
@@ -67,6 +76,22 @@ export interface SourceWatch {
    * Null when either half is missing — and null is common, which is the point.
    */
   readonly meetsThreshold: boolean | null;
+  /**
+   * Every reading the named body has published for this market, oldest first.
+   *
+   * This is the underlying quantity — a naira rate, a CPI print — and it is
+   * emphatically not the price. The price is what traders think the answer
+   * will be; this is the thing they are guessing about, moving on its own
+   * schedule and in its own units. They belong on the same screen and never on
+   * the same axis, which is why each point carries the outlet that published
+   * it and the moment it was published: a figure on a money screen with no
+   * name and no timestamp on it is a rumour.
+   *
+   * Empty for almost every market. A one-off print, a match result, an
+   * election — none of them are a series, and drawing a line through a single
+   * point would be inventing a trend.
+   */
+  readonly series: readonly WatchPoint[];
 }
 
 /** Put the two halves together, saying null wherever a half is missing. */
@@ -74,9 +99,22 @@ export function sourceWatchOf(input: {
   sourceName: string;
   question: string;
   latest: { value: string | number; publishedAt: Date } | null;
+  /** Every official reading, in any order. Unparseable ones are dropped. */
+  readings?: readonly { value: string | number; publishedAt: Date; outlet: string }[];
 }): SourceWatch {
   const threshold = thresholdOf(input.question);
   const latestValue = input.latest === null ? null : numeric(String(input.latest.value));
+
+  const series = (input.readings ?? [])
+    .map((reading) => ({
+      value: numeric(String(reading.value)),
+      at: reading.publishedAt.toISOString(),
+      outlet: reading.outlet,
+    }))
+    // A reading that will not parse as a number cannot be plotted. Dropped
+    // rather than zeroed: a zero on this line is a naira rate of nothing.
+    .filter((point): point is WatchPoint => point.value !== null)
+    .sort((left, right) => left.at.localeCompare(right.at));
 
   return {
     sourceName: input.sourceName,
@@ -90,6 +128,10 @@ export function sourceWatchOf(input: {
         : threshold.direction === 'below'
           ? latestValue < threshold.value
           : latestValue > threshold.value,
+    // One point is a reading, not a series. Kept as a single-element list
+    // rather than emptied, so the caller decides whether to draw it — the
+    // strip prints it as a figure and the sparkline needs two.
+    series,
   };
 }
 

@@ -38,6 +38,8 @@ import { PAGE_WIDTH } from '@/lib/layout';
 import { recordView } from '@/lib/creator-api';
 import { STATE_LABEL, money, percent } from '@/lib/format';
 import { ContextPanel } from '@/components/market/context-panel';
+import { LiveContext } from '@/components/market/live-context';
+import { MarketPulse } from '@/components/market/market-pulse';
 import { QuoteStrip } from '@/components/market/quote-strip';
 import { PositionPanel } from './position-panel';
 
@@ -96,6 +98,21 @@ export function TicketView({
    * round trips that can disagree with each other for a second.
    */
   const [context, setContext] = useState<MarketContext | null>(null);
+  /**
+   * The context's own cadence.
+   *
+   * A minute, and deliberately not the socket. Price ticks arrive when
+   * somebody trades; the world underneath this market changes when a source
+   * publishes, which is a different event on a different clock — refetching
+   * sixty news items every time a trade lands would be the wrong query on the
+   * wrong trigger, and would still miss the print that arrives during an hour
+   * in which nobody traded at all.
+   */
+  const [refreshed, setRefreshed] = useState(0);
+  useEffect(() => {
+    const timer = window.setInterval(() => setRefreshed((count) => count + 1), 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   useEffect(() => {
     let live = true;
     api
@@ -107,7 +124,7 @@ export function TicketView({
     return () => {
       live = false;
     };
-  }, [initial.id, filled]);
+  }, [initial.id, filled, refreshed]);
 
   const headline = initial.outcomes[0];
   useMarketFeed(initial.id);
@@ -266,6 +283,21 @@ export function TicketView({
   // beside each price snapshot, so this costs no extra request.
   const potSeries = history.map((point) => point.pot);
 
+  /**
+   * When this market last traded, for the age beside the chart's live edge.
+   *
+   * The socket's tick timestamp is the moment a trade moved the price, so it
+   * is the freshest answer available and costs nothing. It is zero before the
+   * first tick of a session — the store seeds a market with the prices the
+   * server rendered and no time to go with them — so the activity feed is the
+   * fallback, and null is the honest answer for a market that has never
+   * traded.
+   */
+  const lastTradeAt =
+    live !== undefined && live.at > 0
+      ? new Date(live.at).toISOString()
+      : (context?.activity[0]?.ts ?? null);
+
   const selected =
     initial.outcomes.find((row) => row.id === picked) ?? headline ?? initial.outcomes[0];
   const selectedPrice = selected === undefined ? 0 : percent(prices[selected.id] ?? selected.price);
@@ -392,6 +424,7 @@ export function TicketView({
                   live={initial.state === 'active'}
                   volume={initial.volume24h}
                   settlesAt={initial.eventDate}
+                  lastTradeAt={lastTradeAt}
                 />
 
                 {/* The argument bar: who is winning, as one shape. */}
@@ -400,6 +433,25 @@ export function TicketView({
                 </div>
               </div>
             )}
+
+            {/*
+              What is actually happening, and how busy the room is — the two
+              things that keep a market legible between trades.
+
+              Both are read-only and neither can move a price: the strip is
+              published figures with their sources on them, and the pulse is a
+              count of trades that already executed. They sit here, under the
+              chart and above the outcome list, because that is the order the
+              question is asked in — what is the world doing, who is trading
+              on it, and only then what would you like to do about it.
+
+              Absent while a market is still gathering its backers: a funding
+              market has no trades to have a pulse from, and a strip of empty
+              rows would read as a pipeline that is watching and finding
+              nothing.
+            */}
+            {!funding && <LiveContext market={initial} context={context} />}
+            {!funding && <MarketPulse marketId={initial.id} tradedAt={live?.at} />}
 
             <ResolvedReceipt market={initial} />
             <ResolutionStatus market={initial} />
