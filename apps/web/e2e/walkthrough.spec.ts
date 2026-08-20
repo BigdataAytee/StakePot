@@ -246,7 +246,10 @@ test.describe('the walkthrough', () => {
     await signIn(page, email, password);
     await page.goto('/market/wt-naira');
     await expect(page.getByRole('heading', { name: /naira close below/i })).toBeVisible();
-    await expect(page.getByText('Pot')).toBeVisible();
+    // Exact, because the risk line above the trade button now ends "…paid from
+    // the pot" and a substring match finds both. The quote strip's cell label
+    // is the thing this assertion is actually about.
+    await expect(page.getByText('Pot', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: /Buy Yes/i })).toBeVisible();
     await capture(page, 'ticket', testInfo);
   });
@@ -438,7 +441,9 @@ test.describe('the walkthrough', () => {
     await capture(page, 'market-settled', testInfo);
 
     await page.goto('/wallet');
-    await expect(page.getByText('Winnings').first()).toBeVisible();
+    // "Returns on settlement", not "Winnings" — the wallet labels a settled
+    // position by what it is rather than by what a betting shop would call it.
+    await expect(page.getByText('Returns on settlement').first()).toBeVisible();
     await capture(page, 'wallet-after-settlement', testInfo);
   });
 

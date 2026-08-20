@@ -118,7 +118,7 @@ export class MarketsController {
     });
     if (market === null) throw new NotFoundException('market not found');
 
-    const [annotations, traders, volume, cached, proposal] = await Promise.all([
+    const [annotations, traders, volume, cached, proposal, windows] = await Promise.all([
       this.prisma.marketAnnotation.findMany({
         where: { marketId: id },
         orderBy: { ts: 'asc' },
@@ -147,6 +147,9 @@ export class MarketsController {
         where: { marketId: id },
         orderBy: { proposedAt: 'desc' },
       }),
+      // The same day of price the card badge uses, so the ticket's header and
+      // the card a reader arrived from cannot disagree about which way it went.
+      this.window.forMarket(id, DAY_MS),
     ]);
 
     const creatorProfile =
@@ -177,6 +180,11 @@ export class MarketsController {
         ts: a.ts.toISOString(),
       })),
       traderCount: traders.length,
+      /**
+       * The headline outcome's 24h move, for the ticket's quote row. Same
+       * window and same maths as the card, from the same service.
+       */
+      change24h: windows.find((w) => w.outcomeId === market.outcomes[0]?.id)?.change ?? null,
       /** §2.6's proposed resolution, and §7.2f's dispute-window countdown. */
       resolution:
         proposal === null

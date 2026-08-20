@@ -17,11 +17,19 @@ export function PriceChange({
   change,
   className = '',
 }: {
-  /** Fractional move, e.g. 0.032 for +3.2%. Null when there is no window. */
-  change: number | null;
+  /**
+   * Fractional move, e.g. 0.032 for +3.2%. Null — or absent — when there is no
+   * window to measure over.
+   */
+  change: number | null | undefined;
   className?: string;
 }) {
-  if (change === null) return null;
+  // `== null` rather than `=== null`, and deliberately. The first version took
+  // `number | null` and was handed an `undefined` by a caller whose endpoint
+  // did not return the field yet; it sailed past the strict check and rendered
+  // "▼ −NaN%" on the ticket. A component whose entire job is to be honest about
+  // an unknown should treat both spellings of unknown the same way.
+  if (change == null) return null;
 
   const pct = change * 100;
   // Below a tenth of a percent the arrow implies a direction the number cannot

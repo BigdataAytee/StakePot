@@ -20,19 +20,22 @@ import { ResolutionStatus } from '@/components/market/resolution-status';
 import { ResolvedReceipt } from '@/components/market/resolved-receipt';
 import { TradePanel } from '@/components/market/trade-panel';
 import { WatchStar } from '@/components/market/watch-star';
-import { PriceChart, type Timeframe } from '@/components/price-chart';
+import { PriceChart, TIMEFRAMES, type Timeframe } from '@/components/price-chart';
 import { RulesCard } from '@/components/rules-card';
 import { SeedPanel } from '@/components/seed-panel';
 import { ShareSheet } from '@/components/share-sheet';
-import { Sparkline } from '@/components/sparkline';
 import { TakeThread } from '@/components/take-thread';
 import { TradeSheet, type TradeIntent } from '@/components/trade-sheet';
 import { useMarketFeed } from '@/hooks/use-market-feed';
 import { api, type MarketDetail, type PricePoint, type SeedComposition } from '@/lib/api';
 import { PAGE_WIDTH } from '@/lib/layout';
 import { recordView } from '@/lib/creator-api';
-import { STATE_LABEL, dateTime, money, percent, untilFreeze } from '@/lib/format';
+import { STATE_LABEL, money, percent } from '@/lib/format';
+import { QuoteStrip } from '@/components/market/quote-strip';
 import { PositionPanel } from './position-panel';
+
+/** Where the chart's timeframe choice is remembered between tickets. */
+const TIMEFRAME_KEY = 'stakeam.timeframe';
 import { useLivePrices } from '@/store/live-prices';
 
 /**
@@ -50,7 +53,24 @@ export function TicketView({
   initial: MarketDetail;
   initialHistory: PricePoint[];
 }) {
+  /**
+   * The timeframe, remembered.
+   *
+   * Somebody who reads markets on a 1W window resets it on every ticket they
+   * open, which is a small annoyance repeated all day. Read after mount rather
+   * than during render, so the server's markup and the client's first paint
+   * agree; the default shows for one frame, which is cheaper than a hydration
+   * mismatch on the page's largest element.
+   */
   const [timeframe, setTimeframe] = useState<Timeframe>('1D');
+  useEffect(() => {
+    const saved = window.localStorage.getItem(TIMEFRAME_KEY);
+    if (saved !== null && TIMEFRAMES.includes(saved as Timeframe)) setTimeframe(saved as Timeframe);
+  }, []);
+  const chooseTimeframe = (next: Timeframe): void => {
+    setTimeframe(next);
+    window.localStorage.setItem(TIMEFRAME_KEY, next);
+  };
   const [history, setHistory] = useState<PricePoint[]>(initialHistory);
   const [intent, setIntent] = useState<TradeIntent | null>(null);
   // Which outcome the chart and the side panel are showing. Null until the
@@ -288,36 +308,20 @@ export function TicketView({
           </p>
         )}
 
-        <div className="mb-4 mt-2.5 flex flex-wrap gap-[18px] text-sm text-text-muted">
-          <span className="flex items-center gap-1.5">
-            <span>
-              <b className="text-text">{money(live?.pot ?? initial.pot)}</b> pot
-            </span>
-            <Sparkline points={potSeries} width={48} height={14} />
-          </span>
-          <span>
-            <b className="text-text">{money(initial.volume24h)}</b> 24h vol.
-          </span>
-          <span>
-            <b className="text-text">{initial.traderCount}</b>{' '}
-            {initial.traderCount === 1 ? 'trader' : 'traders'}
-          </span>
-          <span>
-            <b className="text-text">{(initial.feeBps / 100).toFixed(1)}%</b> fee
-          </span>
-          {tradingOpen ? (
-            <span>
-              Freezes in <b className="text-text">{untilFreeze(initial.eventDate)}</b>
-            </span>
-          ) : (
-            <span className="font-semibold uppercase tracking-wide">
-              {STATE_LABEL[initial.state] ?? initial.state}
-            </span>
+        <QuoteStrip
+          price={Number.parseFloat(
+            (dial === null ? initial.outcomes[0]?.price : (prices[dial.id] ?? dial.price)) ?? '0',
           )}
-          <span>
-            Ends <b className="text-text">{dateTime(initial.eventDate)}</b>
-          </span>
-        </div>
+          change24h={initial.change24h}
+          pot={live?.pot ?? initial.pot}
+          potSeries={potSeries}
+          volume24h={initial.volume24h}
+          traders={initial.traderCount}
+          feeBps={initial.feeBps}
+          eventDate={initial.eventDate}
+          tradingOpen={tradingOpen}
+          stateLabel={STATE_LABEL[initial.state] ?? initial.state}
+        />
 
         {/* Two columns down to 860px, one below it — the reference's own
             breakpoint, which is where 330px of trade panel stops leaving the
@@ -338,7 +342,10 @@ export function TicketView({
                   outcomes={initial.outcomes}
                   annotations={initial.annotations}
                   timeframe={timeframe}
-                  onTimeframeChange={setTimeframe}
+                  onTimeframeChange={chooseTimeframe}
+                  live={initial.state === 'active'}
+                  volume={initial.volume24h}
+                  settlesAt={initial.eventDate}
                 />
 
                 {/* The argument bar: who is winning, as one shape. */}

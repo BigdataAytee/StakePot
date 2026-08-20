@@ -11,7 +11,7 @@ import { expect, type Page } from '@playwright/test';
  *     that *commits* — it is disabled until there is an amount to commit.
  *   * Below 860px there is no right column. A pinned bar carries "Buy Yes" as
  *     the button that *opens* the bottom sheet, and the amount, reason and
- *     "Stake am" live inside it.
+ *     "Place trade" live inside it.
  *
  * The same accessible name therefore means "submit this" on a laptop and
  * "start this" on a phone, which is what made the desktop journeys sit on a
@@ -60,7 +60,7 @@ export async function enterStake(
 /** Commit it. */
 export async function submitStake(page: Page): Promise<void> {
   if (await page.locator(SHEET_AMOUNT).isVisible()) {
-    await page.getByRole('button', { name: 'Stake am' }).click();
+    await page.getByRole('button', { name: 'Place trade' }).click();
     return;
   }
   await page.getByRole('button', { name: /^Buy /i }).first().click();
