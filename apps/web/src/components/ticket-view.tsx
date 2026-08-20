@@ -41,6 +41,7 @@ import { STATE_LABEL, money, percent } from '@/lib/format';
 import { ContextPanel } from '@/components/market/context-panel';
 import { LiveContext } from '@/components/market/live-context';
 import { MarketPulse } from '@/components/market/market-pulse';
+import { OrderBookPanel } from '@/components/market/order-book-panel';
 import { QuoteStrip } from '@/components/market/quote-strip';
 import { PositionPanel } from './position-panel';
 
@@ -476,6 +477,12 @@ export function TicketView({
             */}
             {!funding && <LiveContext market={initial} context={context} />}
             {!funding && <MarketPulse marketId={initial.id} tradedAt={live?.at} />}
+
+            {/* The book, where there is one. It renders nothing at all on a
+                pot-only market rather than an empty frame — most markets have
+                no book, and a panel of blanks would say "nobody is trading"
+                about a market that simply matches a different way. */}
+            {!funding && <OrderBookPanel market={initial} token={token} refreshKey={filled} />}
 
             <ResolvedReceipt market={initial} />
             <ResolutionStatus market={initial} />

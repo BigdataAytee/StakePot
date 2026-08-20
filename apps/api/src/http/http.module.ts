@@ -48,6 +48,7 @@ import { StudioController } from './studio.controller';
 import { ReputationController, TopCallsAdminController } from './reputation.controller';
 import { ModerationController, ThreadsController } from './threads.controller';
 import { TradesController } from './trades.controller';
+import { OrderBookController } from './orderbook.controller';
 
 @Module({
   imports: [
@@ -76,6 +77,7 @@ import { TradesController } from './trades.controller';
     }),
   ],
   controllers: [
+    OrderBookController,
     AbuseController,
     AccountController,
     AdminController,

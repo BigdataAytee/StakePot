@@ -186,6 +186,72 @@ export interface MarketPulse {
   ticker: ActivityEntry[];
 }
 
+/**
+ * One price level on the book: how much is there, and what it would cost to
+ * take it.
+ *
+ * Aggregated by the API — forty orders at 62 kobo is one line saying how much
+ * is available, not forty lines saying who. Nobody's identity is in a depth
+ * response: a book is a quantity at a price.
+ */
+export interface DepthLevel {
+  priceKobo: number;
+  shares: string;
+  /** What sweeping this level would cost the taker of it. */
+  naira: string;
+}
+
+export interface MarketBook {
+  /** False when this market has no book — pot-only, and saying so. */
+  enabled: boolean;
+  bookOutcomeId: string | null;
+  /** What a buyer of the first outcome can lift. */
+  asks: DepthLevel[];
+  /** What a buyer of the second outcome can lift, quoted on the same book. */
+  bids: DepthLevel[];
+}
+
+/**
+ * What a trade would do, before anybody commits to it.
+ *
+ * The matched and pot legs are kept apart on purpose and must stay apart on
+ * screen. A matched share pays ₦1 exactly, out of money a named counterparty
+ * has already escrowed; a pot share pays a share of a pot that is still
+ * filling. One number for both would be describing neither.
+ */
+export interface TradeQuote {
+  matched: {
+    shares: string;
+    cost: string;
+    /** ₦1 a share. Known now, not projected. */
+    exactPayout: string;
+    priceKobo: number | null;
+  } | null;
+  pot: {
+    shares: string;
+    cost: string;
+    averageKobo: string | null;
+    quotedKobo: string;
+  } | null;
+  resting: { shares: string; priceKobo: number | null; locked: string } | null;
+  /** Thin-pot and price-impact warnings, in words a trader can act on. */
+  warnings: string[];
+}
+
+export interface OpenOrder {
+  id: string;
+  marketId: string;
+  question: string;
+  outcomeId: string;
+  label: string;
+  side: 'buy' | 'sell';
+  priceKobo: number;
+  shares: string;
+  filled: string;
+  locked: string;
+  createdAt: string;
+}
+
 export interface SponsorView {
   userId: string;
   contribution: string;
@@ -276,6 +342,8 @@ export const api = {
   pulse: (id: string) => get<MarketPulse>(`/markets/${id}/pulse`),
   /** Bucketed trading activity for the chart's volume bars. */
   flow: (id: string, tf: string) => get<MarketFlow>(`/markets/${id}/flow?tf=${tf}`),
+  /** The order book's depth, or `enabled: false` on a pot-only market. */
+  book: (id: string) => get<MarketBook>(`/markets/${id}/book`),
   /** Omit `outcomeId` to get every outcome's series — the multi-line overlay. */
   history: (id: string, outcomeId: string | undefined, tf: string) =>
     get<PricePoint[]>(

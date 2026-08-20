@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Trade } from '@prisma/client';
-import { Decimal, buy, sell, type TradeResult } from '@stakeam/engine';
+import { Decimal, buy, priceOf, sell, type TradeResult } from '@stakeam/engine';
 import { frozenMessage, isTradingFrozen } from '@stakeam/rules';
 
 import { LedgerService, type Tx } from '../ledger/ledger.service';
@@ -233,8 +233,17 @@ export class TradeService {
           `tightenToPot`: this one line is what stops the new venue being a
           worse deal than the old one.
         */
-        const potKobo = new Decimal(
-          outcomeAt(loaded, indexOf(loaded, route.bookOutcomeId)).priceCurrent.toString(),
+        // From the engine's own state, not from `outcomes.priceCurrent`.
+        //
+        // The column is a cache the trade path writes after every fill, so
+        // normally the two agree — but this number decides what the book is
+        // allowed to charge, and a cache that is stale for any reason (a
+        // restored backup, a fixture, a migration that touched prices) would
+        // silently move that ceiling. The share vector is the truth.
+        const potKobo = priceOf(
+          loaded.state.q,
+          loaded.state.liquidity,
+          indexOf(loaded, route.bookOutcomeId),
         )
           .times(KOBO_PER_SHARE)
           .toNumber();

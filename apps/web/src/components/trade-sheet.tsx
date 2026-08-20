@@ -10,6 +10,7 @@ import type { OutcomeView } from '@/lib/api';
 
 import { exactMoney, kobo, money, percent } from '@/lib/format';
 import { placeTrade } from '@/lib/place-trade';
+import { FillBreakdown } from '@/components/market/fill-breakdown';
 import { rememberTrade, signInHref } from '@/lib/pending-trade';
 import { blockerFor, useTradeAllowance } from '@/lib/trade-allowance';
 import { usePublicConfig } from '@/lib/public-config';
@@ -99,6 +100,25 @@ export function TradeSheet({
    * -first is for the reader who is pricing the position instead.
    */
   const [mode, setMode] = useState<'amount' | 'shares'>('amount');
+  /**
+   * The price the trader will not go above, in kobo, or null for "at the
+   * market price".
+   *
+   * Null by default and stays null unless somebody opens the control. A limit
+   * is a power feature: it is the difference between a trade that happens now
+   * and one that might happen later, and defaulting anybody into "later" would
+   * be the sheet quietly not doing what the button said.
+   */
+  const [limitKobo, setLimitKobo] = useState<number | null>(null);
+  const [limitOpen, setLimitOpen] = useState(false);
+  /**
+   * Whether the fill breakdown has a fuller answer than the summary below it.
+   *
+   * The summary was written when the pot was the only venue, so its "shares you
+   * get" is the pot leg alone — beside a breakdown reading ₦600 matched and
+   * ₦1,400 from the pot, it was a third number that agreed with neither.
+   */
+  const [split, setSplit] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   /** The queue took it but has not executed it yet — §11's "order placed". */
   const [queued, setQueued] = useState(false);
@@ -119,6 +139,9 @@ export function TradeSheet({
     setSide(intent.side);
     setMode('amount');
     setAmount(intent.amount ?? '');
+    setLimitKobo(null);
+    setLimitOpen(false);
+    setSplit(false);
     setQueued(false);
     setError(null);
     setTick(0);
@@ -205,6 +228,9 @@ export function TradeSheet({
         amount,
         token,
         reason,
+        // Buys only: a pot sell returns shares to the curve at whatever it is
+        // paying, and there is no counterparty to name a price to.
+        ...(side === 'buy' && limitKobo !== null ? { limitKobo } : {}),
         onQueued: () => setQueued(true),
       });
       onFilled();
@@ -398,6 +424,82 @@ export function TradeSheet({
                   </div>
                 )}
 
+                {/*
+                  The limit price, folded away until it is wanted.
+
+                  A limit changes what the button means — from "buy this now"
+                  to "buy this if it gets there" — so it is a deliberate act
+                  rather than a field somebody tabs into by accident. Buys
+                  only: a pot sell returns shares to the curve at whatever it
+                  is paying, and there is nobody on the other side to name a
+                  price to.
+                */}
+                {side === 'buy' && !closed && (
+                  <div className="mt-3">
+                    {!limitOpen ? (
+                      <button
+                        type="button"
+                        onClick={() => setLimitOpen(true)}
+                        className="min-h-11 text-note font-semibold text-brand underline underline-offset-2 sm:min-h-0"
+                      >
+                        Set a price
+                      </button>
+                    ) : (
+                      <div className="rounded-md border border-border bg-surface p-3">
+                        <label
+                          className="flex flex-wrap items-center gap-2 text-note"
+                          htmlFor="trade-limit"
+                        >
+                          <span className="text-text-muted">Pay no more than</span>
+                          <span className="flex items-baseline">
+                            <input
+                              id="trade-limit"
+                              inputMode="numeric"
+                              value={limitKobo === null ? '' : String(limitKobo)}
+                              onChange={(event) => {
+                                const parsed = Number.parseInt(event.target.value, 10);
+                                setLimitKobo(
+                                  Number.isFinite(parsed) && parsed >= 1 && parsed <= 99
+                                    ? parsed
+                                    : null,
+                                );
+                              }}
+                              placeholder={String(Math.round(percent(price)))}
+                              className="w-14 rounded-sm border border-border bg-surface-raised px-2 py-1 text-right font-mono tabular-nums"
+                            />
+                            <span className="ml-0.5 font-mono">k</span>
+                          </span>
+                          <span className="text-text-muted">a share</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLimitKobo(null);
+                              setLimitOpen(false);
+                            }}
+                            className="ml-auto min-h-11 text-fine text-text-muted underline underline-offset-2 sm:min-h-0"
+                          >
+                            At the market price
+                          </button>
+                        </label>
+                        <p className="mt-1.5 text-fine text-text-muted">
+                          Whatever cannot be filled at this price or better waits on the book until
+                          somebody takes the other side. Nothing fills above it.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Where this trade would actually fill, and on what terms. */}
+                <FillBreakdown
+                  marketId={market.id}
+                  outcomeId={outcome.id}
+                  amount={mode === 'amount' ? amount : (money?.toString() ?? '')}
+                  limitKobo={limitKobo}
+                  active={side === 'buy'}
+                  onSplit={setSplit}
+                />
+
                 {/* §7.2d: "slider or chips for partial/full exit". A slider,
                 because a position is a continuous quantity and 25/50/100 are
                 three of the infinitely many exits somebody might want. */}
@@ -433,16 +535,26 @@ export function TradeSheet({
                   />
                   {preview !== null && side === 'buy' && (
                     <>
-                      <Row label="Shares you get" value={preview.shares.toFixed(2)} />
-                      <Row label="Total" value={exactMoney(preview.total)} emphasis />
-                      {preview.estWin !== null && (
-                        <Row
-                          label="Est. to win"
-                          value={exactMoney(preview.estWin)}
-                          hint="estimate"
-                          emphasis
-                        />
+                      {/* Suppressed when the breakdown above is showing the
+                          trade leg by leg: these figures are the pot's alone,
+                          and a third number that agrees with neither of the
+                          two above it is worse than no number. `Total` stays —
+                          it is what leaves the balance either way. */}
+                      {!split && (
+                        <>
+                          <Row label="Shares you get" value={preview.shares.toFixed(2)} />
+                          <Row label="Total" value={exactMoney(preview.total)} emphasis />
+                          {preview.estWin !== null && (
+                            <Row
+                              label="Est. to win"
+                              value={exactMoney(preview.estWin)}
+                              hint="estimate"
+                              emphasis
+                            />
+                          )}
+                        </>
                       )}
+                      {split && <Row label="Total" value={exactMoney(preview.total)} emphasis />}
                     </>
                   )}
                   {preview !== null && side === 'sell' && (

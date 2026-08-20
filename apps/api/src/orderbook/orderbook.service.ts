@@ -177,7 +177,15 @@ export class OrderBookService {
       orderBy: { createdAt: 'desc' },
       include: {
         outcome: { select: { label: true } },
-        market: { select: { question: true } },
+        market: {
+          select: {
+            question: true,
+            // The complement, so an order can be read back as the trade the
+            // person actually made. A short of YES at 85 is a buy of NO at 15,
+            // and nobody pressed "short YES".
+            outcomes: { orderBy: { ordinal: 'asc' }, select: { id: true, label: true } },
+          },
+        },
       },
       take: 100,
     });

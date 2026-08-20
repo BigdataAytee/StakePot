@@ -8,6 +8,7 @@ import { Sparkline } from '@/components/sparkline';
 import { exactMoney, money, percent } from '@/lib/format';
 import { authed, getToken, useSession } from '@/lib/session';
 import { SkeletonRows } from '@/components/skeleton';
+import { matchedHoldings, type MatchedHolding } from '@/lib/orderbook-api';
 
 /**
  * §7.1's portfolio: "open positions with live P&L, closed history, pending
@@ -138,9 +139,15 @@ export default function PortfolioPage() {
         </p>
       )}
 
+      <MatchedHoldings />
+
       {open.length > 0 && (
         <section className="mt-8">
           <h2 className="text-md font-bold">Holdings</h2>
+          <p className="text-sm text-text-muted">
+            Held against the pot. What these pay is an estimate — it moves as other people trade,
+            and it settles as a share of the pot.
+          </p>
           <ul className="mt-3 flex flex-col gap-2">
             {open.map((position) => (
               <Holding key={`${position.marketId}:${position.outcomeId}`} position={position} />
@@ -350,5 +357,65 @@ function Split({ label, value, note }: { label: string; value: string; note: str
       <dd className="font-mono text-md font-bold">{value}</dd>
       <dd className="text-xs text-text-muted">{note}</dd>
     </div>
+  );
+}
+
+/**
+ * Holdings matched against another trader, above the pot ones and labelled.
+ *
+ * The two lists are deliberately not one table. A matched share pays ₦1
+ * exactly, out of money a counterparty escrowed at the moment it filled; a pot
+ * share pays a share of a pot that is still filling. Stacked into one column
+ * of numbers, somebody would add an exact figure to an estimate and believe
+ * the total — which is the single most expensive thing this screen could
+ * encourage.
+ *
+ * Renders nothing when there are none, which is most accounts.
+ */
+function MatchedHoldings() {
+  const [rows, setRows] = useState<MatchedHolding[]>([]);
+
+  useEffect(() => {
+    const token = window.localStorage.getItem('stakeam.token');
+    if (token === null) return;
+    void matchedHoldings(token)
+      .then(setRows)
+      .catch(() => undefined);
+  }, []);
+
+  if (rows.length === 0) return null;
+  const openRows = rows.filter((row) => !row.settled);
+  if (openRows.length === 0) return null;
+
+  return (
+    <section className="mt-8">
+      <h2 className="text-md font-bold">Matched holdings</h2>
+      <p className="text-sm text-text-muted">
+        Filled against another trader, who has already put up the other side. These pay{' '}
+        <b className="text-text">₦1 a share exactly</b> — the figure is settled, not projected.
+      </p>
+      <ul className="mt-3 divide-y divide-border overflow-hidden rounded-xl border border-border">
+        {openRows.map((row) => (
+          <li key={row.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-3.5 py-3">
+            <Link href={`/market/${row.marketId}`} className="min-w-0 flex-1 font-medium underline">
+              {row.question}
+            </Link>
+            <span className="rounded-sm bg-chip px-1.5 py-0.5 text-fine font-semibold">
+              {row.label}
+            </span>
+            <span className="font-mono tabular-nums text-text-muted">
+              {Number(row.shares).toLocaleString('en-NG', { maximumFractionDigits: 0 })} shares
+            </span>
+            <span className="ml-auto whitespace-nowrap">
+              <span className="text-fine text-text-muted">staked {money(row.staked)} · pays </span>
+              <b className="font-mono tabular-nums text-rise">{money(row.exactPayout)}</b>{' '}
+              <span className="text-fine font-semibold uppercase tracking-[.04em] text-rise">
+                exact
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }

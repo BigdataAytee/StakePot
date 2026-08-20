@@ -48,6 +48,15 @@ export interface PlaceTradeInput {
   token: string;
   /** §2.15a's one-line why, posted to the thread with the position. */
   reason?: string;
+  /**
+   * The most this trader will pay per share, in kobo. Absent means "at the
+   * market price", which is what every trade did before the book existed.
+   *
+   * Sent through unchanged: the API is where a limit is enforced, on both the
+   * matched and the pot leg. A client-side check would be a courtesy, not a
+   * control.
+   */
+  limitKobo?: number;
   /** Called when the queue took the trade but has not executed it yet. */
   onQueued?: () => void;
 }
@@ -59,6 +68,7 @@ export async function placeTrade({
   amount,
   token,
   reason,
+  limitKobo,
   onQueued,
 }: PlaceTradeInput): Promise<void> {
   // A retry must never double-fill (§11), and this is also what the trade is
@@ -74,6 +84,7 @@ export async function placeTrade({
       side,
       amount,
       requestId,
+      ...(limitKobo === undefined ? {} : { limitKobo }),
       ...(reason === undefined || reason.trim().length === 0 ? {} : { reason: reason.trim() }),
     }),
   });
