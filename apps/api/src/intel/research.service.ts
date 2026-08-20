@@ -22,9 +22,12 @@ import {
  * that costs whatever the internet decides to publish today. Both are per-pass
  * and deliberately small — the pass runs often, so an interesting hour catches
  * up over three passes rather than in one enormous one.
+ *
+ * Exported so the crawl-health screen can print them. A cap nobody can see is
+ * indistinguishable from having found everything there was.
  */
-const ITEMS_PER_MARKET = 60;
-const SOURCES_PER_PASS = 40;
+export const ITEMS_PER_MARKET = 60;
+export const SOURCES_PER_PASS = 40;
 
 @Injectable()
 export class ResearchService {

@@ -4,6 +4,7 @@ import { AlertTriangle, Eye } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { CreateTab } from './create-tab';
+import { ResearchTab } from './research-tab';
 import { SuggestionsTab } from './suggestions-tab';
 import { admin, type StudioMarketRow } from '@/lib/admin-api';
 import { money } from '@/lib/format';
@@ -22,7 +23,7 @@ import { money } from '@/lib/format';
  * a Studio you cannot send somebody a link into is one they have to be talked
  * through.
  */
-const TABS = ['Manage', 'Create', 'Suggestions'] as const;
+const TABS = ['Manage', 'Create', 'Suggestions', 'Research'] as const;
 type Tab = (typeof TABS)[number];
 
 export default function MarketStudio() {
@@ -76,6 +77,7 @@ export default function MarketStudio() {
       {tab === 'Manage' && <ManageTab />}
       {tab === 'Create' && <CreateTab />}
       {tab === 'Suggestions' && <SuggestionsTab />}
+      {tab === 'Research' && <ResearchTab />}
     </div>
   );
 }

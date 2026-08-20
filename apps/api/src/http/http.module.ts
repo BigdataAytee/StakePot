@@ -14,6 +14,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { env } from '../config/env';
 import { LeaderboardModule } from '../leaderboard/leaderboard.module';
 import { LedgerModule } from '../ledger/ledger.module';
+import { IntelModule } from '../intel/intel.module';
 import { MarketModule } from '../market/market.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { RgModule } from '../rg/rg.module';
@@ -58,6 +59,7 @@ import { TradesController } from './trades.controller';
     CommunityModule,
     CreatorModule,
     HardeningModule,
+    IntelModule,
     LeaderboardModule,
     LedgerModule,
     MarketModule,

@@ -135,8 +135,25 @@ export class TemplateLibraryService implements OnModuleInit {
     return TEMPLATE_LIBRARY.length;
   }
 
-  /** The library as the create page shows it: active rows only. */
+  /**
+   * The library as the create page shows it: active rows only.
+   *
+   * Re-syncs when the table is *entirely* empty, which is the one state that
+   * cannot be anybody's intention. Syncing only at boot turned out to be too
+   * fragile: anything that clears the table — a restored backup taken before
+   * the library existed, a test suite's reset, a fresh environment whose API
+   * happened to start before its migration — leaves the create page blank until
+   * somebody redeploys, and a blank create page looks like a broken product
+   * rather than a missing row.
+   *
+   * Empty *and* the table has rows is a different thing entirely: an operator
+   * retired every template through the admin screen, and they meant it. That is
+   * why the check counts rows rather than reading `list()`'s own result.
+   */
   async list(): Promise<LibraryTemplate[]> {
+    if ((await this.prisma.ticketTemplate.count()) === 0) {
+      await this.sync();
+    }
     const rows = await this.prisma.ticketTemplate.findMany({
       where: { active: true },
       orderBy: { id: 'asc' },

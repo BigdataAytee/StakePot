@@ -13,6 +13,7 @@ import { Type } from 'class-transformer';
 import {
   IsArray,
   IsBoolean,
+  IsIn,
   IsObject,
   IsOptional,
   IsString,
@@ -24,6 +25,8 @@ import {
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { PrismaService } from '../prisma/prisma.service';
+import { CrawlHealthService } from '../intel/crawl-health.service';
+import { SourceRegistryError, SourceRegistryService } from '../intel/source-registry.service';
 import { MarketHealthService } from '../market/health.service';
 import { StudioError, StudioService } from '../market/studio.service';
 
@@ -82,12 +85,32 @@ export class PublishDto extends ReviewDto {
  * the market may open. A review screen computing its own verdict is a review
  * screen that can be wrong in the reassuring direction.
  */
+/**
+ * Which sources to switch, and why.
+ *
+ * Declared above the controller, and that is not style. `emitDecoratorMetadata`
+ * evaluates a parameter's type where the method is defined, so a DTO declared
+ * below the class that uses it is still in its temporal dead zone at that
+ * moment — this compiled, typechecked and passed every test, then died on boot
+ * with "Cannot access 'SourceSwitchDto' before initialization".
+ */
+export class SourceSwitchDto {
+  @IsIn(['source', 'tier', 'all']) scope!: 'source' | 'tier' | 'all';
+  @IsOptional() @IsString() sourceId?: string;
+  @IsOptional() @IsIn(['resolution', 'news', 'signal']) tier?: string;
+  @IsBoolean() enabled!: boolean;
+  /** Required to switch something off; the service refuses a thin one. */
+  @IsOptional() @IsString() @MaxLength(400) reason?: string;
+}
+
 @Controller('admin/studio')
 export class StudioController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly studio: StudioService,
     private readonly health: MarketHealthService,
+    private readonly crawl: CrawlHealthService,
+    private readonly sources: SourceRegistryService,
   ) {}
 
   /** Run the whole checklist over whatever the wizard currently has. */
@@ -128,6 +151,57 @@ export class StudioController {
       });
     } catch (error) {
       if (error instanceof StudioError) throw new BadRequestException(error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * The Research tab: is the pipeline actually finding anything?
+   *
+   * A research pipeline fails silently by construction — a feed that quietly
+   * stops carrying a section, or markup that changed so every fetch returns
+   * zero items, throws nothing and logs success. The failure is an absence, and
+   * absences are invisible until something counts them.
+   */
+  @Get('crawl')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async crawlHealth() {
+    return this.crawl.report();
+  }
+
+  /**
+   * The kill switch: one source, a whole tier, or everything.
+   *
+   * Admin rather than resolver. Switching off a tier stops every market's
+   * context panel updating at once, which is a decision with the same weight as
+   * publishing one — and turning something *off* still requires a reason,
+   * because a source killed at 3am has to be explicable at 9.
+   */
+  @Post('sources/enabled')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('admin')
+  async setSourceEnabled(@Req() request: RequestWithUser, @Body() body: SourceSwitchDto) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+
+    const scope =
+      body.scope === 'all'
+        ? ('all' as const)
+        : body.scope === 'tier'
+          ? { tier: body.tier as never }
+          : { sourceId: body.sourceId ?? '' };
+
+    try {
+      return await this.sources.setEnabled({
+        scope,
+        enabled: body.enabled,
+        reason: body.reason ?? '',
+        staffId: user.userId,
+        ip: request.ip ?? 'unknown',
+      });
+    } catch (error) {
+      if (error instanceof SourceRegistryError) throw new BadRequestException(error.message);
       throw error;
     }
   }

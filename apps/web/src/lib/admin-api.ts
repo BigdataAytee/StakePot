@@ -247,6 +247,50 @@ export interface StandingFlag extends HealthFlag {
   since: string | null;
 }
 
+/** The pipeline's own vital signs — see the Studio's Research tab. */
+export interface CrawlHealth {
+  sources: {
+    id: string;
+    name: string;
+    tier: string;
+    status: 'ok' | 'stale' | 'failing' | 'off';
+    trust: number;
+    failureCount: number;
+    conflicts: number;
+    lastFetchAt: string | null;
+    lastOkAt: string | null;
+    itemsLast24h: number;
+    disabledReason: string | null;
+  }[];
+  totals: {
+    sources: number;
+    enabled: number;
+    failing: number;
+    stale: number;
+    itemsLast24h: number;
+    itemsPerHour: number;
+    openConflicts: number;
+    uncoveredMarkets: number;
+  };
+  budgets: { sourcesPerPass: number; itemsPerMarket: number };
+  coverage: {
+    marketId: string;
+    question: string;
+    sourceName: string;
+    items: number;
+    lastItemAt: string | null;
+    hoursToEvent: number;
+  }[];
+  conflicts: {
+    id: string;
+    marketId: string | null;
+    factKey: string;
+    claims: { sourceName: string; tier: string; value: unknown }[];
+    detectedAt: string;
+  }[];
+  builtAt: string;
+}
+
 /** The reading behind an AI draft, as the Studio's evidence panel shows it. */
 export interface DraftEvidence {
   brief: string;
@@ -356,6 +400,20 @@ export const admin = {
     request<StudioMarketRow[]>(
       `/admin/studio/markets${state === undefined || state === '' ? '' : `?state=${state}`}`,
     ),
+  /** Is the research pipeline actually finding anything? */
+  crawlHealth: () => request<CrawlHealth>('/admin/studio/crawl'),
+  /** The kill switch: one source, a whole tier, or everything. */
+  setSourcesEnabled: (body: {
+    scope: 'source' | 'tier' | 'all';
+    sourceId?: string;
+    tier?: string;
+    enabled: boolean;
+    reason?: string;
+  }) =>
+    request<{ affected: number }>('/admin/studio/sources/enabled', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   /** The checklist over whatever the wizard currently has. */
   studioReview: (draft: StudioDraft, answers: StudioAnswers) =>
     request<RuleReport>('/admin/studio/review', {
