@@ -12,4 +12,5 @@ export * from './draft';
 export * from './health';
 export * from './prompt';
 export * from './registry';
+export * from './sources';
 export * from './validators';

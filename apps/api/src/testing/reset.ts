@@ -20,6 +20,18 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   await prisma.$executeRawUnsafe('DELETE FROM admin_audit');
   await prisma.$executeRawUnsafe('ALTER TABLE admin_audit ENABLE TRIGGER admin_audit_append_only');
 
+  // The intelligence layer. Listed first among the cascading deletes because
+  // `market_source_items` keys a market that the block below removes, and a
+  // table missing from this function is not a loud failure — it is a suite
+  // where every test after the first sees the one before it, which is how the
+  // source registry's re-import test first reported seven conflicts on a
+  // source it had contradicted once.
+  await prisma.resolutionDossier.deleteMany();
+  await prisma.sourceConflict.deleteMany();
+  await prisma.marketSourceItem.deleteMany();
+  await prisma.sourceItem.deleteMany();
+  await prisma.source.deleteMany();
+
   await prisma.trade.deleteMany();
   await prisma.position.deleteMany();
   await prisma.resolution.deleteMany();
