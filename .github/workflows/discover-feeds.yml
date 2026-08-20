@@ -1,0 +1,59 @@
+name: Discover feeds
+
+# Does a source actually publish a feed?
+#
+# Neither this repo's build sandbox nor the operator can check a URL by hand
+# cheaply, and docs/research-sources.md deliberately refuses to present
+# unverified URLs as facts. A runner can check, so it does — read-only, public
+# pages, nothing stored.
+#
+# Run it before onboarding a source. What comes back either gives you a feed
+# URL to paste into the Studio, or tells you the source needs HTML extraction.
+on:
+  workflow_dispatch:
+    inputs:
+      home:
+        description: Source home page, e.g. https://www.cafonline.org/
+        required: true
+  push:
+    paths: ['.github/workflows/discover-feeds.yml']
+
+jobs:
+  discover:
+    name: does it publish a feed
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Look for a feed
+        env:
+          HOME_URL: ${{ github.event.inputs.home || 'https://www.cafonline.com/' }}
+        run: |
+          set -u
+          UA='StakeAmResearchBot/0.1 (+https://stakeam-web.onrender.com; contact: ops@stakeam.ng)'
+          say() { printf '\n=== %s ===\n' "$1"; }
+
+          say "robots.txt"
+          # Read it first, and out loud. A crawler that checks robots after it
+          # has already fetched the page is not honouring it, it is narrating.
+          root=$(echo "$HOME_URL" | sed -E 's#(https?://[^/]+).*#\1#')
+          curl -sSL -m 30 -A "$UA" -w '\nHTTP %{http_code}\n' "$root/robots.txt" | head -60 || echo "none"
+
+          say "home page — declared feeds"
+          page=$(curl -sSL -m 45 -A "$UA" "$HOME_URL" || echo '')
+          echo "HTTP fetched bytes: ${#page}"
+          # <link rel="alternate" type="application/rss+xml" href="...">
+          echo "$page" | grep -oE '<link[^>]+type="application/(rss|atom)\+xml"[^>]*>' | head -10 \
+            || echo "no <link rel=alternate> feed declared"
+
+          say "common feed paths"
+          for path in /rss /feed /rss.xml /feed.xml /atom.xml /index.xml /news/rss /en/rss; do
+            code=$(curl -sSL -m 20 -A "$UA" -o /tmp/body -w '%{http_code}' "$root$path" || echo 000)
+            kind=$(head -c 200 /tmp/body | grep -oiE '<rss|<feed|<\?xml' | head -1 || echo '')
+            size=$(wc -c < /tmp/body)
+            printf '%-14s HTTP %s  %6s bytes  %s\n' "$path" "$code" "$size" "${kind:-not xml}"
+          done
+
+          say "verdict"
+          echo "A path above that returns 200 with <rss or <feed is a feed URL you"
+          echo "can paste into the Studio. If none does, this source needs HTML"
+          echo "extraction and the page URL plus a selector, per docs/research-sources.md."
