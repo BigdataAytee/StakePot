@@ -143,14 +143,14 @@ export function LibraryTab({ onReuse }: { onReuse: (draft: StudioDraft) => void 
             {templates.map((template) => (
               <li key={template.id} className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 p-3">
                 <span
-                  className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${
+                  className={`rounded-sm px-1.5 py-0.5 font-mono text-fine font-bold uppercase ${
                     template.active ? 'bg-rise/15 text-rise' : 'bg-border text-text-muted'
                   }`}
                 >
                   {template.active ? 'offered' : 'retired'}
                 </span>
                 <b className="text-sm">{template.name}</b>
-                <span className="font-mono text-[10px] uppercase text-text-muted">
+                <span className="font-mono text-fine uppercase text-text-muted">
                   {template.category}
                 </span>
                 <span className="w-full text-xs text-text-muted">{template.question}</span>

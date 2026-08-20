@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { PageShell } from '@/components/market/page-shell';
 import { dateTime, exactMoney, money } from '@/lib/format';
 import { authed, getToken, useSession } from '@/lib/session';
+import { SkeletonRows } from '@/components/skeleton';
 
 interface HistoryRow {
   id: string;
@@ -149,7 +150,9 @@ export default function WalletPage() {
       )}
 
       {history === null && error === null && (
-        <p className="mt-4 text-sm text-text-muted">Loading…</p>
+        <div className="mt-4">
+          <SkeletonRows rows={4} height="h-14" label="Loading your wallet" />
+        </div>
       )}
 
       {shown !== null && shown.length === 0 && (

@@ -82,7 +82,7 @@ export default function Studio() {
               onChange={(event) => setHandle(event.target.value)}
               placeholder="tunde_01"
               aria-label="Your handle"
-              className="h-11 flex-1 rounded-md border border-border bg-surface px-3 font-mono text-sm outline-none focus:border-brand"
+              className="h-11 flex-1 rounded-md border border-border bg-surface px-3 font-mono text-sm focus:border-brand"
             />
             <button
               type="button"

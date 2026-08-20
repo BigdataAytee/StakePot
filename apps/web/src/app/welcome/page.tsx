@@ -92,7 +92,7 @@ export default async function WelcomePage() {
         <section className={`px-4 pb-10 pt-12 sm:px-5 sm:pt-16 ${PAGE_WIDTH}`}>
           <div className="grid items-center gap-8 lg:grid-cols-[1.1fr_1fr]">
             <div>
-              <h1 className="text-[34px] font-bold leading-[1.1] sm:text-[44px]">
+              <h1 className="text-3xl font-bold leading-[1.1] sm:text-4xl">
                 Trade your view on real-world events.
                 <span className="block text-brand">Right calls earn from the pot.</span>
               </h1>

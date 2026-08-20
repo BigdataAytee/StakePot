@@ -96,7 +96,7 @@ export default function ModerationQueue() {
                   {row.flags.map((flag) => (
                     <li
                       key={`${flag.kind}-${flag.evidence}`}
-                      className="rounded-sm bg-fall/10 px-1.5 py-0.5 font-mono text-[10px] text-fall"
+                      className="rounded-sm bg-fall/10 px-1.5 py-0.5 font-mono text-fine text-fall"
                     >
                       {flag.kind.replace(/_/g, ' ')}: {flag.evidence}
                     </li>

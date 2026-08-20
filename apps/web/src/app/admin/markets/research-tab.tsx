@@ -4,6 +4,7 @@ import { AlertTriangle, Plus, Power } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { admin, type CrawlHealth } from '@/lib/admin-api';
+import { SkeletonRows } from '@/components/skeleton';
 
 /**
  * Is the research pipeline actually finding anything?
@@ -75,7 +76,7 @@ export function ResearchTab() {
   }
 
   if (error !== null && health === null) return <p className="text-sm text-fall">{error}</p>;
-  if (health === null) return <p className="text-sm text-text-muted">Loading…</p>;
+  if (health === null) return <SkeletonRows rows={4} height="h-16" label="Loading crawl health" />;
 
   const { totals, budgets } = health;
 
@@ -243,7 +244,7 @@ export function ResearchTab() {
             <li key={source.id} className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1 p-3">
               <StatusPill status={source.status} />
               <b className="text-sm">{source.name}</b>
-              <span className="font-mono text-[10px] uppercase text-text-muted">{source.tier}</span>
+              <span className="font-mono text-fine uppercase text-text-muted">{source.tier}</span>
               <span className="ml-auto font-mono text-xs text-text-muted">
                 {source.itemsLast24h} in 24h · trust {source.trust.toFixed(2)}
                 {source.conflicts > 0 && ` · ${source.conflicts} conflicts`}
@@ -277,7 +278,7 @@ export function ResearchTab() {
                   Resume
                 </button>
               )}
-              <span className="w-full font-mono text-[11px] text-text-muted">
+              <span className="w-full font-mono text-fine text-text-muted">
                 {/*
                   Three timestamps rather than one, because they fail apart. A
                   feed can be checked every minute, answer 200 every time, and
@@ -513,7 +514,7 @@ function StatusPill({ status }: { status: 'ok' | 'stale' | 'failing' | 'off' }) 
           ? 'bg-fall/15 text-fall'
           : 'bg-caution-bg text-caution';
   return (
-    <span className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${tone}`}>
+    <span className={`rounded-sm px-1.5 py-0.5 font-mono text-fine font-bold uppercase ${tone}`}>
       {status}
     </span>
   );

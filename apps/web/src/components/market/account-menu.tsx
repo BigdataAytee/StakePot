@@ -162,7 +162,7 @@ function Group({ items, label }: { items: readonly Item[]; label?: string }) {
   return (
     <div className="border-t border-border pt-1 first-of-type:border-t-0 first-of-type:pt-0">
       {label !== undefined && (
-        <p className="px-3 pb-0.5 pt-1.5 font-mono text-[10px] uppercase tracking-widest text-text-muted">
+        <p className="px-3 pb-0.5 pt-1.5 font-mono text-fine uppercase tracking-widest text-text-muted">
           {label}
         </p>
       )}

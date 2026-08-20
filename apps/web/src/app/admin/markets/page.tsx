@@ -15,6 +15,7 @@ import {
   type StudioMarketRow,
 } from '@/lib/admin-api';
 import { money } from '@/lib/format';
+import { SkeletonRows } from '@/components/skeleton';
 
 /**
  * The Market Studio (§6.2, and `docs/ticket-creation-checklist.md`).
@@ -128,7 +129,7 @@ function ManageTab() {
   useEffect(load, [load]);
 
   if (error !== null && rows === null) return <p className="text-sm text-fall">{error}</p>;
-  if (rows === null) return <p className="text-sm text-text-muted">Loading…</p>;
+  if (rows === null) return <SkeletonRows rows={4} height="h-20" label="Loading markets" />;
 
   const flagged = rows.filter((row) => row.flags.length > 0);
   const shown = onlyFlagged ? flagged : rows;
@@ -264,7 +265,7 @@ function FreezeDeskPanel({ desk, onChanged }: { desk: FreezeDesk; onChanged: () 
 
       <div className="mt-2.5 grid gap-3 min-[900px]:grid-cols-2">
         <div>
-          <h4 className="font-mono text-[10px] uppercase tracking-widest text-text-muted">
+          <h4 className="font-mono text-fine uppercase tracking-widest text-text-muted">
             Freezing within 6h
           </h4>
           <ul className="mt-1 space-y-1">
@@ -289,7 +290,7 @@ function FreezeDeskPanel({ desk, onChanged }: { desk: FreezeDesk; onChanged: () 
         </div>
 
         <div>
-          <h4 className="font-mono text-[10px] uppercase tracking-widest text-text-muted">
+          <h4 className="font-mono text-fine uppercase tracking-widest text-text-muted">
             Frozen, not yet settled
           </h4>
           <ul className="mt-1 space-y-1">
@@ -327,7 +328,7 @@ function MarketRow({ row }: { row: StudioMarketRow }) {
   return (
     <li className="rounded-xl border border-border bg-surface-raised p-3.5">
       <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-        <span className="rounded-sm bg-chip px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-text-muted">
+        <span className="rounded-sm bg-chip px-1.5 py-0.5 font-mono text-fine font-bold uppercase text-text-muted">
           {row.state}
         </span>
         <a href={`/market/${row.id}`} className="flex-1 font-semibold hover:underline">

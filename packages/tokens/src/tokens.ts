@@ -131,22 +131,45 @@ export const semantic = {
 export type SemanticRole = keyof typeof roles;
 
 /**
- * Type scale in px, read off the reference: 11.5 / 12.5 / 14 / 14.5 / 17 / 21 / 26.
+ * Type scale in px, read off the reference:
+ * 11 / 11.5 / 12.5 / 13.5 / 14 / 14.5 / 17 / 21 / 26.
  *
  * Tighter and smaller than what it replaces, which is most of why the new
  * screens read as denser at the same information count. 14 is body.
+ *
+ * `fine` and `note` were added after an audit found 38 arbitrary sizes
+ * (`text-[10px]`, `text-[11px]`, `text-[13.5px]`) scattered through the app.
+ * Both sizes are in the reference; the scale simply did not carry them, so
+ * every screen that needed one invented it. A scale with a hole in it is a
+ * scale people step around.
  */
 export const typeScale = {
+  /** Uppercase eyebrows, badges, the densest admin meta. */
+  fine: 11,
   xs: 11.5,
   sm: 12.5,
+  /** Between label and body — secondary lines that must not read as body. */
+  note: 13.5,
   base: 14,
   md: 14.5,
   lg: 17,
   xl: 21,
   '2xl': 26,
+  /**
+   * Above the reference, and deliberately so: the reference documents the app
+   * chrome, where 26 is the largest thing. A landing hero and the portfolio's
+   * headline figure are the two places that legitimately go bigger, and they
+   * were doing it with `text-[32px]`, `text-[34px]` and `text-[44px]`. Named
+   * here so the next screen that needs a big number picks a step rather than a
+   * number.
+   */
+  '3xl': 32,
+  '4xl': 44,
 } as const;
 
 export const typeScaleAliases = {
+  /** The smallest thing on a screen: an uppercase eyebrow over a figure. */
+  eyebrow: typeScale.fine,
   caption: typeScale.xs,
   label: typeScale.sm,
   body: typeScale.base,
@@ -161,13 +184,17 @@ export const typeScaleAliases = {
 
 /** Line heights, tightening as the type gets larger. */
 export const lineHeights: Record<keyof typeof typeScale, number> = {
+  fine: 1.35,
   xs: 1.4,
   sm: 1.4,
+  note: 1.4,
   base: 1.4,
   md: 1.32,
   lg: 1.3,
   xl: 1.25,
   '2xl': 1.2,
+  '3xl': 1.1,
+  '4xl': 1.05,
 };
 
 export const fonts = {

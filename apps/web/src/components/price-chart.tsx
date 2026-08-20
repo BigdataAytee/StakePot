@@ -391,7 +391,7 @@ export function PriceChart({
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 flex justify-end px-1 pt-1">
           {scrub !== null ? (
             <div className="rounded-md border border-border bg-surface/95 px-2.5 py-1.5 text-xs shadow-soft backdrop-blur">
-              <p className="font-mono text-[10px] text-text-muted">
+              <p className="font-mono text-fine text-text-muted">
                 {dateTime(new Date(scrub.ts).toISOString())}
               </p>
               <ul className="mt-0.5 space-y-0.5">
@@ -420,7 +420,7 @@ export function PriceChart({
           ) : (
             live &&
             points.length > 0 && (
-              <span className="flex items-center gap-1.5 rounded-md bg-surface/90 px-2 py-1 font-mono text-[10px] font-bold uppercase tracking-widest text-rise backdrop-blur">
+              <span className="flex items-center gap-1.5 rounded-md bg-surface/90 px-2 py-1 font-mono text-fine font-bold uppercase tracking-widest text-rise backdrop-blur">
                 <span className="size-1.5 animate-pulse rounded-full bg-rise" aria-hidden />
                 Live
               </span>

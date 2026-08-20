@@ -72,7 +72,7 @@ export function ContextPanel({
             type="button"
             aria-selected={tab === name}
             onClick={() => setTab(name)}
-            className={`flex-1 px-2 py-2.5 text-[13px] font-semibold transition-colors ${
+            className={`flex-1 px-2 py-2.5 text-note font-semibold transition-colors ${
               tab === name
                 ? 'border-b-2 border-brand text-text'
                 : 'border-b-2 border-transparent text-text-muted hover:text-text'
@@ -82,7 +82,7 @@ export function ContextPanel({
             {/* A chip, not a bare number: "News 2" beside three plain words
                 reads as a heading that lost its noun. */}
             {name === 'News' && newsCount > 0 && (
-              <span className="ml-1.5 rounded-full bg-chip px-1.5 py-0.5 font-mono text-[10px] font-bold text-text-muted">
+              <span className="ml-1.5 rounded-full bg-chip px-1.5 py-0.5 font-mono text-fine font-bold text-text-muted">
                 {newsCount}
               </span>
             )}
@@ -128,7 +128,7 @@ function SourceWatch({
 
   return (
     <div className="mt-4 rounded-md border border-border bg-surface p-3 text-sm">
-      <h3 className="text-[11px] font-semibold uppercase tracking-[.05em] text-text-muted">
+      <h3 className="text-fine font-semibold uppercase tracking-[.05em] text-text-muted">
         Source watch
       </h3>
       <p className="mt-1.5">
@@ -296,7 +296,7 @@ function Stats({ context }: { context: MarketContext | null }) {
       <div className="-mx-4 overflow-x-auto">
         <table className="w-full min-w-[420px] text-sm">
           <thead>
-            <tr className="text-[11px] uppercase tracking-[.05em] text-text-muted">
+            <tr className="text-fine uppercase tracking-[.05em] text-text-muted">
               <th className="px-4 py-1.5 text-left font-semibold">Outcome</th>
               <th className="px-2 py-1.5 text-right font-semibold">Opened</th>
               <th className="px-2 py-1.5 text-right font-semibold">High</th>

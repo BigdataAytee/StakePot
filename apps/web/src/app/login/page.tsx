@@ -78,7 +78,7 @@ export default function LoginPage() {
             value={contact}
             onChange={(event) => setContact(event.target.value)}
             autoComplete="username"
-            className="rounded-md border border-border bg-surface-raised px-3 py-3 text-md outline-none focus-visible:border-rise"
+            className="rounded-md border border-border bg-surface-raised px-3 py-3 text-md focus-visible:border-rise"
           />
         </label>
 

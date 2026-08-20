@@ -49,7 +49,7 @@ function Logo() {
   return (
     <Link
       href="/"
-      className="flex shrink-0 items-center gap-2 whitespace-nowrap text-[17px] font-bold tracking-[-.02em]"
+      className="flex shrink-0 items-center gap-2 whitespace-nowrap text-lg font-bold tracking-[-.02em]"
     >
       <svg viewBox="0 0 24 24" className="size-[22px]" aria-hidden>
         <rect x="2" y="2" width="20" height="20" rx="4" className="fill-text" />
@@ -123,7 +123,7 @@ function SearchField() {
         value={value}
         onChange={(event) => setValue(event.target.value)}
         placeholder="Search markets"
-        className="h-[38px] w-full rounded-lg border border-border bg-chip pl-9 pr-3 text-base outline-none placeholder:text-text-muted focus:border-brand focus:bg-surface"
+        className="h-[38px] w-full rounded-lg border border-border bg-chip pl-9 pr-3 text-base placeholder:text-text-muted focus:border-brand focus:bg-surface"
       />
     </form>
   );
@@ -242,7 +242,7 @@ function CashChip() {
         className="flex flex-col items-end rounded-md px-2 py-1 leading-[1.15] hover:bg-chip"
       >
         <span className="font-mono text-base font-bold text-money">{money(me.available)}</span>
-        <span className="hidden text-[10px] font-medium text-text-muted sm:block">Balance</span>
+        <span className="hidden text-fine font-medium text-text-muted sm:block">Balance</span>
       </Link>
     </div>
   );

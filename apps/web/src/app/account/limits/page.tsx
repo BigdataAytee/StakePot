@@ -136,7 +136,7 @@ export default function LimitsPage() {
                   onChange={(event) => setStakeLimit(event.target.value)}
                   inputMode="decimal"
                   placeholder="no limit"
-                  className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2.5 font-mono tabular-nums outline-none focus:border-rise"
+                  className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2.5 font-mono tabular-nums focus:border-rise"
                 />
               </label>
               <label className="block text-sm">
@@ -146,7 +146,7 @@ export default function LimitsPage() {
                   onChange={(event) => setLossLimit(event.target.value)}
                   inputMode="decimal"
                   placeholder="no limit"
-                  className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2.5 font-mono tabular-nums outline-none focus:border-rise"
+                  className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-2.5 font-mono tabular-nums focus:border-rise"
                 />
               </label>
             </div>

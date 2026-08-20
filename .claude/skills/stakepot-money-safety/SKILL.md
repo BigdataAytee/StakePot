@@ -112,7 +112,8 @@ returns the original fill; it does not trade twice.
 
 ## 5. Four eyes on anything significant
 
-`packages/../approvals` holds the registry. An action not listed there has no
+`apps/api/src/approvals/approval-actions.ts` holds the registry, and
+`approvals.service.ts` holds the executors. An action not listed there has no
 schema and no executor — the workflow cannot be used to smuggle through
 something nobody wrote down. Currently: void after activation, bond forfeiture,
 ledger adjustment, config change, prize run, withdrawal release, and unfreezing
@@ -158,5 +159,5 @@ node scripts/check-wiring.mjs                         # a service with no caller
 
 The last one matters more than it looks. Several money-adjacent services in
 this codebase were written, registered, tested and never called by anything —
-including the nightly reconciliation. A control nobody invokes is indis-
-tinguishable from one that passes.
+including the nightly reconciliation. A control nobody invokes cannot be told
+apart from one that passes.

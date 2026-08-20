@@ -174,7 +174,7 @@ function DisputeForm({ marketId }: { marketId: string }) {
         value={evidenceUrl}
         onChange={(event) => setEvidenceUrl(event.target.value)}
         placeholder="https://…"
-        className="rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
+        className="rounded-md border border-border bg-surface px-3 py-2 text-sm focus:border-brand"
       />
       <label className="text-sm font-semibold" htmlFor="dispute-text">
         What does it say that the proposal does not?
@@ -186,7 +186,7 @@ function DisputeForm({ marketId }: { marketId: string }) {
         maxLength={1000}
         value={text}
         onChange={(event) => setText(event.target.value)}
-        className="rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
+        className="rounded-md border border-border bg-surface px-3 py-2 text-sm focus:border-brand"
       />
       {error !== null && <p className="text-sm text-fall">{error}</p>}
       <div className="flex gap-2">

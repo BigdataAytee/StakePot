@@ -370,7 +370,7 @@ export default function CreatePage() {
           onChange={(event) => setIdea(event.target.value)}
           rows={2}
           placeholder="who go win the Surulere LGA chairmanship"
-          className="mt-3 w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-brand"
+          className="mt-3 w-full rounded-md border border-border bg-surface px-3 py-2.5 focus:border-brand"
         />
         <button
           type="button"
@@ -412,7 +412,7 @@ export default function CreatePage() {
             {...form.register('question')}
             rows={2}
             placeholder="Will the Super Eagles beat Ivory Coast on Saturday?"
-            className="w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-brand"
+            className="w-full rounded-md border border-border bg-surface px-3 py-2.5 focus:border-brand"
           />
         </Field>
 
@@ -454,7 +454,7 @@ export default function CreatePage() {
                   <input
                     {...form.register(`outcomes.${index}.label`)}
                     placeholder="YES"
-                    className="h-11 w-32 rounded-md border border-border bg-surface px-3 font-semibold outline-none focus:border-brand"
+                    className="h-11 w-32 rounded-md border border-border bg-surface px-3 font-semibold focus:border-brand"
                   />
                   {outcomes.fields.length > 2 && (
                     <button
@@ -470,7 +470,7 @@ export default function CreatePage() {
                 <input
                   {...form.register(`outcomes.${index}.criteria`)}
                   placeholder="What exactly makes this the result?"
-                  className="mt-2 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm outline-none focus:border-brand"
+                  className="mt-2 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm focus:border-brand"
                 />
                 <p className="mt-1 text-sm text-fall">
                   {form.formState.errors.outcomes?.[index]?.criteria?.message}
@@ -484,7 +484,7 @@ export default function CreatePage() {
           <input
             {...form.register('sourceName')}
             placeholder="CBN official rate"
-            className="h-11 w-full rounded-md border border-border bg-surface px-3 outline-none focus:border-brand"
+            className="h-11 w-full rounded-md border border-border bg-surface px-3 focus:border-brand"
           />
         </Field>
 
@@ -492,7 +492,7 @@ export default function CreatePage() {
           <input
             {...form.register('sourceUrl')}
             placeholder="https://www.cbn.gov.ng/rates/"
-            className="h-11 w-full rounded-md border border-border bg-surface px-3 font-mono text-sm outline-none focus:border-brand"
+            className="h-11 w-full rounded-md border border-border bg-surface px-3 font-mono text-sm focus:border-brand"
           />
         </Field>
 
@@ -501,14 +501,14 @@ export default function CreatePage() {
             <input
               type="datetime-local"
               {...form.register('eventDate')}
-              className="h-11 w-full rounded-md border border-border bg-surface px-3 font-mono text-sm outline-none focus:border-brand"
+              className="h-11 w-full rounded-md border border-border bg-surface px-3 font-mono text-sm focus:border-brand"
             />
           </Field>
           <Field label="Voids after" error={form.formState.errors.voidDate?.message}>
             <input
               type="datetime-local"
               {...form.register('voidDate')}
-              className="h-11 w-full rounded-md border border-border bg-surface px-3 font-mono text-sm outline-none focus:border-brand"
+              className="h-11 w-full rounded-md border border-border bg-surface px-3 font-mono text-sm focus:border-brand"
             />
           </Field>
         </div>

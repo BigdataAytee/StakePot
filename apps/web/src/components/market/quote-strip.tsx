@@ -83,7 +83,7 @@ export function QuoteStrip({
         <Cell label="Settles">
           <span className="font-mono text-lg font-bold">{settlesOn(eventDate)}</span>
           {ends !== null && (
-            <span className="ml-1.5 rounded-sm bg-caution-bg px-1.5 py-0.5 font-mono text-[10px] font-bold text-caution">
+            <span className="ml-1.5 rounded-sm bg-caution-bg px-1.5 py-0.5 font-mono text-fine font-bold text-caution">
               {ends}
             </span>
           )}
@@ -137,7 +137,7 @@ export function QuoteStrip({
 function Cell({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="px-3.5 py-2.5">
-      <dt className="text-[10.5px] font-semibold uppercase tracking-[.05em] text-text-muted">
+      <dt className="text-fine font-semibold uppercase tracking-[.05em] text-text-muted">
         {label}
       </dt>
       <dd className="mt-0.5 flex flex-wrap items-baseline leading-none">{children}</dd>

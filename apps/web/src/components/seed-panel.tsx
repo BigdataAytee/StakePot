@@ -195,7 +195,7 @@ function ContributeBox({
           onChange={(event) => setAmount(event.target.value)}
           inputMode="decimal"
           aria-label="Amount to sponsor"
-          className="w-32 rounded-md border border-border bg-surface px-3 py-2.5 font-mono tabular-nums outline-none focus:border-rise"
+          className="w-32 rounded-md border border-border bg-surface px-3 py-2.5 font-mono tabular-nums focus:border-rise"
         />
         <button
           type="button"

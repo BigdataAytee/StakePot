@@ -141,7 +141,7 @@ export function TradePanel({
       aria-label={`Trade ${outcome.label}`}
       className="hidden rounded-xl bg-chip p-4 min-[860px]:sticky min-[860px]:top-[76px] min-[860px]:block"
     >
-      <p className="mb-2.5 text-[13.5px] font-semibold">{outcome.label}</p>
+      <p className="mb-2.5 text-note font-semibold">{outcome.label}</p>
 
       {binary !== null && (
         <div className="mb-2.5 flex gap-2">
@@ -186,7 +186,7 @@ export function TradePanel({
                 value={amount}
                 onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
                 placeholder="₦0"
-                className="h-[42px] w-full rounded-lg border border-border bg-surface px-3 pr-9 font-mono text-lg font-semibold outline-none focus:border-brand"
+                className="h-[42px] w-full rounded-lg border border-border bg-surface px-3 pr-9 font-mono text-lg font-semibold focus:border-brand"
               />
               {amount !== '' && (
                 <button
@@ -243,7 +243,7 @@ export function TradePanel({
             maxLength={500}
             aria-label="Why? Optional, posts to the thread"
             placeholder="Why? One line, optional."
-            className="mt-2.5 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand"
+            className="mt-2.5 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm focus:border-brand"
           />
 
           {blocker !== null && (

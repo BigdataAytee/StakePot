@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 
 import { admin, type DashboardView } from '@/lib/admin-api';
 import { exactMoney, money } from '@/lib/format';
+import { SkeletonRows } from '@/components/skeleton';
 
 /**
  * §6.1's morning screen.
@@ -24,7 +25,7 @@ export default function AdminDashboard() {
   }, []);
 
   if (error !== null) return <p className="text-sm text-fall">{error}</p>;
-  if (view === null) return <p className="text-sm text-text-muted">Loading…</p>;
+  if (view === null) return <SkeletonRows rows={5} height="h-16" label="Loading the dashboard" />;
 
   const solvent = Number(view.solvency.surplus) >= 0;
 

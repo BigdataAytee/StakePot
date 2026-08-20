@@ -171,6 +171,28 @@ export const tailwindPreset: Partial<Config> = {
           WebkitFontSmoothing: 'antialiased',
         },
 
+        /*
+         * One focus ring, everywhere, for keyboard users only.
+         *
+         * Twenty-two controls were setting `outline-none` and signalling focus
+         * with a border colour instead. That is weak on two counts: a 1px
+         * border tint is easy to miss and fails WCAG 2.4.11's focus-appearance
+         * bar, and `:focus` fires on mouse clicks too, so the cue appears when
+         * it is not wanted and is then suppressed by the very people who need
+         * it with a keyboard.
+         *
+         * `:focus-visible` is the browser telling us the user is navigating by
+         * keyboard. Answering it once here means a new control is accessible by
+         * default rather than by remembering.
+         */
+        ':focus-visible': {
+          outline: `2px solid rgb(var(${cssVar.role('brand')}))`,
+          outlineOffset: '2px',
+          // The ring is drawn outside the element, so a control flush against a
+          // scroll container's edge still shows it.
+          borderRadius: 'inherit',
+        },
+
         // Live figures hold their columns so a ticking number does not jitter.
         // Same face as everything else; only the numerals change behaviour.
         'code, kbd, samp, pre, .figure': {

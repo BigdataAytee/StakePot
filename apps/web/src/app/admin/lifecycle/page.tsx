@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSavedViews } from '@/components/admin/work-queue';
 import { ops, type Composition, type FundingWindow } from '@/lib/admin-api';
 import { exactMoney, money } from '@/lib/format';
+import { SkeletonRows } from '@/components/skeleton';
 
 /**
  * §6.2's lifecycle controls.
@@ -187,7 +188,11 @@ function CompositionPanel({ marketId }: { marketId: string }) {
   if (error !== null)
     return <p className="border-t border-border p-4 text-sm text-fall">{error}</p>;
   if (composition === null)
-    return <p className="border-t border-border p-4 text-sm text-text-muted">Loading…</p>;
+    return (
+      <div className="border-t border-border p-4">
+        <SkeletonRows rows={3} height="h-14" label="Loading the lifecycle console" />
+      </div>
+    );
 
   return (
     <div className="grid gap-4 border-t border-border p-4 text-sm md:grid-cols-3">

@@ -125,7 +125,7 @@ export default function VerifyPage() {
             inputMode="numeric"
             autoComplete="one-time-code"
             placeholder="000000"
-            className="rounded-md border border-border bg-surface-raised px-3 py-3 text-center font-mono text-xl tracking-[0.3em] tabular-nums outline-none focus-visible:border-rise"
+            className="rounded-md border border-border bg-surface-raised px-3 py-3 text-center font-mono text-xl tracking-[0.3em] tabular-nums focus-visible:border-rise"
           />
         </label>
 

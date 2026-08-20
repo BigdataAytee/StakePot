@@ -331,7 +331,7 @@ export function TicketView({
               @{initial.creator.handle}
             </a>
             {initial.creator.badge !== null && (
-              <span className="rounded-full bg-brand px-1.5 py-0.5 text-[10px] font-bold text-paper">
+              <span className="rounded-full bg-brand px-1.5 py-0.5 text-fine font-bold text-paper">
                 {initial.creator.badge}
               </span>
             )}
@@ -414,7 +414,7 @@ export function TicketView({
                   key={row.id}
                   type="button"
                   onClick={() => setPicked(row.id)}
-                  className={`flex w-full items-center gap-2.5 border-b border-border px-3.5 py-2.5 text-left text-[13.5px] last:border-b-0 hover:bg-chip ${
+                  className={`flex w-full items-center gap-2.5 border-b border-border px-3.5 py-2.5 text-left text-note last:border-b-0 hover:bg-chip ${
                     row.id === selected?.id ? 'bg-brand/[.06]' : ''
                   }`}
                 >

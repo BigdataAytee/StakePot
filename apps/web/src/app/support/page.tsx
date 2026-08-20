@@ -111,7 +111,7 @@ export default function SupportPage() {
           onChange={(event) => setSubject(event.target.value)}
           placeholder="One line: what is wrong?"
           aria-label="Subject"
-          className="w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-rise"
+          className="w-full rounded-md border border-border bg-surface px-3 py-2.5 focus:border-rise"
         />
         <textarea
           value={body}
@@ -119,7 +119,7 @@ export default function SupportPage() {
           rows={4}
           placeholder="What happened, and when?"
           aria-label="What happened"
-          className="w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-rise"
+          className="w-full rounded-md border border-border bg-surface px-3 py-2.5 focus:border-rise"
         />
 
         {error !== null && <p className="text-sm text-fall">{error}</p>}

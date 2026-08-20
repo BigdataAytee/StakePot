@@ -55,11 +55,11 @@ export function RuleReportPanel({
           {report.unanswered.length} to answer · {report.findings.length} rules
         </p>
         {report.blocked ? (
-          <span className="ml-auto rounded-sm bg-fall/15 px-2 py-0.5 text-[11px] font-bold text-fall">
+          <span className="ml-auto rounded-sm bg-fall/15 px-2 py-0.5 text-fine font-bold text-fall">
             CANNOT PUBLISH
           </span>
         ) : (
-          <span className="ml-auto rounded-sm bg-rise/15 px-2 py-0.5 text-[11px] font-bold text-rise">
+          <span className="ml-auto rounded-sm bg-rise/15 px-2 py-0.5 text-fine font-bold text-rise">
             CLEAR TO PUBLISH
           </span>
         )}
@@ -96,7 +96,7 @@ function Line({
     <li className={`border-b border-border px-4 py-2.5 text-sm last:border-b-0 ${look.row}`}>
       <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
         <span
-          className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-bold ${look.chip}`}
+          className={`rounded-sm px-1.5 py-0.5 font-mono text-fine font-bold ${look.chip}`}
           aria-label={`${finding.status} on rule ${finding.rule}`}
         >
           {look.label}

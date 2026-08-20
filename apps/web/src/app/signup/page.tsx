@@ -117,7 +117,7 @@ export default function SignupPage() {
             onChange={(event) => setContact(event.target.value)}
             placeholder="you@example.com or 08031234567"
             autoComplete="username"
-            className="rounded-md border border-border bg-surface-raised px-3 py-3 text-md outline-none focus-visible:border-rise"
+            className="rounded-md border border-border bg-surface-raised px-3 py-3 text-md focus-visible:border-rise"
           />
           <span className="font-mono text-xs text-text-muted">
             {contact.length === 0

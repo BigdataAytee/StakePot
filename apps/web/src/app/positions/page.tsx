@@ -7,6 +7,7 @@ import { PageShell, PageTitle } from '@/components/market/page-shell';
 import { Sparkline } from '@/components/sparkline';
 import { exactMoney, money, percent } from '@/lib/format';
 import { authed, getToken, useSession } from '@/lib/session';
+import { SkeletonRows } from '@/components/skeleton';
 
 /**
  * §7.1's portfolio: "open positions with live P&L, closed history, pending
@@ -98,9 +99,7 @@ export default function PortfolioPage() {
         <p className="text-xs font-semibold uppercase tracking-[.06em] text-text-muted">
           Total portfolio value
         </p>
-        <p className="mt-1 font-mono text-[32px] font-bold leading-none">
-          {exactMoney(totals.total)}
-        </p>
+        <p className="mt-1 font-mono text-3xl font-bold leading-none">{exactMoney(totals.total)}</p>
 
         <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 text-sm">
           <Delta label="Today" value={totals.today} />
@@ -124,7 +123,9 @@ export default function PortfolioPage() {
       )}
 
       {positions === null && error === null && (
-        <p className="mt-4 text-sm text-text-muted">Loading…</p>
+        <div className="mt-4">
+          <SkeletonRows rows={3} height="h-[72px]" label="Loading your positions" />
+        </div>
       )}
 
       {positions !== null && positions.length === 0 && (
@@ -223,13 +224,13 @@ function Holding({ position }: { position: Position }) {
 
         <div className="mt-2.5 flex items-end justify-between gap-3 border-t border-border pt-2.5">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[.05em] text-text-muted">
+            <p className="text-fine font-semibold uppercase tracking-[.05em] text-text-muted">
               Value now
             </p>
             <p className="font-mono text-md font-bold">{money(value)}</p>
           </div>
           <div className="text-right">
-            <p className="text-[11px] font-semibold uppercase tracking-[.05em] text-text-muted">
+            <p className="text-fine font-semibold uppercase tracking-[.05em] text-text-muted">
               Unrealised
             </p>
             <p className={`font-mono text-md font-bold ${pnl >= 0 ? 'text-rise' : 'text-fall'}`}>

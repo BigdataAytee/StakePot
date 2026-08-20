@@ -332,7 +332,7 @@ export function TradeSheet({
                     // running does not replay, and the third tap of ₦500 is the
                     // one that most needs to look like it landed.
                     key={tick}
-                    className={`w-full rounded-md border bg-surface px-3 py-3 pr-12 font-mono text-xl tabular-nums outline-none focus:border-brand focus-visible:ring-1 focus-visible:ring-brand ${
+                    className={`w-full rounded-md border bg-surface px-3 py-3 pr-12 font-mono text-xl tabular-nums focus:border-brand focus-visible:ring-1 focus-visible:ring-brand ${
                       tick > 0 ? 'motion-safe:animate-chip-tick border-brand' : 'border-border'
                     }`}
                   />
@@ -483,7 +483,7 @@ export function TradeSheet({
                       onChange={(event) => setReason(event.target.value)}
                       maxLength={500}
                       placeholder="One line. It goes on the thread with your position."
-                      className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm outline-none focus:border-brand"
+                      className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm focus:border-brand"
                     />
                   </div>
                 )}

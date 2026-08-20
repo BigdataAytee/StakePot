@@ -49,7 +49,7 @@ export function CategoryTabs({
                 key={item.key}
                 href={href(item.key)}
                 aria-current={on ? 'page' : undefined}
-                className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-[13px] py-[11px] text-[13.5px] transition-colors ${
+                className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-[13px] py-[11px] text-note transition-colors ${
                   on
                     ? 'border-brand font-semibold text-text'
                     : 'border-transparent font-medium text-text-muted hover:text-text'

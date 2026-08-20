@@ -255,7 +255,7 @@ function SignOff({
 
   return (
     <div className="mt-3 space-y-2 rounded-md border border-border bg-surface p-3 text-sm">
-      <p className="text-[11px] font-semibold uppercase tracking-[.05em] text-text-muted">
+      <p className="text-fine font-semibold uppercase tracking-[.05em] text-text-muted">
         Before it opens
       </p>
 

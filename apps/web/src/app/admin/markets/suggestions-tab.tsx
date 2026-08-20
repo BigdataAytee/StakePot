@@ -4,6 +4,7 @@ import { AlertTriangle, ExternalLink, Sparkles } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 
 import { admin, type DraftEvidence, type DraftRow } from '@/lib/admin-api';
+import { SkeletonRows } from '@/components/skeleton';
 
 /**
  * What the engine has drafted, and what it refused.
@@ -59,7 +60,7 @@ export function SuggestionsTab() {
       {error !== null && <p className="text-sm text-fall">{error}</p>}
 
       {drafts === null ? (
-        <p className="text-sm text-text-muted">Loading…</p>
+        <SkeletonRows rows={3} height="h-24" label="Loading suggestions" />
       ) : drafts.length === 0 ? (
         <p className="rounded-xl border border-border bg-surface-raised p-4 text-sm text-text-muted">
           Nothing drafted yet. A cycle only drafts for slots the shelf has free.
@@ -70,7 +71,7 @@ export function SuggestionsTab() {
             <li key={draft.id} className="rounded-xl border border-border bg-surface-raised p-3.5">
               <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
                 <span
-                  className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase ${
+                  className={`rounded-sm px-1.5 py-0.5 font-mono text-fine font-bold uppercase ${
                     draft.state === 'suggested' ? 'bg-rise/15 text-rise' : 'bg-fall/15 text-fall'
                   }`}
                 >
@@ -148,7 +149,7 @@ function Evidence({ evidence }: { evidence: DraftEvidence | null }) {
 
   return (
     <details className="group mt-2">
-      <summary className="cursor-pointer list-none font-mono text-[11px] uppercase tracking-wide text-text-muted hover:text-text">
+      <summary className="cursor-pointer list-none font-mono text-fine uppercase tracking-wide text-text-muted hover:text-text">
         Evidence · {evidence.stories.length} stories · {evidence.figures.length} figures ·{' '}
         {evidence.itemsRead} items read
         {evidence.conflicts.length > 0 && (

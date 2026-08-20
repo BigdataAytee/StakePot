@@ -49,7 +49,7 @@ export function MarketCard({ market }: { market: MarketSummary }) {
         <h3 className="flex-1 text-md font-semibold">
           <Link
             href={`/market/${market.id}`}
-            className="after:absolute after:inset-0 after:content-[''] focus-visible:outline-none focus-visible:after:outline focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-brand"
+            className="after:absolute after:inset-0 after:content-[''] focus-visible:focus-visible:after:outline focus-visible:after:outline-2 focus-visible:after:outline-offset-2 focus-visible:after:outline-brand"
           >
             {market.question}
           </Link>

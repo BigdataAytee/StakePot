@@ -172,7 +172,7 @@ export function CommandPalette() {
           }}
           placeholder="Go to… or paste a market id"
           aria-label="Command"
-          className="w-full border-b border-border bg-transparent px-4 py-3 text-md outline-none"
+          className="w-full border-b border-border bg-transparent px-4 py-3 text-md"
         />
 
         <ul className="max-h-80 overflow-y-auto">

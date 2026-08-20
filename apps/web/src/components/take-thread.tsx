@@ -105,7 +105,7 @@ export function TakeThread({
             maxLength={500}
             placeholder={t('placeholder')}
             aria-label={t('placeholder')}
-            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-rise"
+            className="w-full rounded-md border border-border bg-surface px-3 py-2 text-sm focus:border-rise"
           />
           <div className="mt-1.5 flex items-center gap-3">
             <button
@@ -147,17 +147,17 @@ export function TakeThread({
                     (comment.handle === null ? 'Someone' : `@${comment.handle}`)}
                 </span>
                 {comment.fromTrade && (
-                  <span className="font-mono text-[10px] uppercase text-text-muted">
+                  <span className="font-mono text-fine uppercase text-text-muted">
                     {t('fromTrade')}
                   </span>
                 )}
                 {comment.calledIt === true && (
-                  <span className="flex items-center gap-1 rounded-full bg-rise px-2 py-0.5 text-[10px] font-bold text-paper">
+                  <span className="flex items-center gap-1 rounded-full bg-rise px-2 py-0.5 text-fine font-bold text-paper">
                     <Trophy size={10} /> {t('calledIt')}
                   </span>
                 )}
                 {comment.calledIt === false && (
-                  <span className="rounded-full border border-border px-2 py-0.5 text-[10px] text-text-muted">
+                  <span className="rounded-full border border-border px-2 py-0.5 text-fine text-text-muted">
                     {t('missed')}
                   </span>
                 )}
@@ -200,7 +200,7 @@ export function TakeThread({
                     <button
                       type="button"
                       onClick={() => setReportingId(comment.id)}
-                      className="flex items-center gap-1 font-mono text-[10px] text-text-muted"
+                      className="flex items-center gap-1 font-mono text-fine text-text-muted"
                     >
                       <Flag size={10} /> {t('report')}
                     </button>
@@ -238,7 +238,7 @@ function Badge({
 }) {
   if (badge === 'none') {
     return (
-      <span className="rounded-sm border border-border px-1.5 py-0.5 font-mono text-[10px] text-text-muted">
+      <span className="rounded-sm border border-border px-1.5 py-0.5 font-mono text-fine text-text-muted">
         {noPositionLabel}
       </span>
     );
@@ -256,7 +256,7 @@ function Badge({
       : 'bg-rise/10 text-rise';
 
   return (
-    <span className={`rounded-sm px-1.5 py-0.5 font-mono text-[10px] font-bold ${tone}`}>
+    <span className={`rounded-sm px-1.5 py-0.5 font-mono text-fine font-bold ${tone}`}>
       {label}
       {pct !== undefined && <span className="ml-1 text-text-muted">@{pct}%</span>}
     </span>

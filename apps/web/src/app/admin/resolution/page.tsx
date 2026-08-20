@@ -397,7 +397,7 @@ function DossierPanel({ market, onChanged }: { market: QueueMarket; onChanged: (
     <section className="rounded-md border border-dashed border-border p-4">
       <div className="flex flex-wrap items-baseline gap-2">
         <h3 className="text-sm font-semibold">Research dossier</h3>
-        <span className="rounded-sm bg-border px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase text-text-muted">
+        <span className="rounded-sm bg-border px-1.5 py-0.5 font-mono text-fine font-bold uppercase text-text-muted">
           advisory
         </span>
         <button

@@ -119,7 +119,7 @@ export function FreezeCountdown({
 export function FrozenBadge({ className = '' }: { className?: string }) {
   return (
     <span
-      className={`rounded-sm bg-border px-1.5 py-0.5 font-mono text-[10px] font-bold uppercase tracking-wide text-text-muted ${className}`}
+      className={`rounded-sm bg-border px-1.5 py-0.5 font-mono text-fine font-bold uppercase tracking-wide text-text-muted ${className}`}
     >
       Frozen
     </span>

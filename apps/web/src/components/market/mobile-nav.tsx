@@ -54,7 +54,7 @@ export function MobileNav() {
                 }`}
               >
                 <Icon name={item.label} />
-                <span className="text-[11px] font-semibold leading-none">{item.label}</span>
+                <span className="text-fine font-semibold leading-none">{item.label}</span>
               </Link>
             </li>
           );
