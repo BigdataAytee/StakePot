@@ -1,10 +1,10 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { crawlIntervalMs, isPublicTier } from '@stakeam/rules';
+import { cadenceLabel, crawlIntervalMs, inPublishWindow, isPublicTier } from '@stakeam/rules';
 
 import { logger } from '../logger';
 import { PrismaService } from '../prisma/prisma.service';
-import { DisabledFetcher, SOURCE_FETCHER, type SourceFetcher } from './fetcher';
+import { DisabledFetcher, SOURCE_FETCHER, type FetchedItem, type SourceFetcher } from './fetcher';
 import {
   ANNOTATION_FLOOR,
   cluster,
@@ -48,8 +48,13 @@ export class ResearchService {
    * and it is the easiest of the three to mistake for the third.
    */
   describeFetcher(): { name: string; enabled: boolean } {
-    const name = this.fetcher.constructor.name;
-    return { name, enabled: !(this.fetcher instanceof DisabledFetcher) };
+    const described = this.fetcher.describe?.();
+    if (described !== undefined) return { name: described.name, enabled: described.reads };
+    // A fixture fetcher in a test, which need not implement `describe`.
+    return {
+      name: this.fetcher.constructor.name,
+      enabled: !(this.fetcher instanceof DisabledFetcher),
+    };
   }
 
   /**
@@ -65,6 +70,8 @@ export class ResearchService {
     itemsStored: number;
     linksMade: number;
     conflictsFound: number;
+    /** Sources that answered 304: read successfully, nothing new to download. */
+    unchanged: number;
     skipped: { disabled: number; tooSoon: number; notAllowed: number };
   }> {
     const now = params.now ?? new Date();
@@ -73,6 +80,7 @@ export class ResearchService {
       itemsStored: 0,
       linksMade: 0,
       conflictsFound: 0,
+      unchanged: 0,
       skipped: { disabled: 0, tooSoon: 0, notAllowed: 0 },
     };
 
@@ -81,11 +89,7 @@ export class ResearchService {
     // markets, so with no markets there is no reason to read anything at all.
     if (markets.length === 0) return summary;
 
-    const soonest = markets
-      .map((market) => (market.eventDate.getTime() - now.getTime()) / 3_600_000)
-      .filter((hours) => hours > 0)
-      .sort((a, b) => a - b)[0];
-    const interval = crawlIntervalMs(soonest ?? null);
+    const attached = await this.attachmentHours(markets, now);
 
     const sources = await this.prisma.source.findMany({
       where: { enabled: true },
@@ -94,6 +98,16 @@ export class ResearchService {
     });
 
     for (const source of sources) {
+      // Cadence is per source, not per sweep. The sweep runs every five
+      // minutes and asks each source whether it is due — which is what lets a
+      // feed attached to a market settling tonight poll every minute while a
+      // background source on the same sweep polls once an hour.
+      const interval = crawlIntervalMs({
+        cadence: source.cadence,
+        hoursToNearestSettlement: attached.get(source.id) ?? null,
+        failureCount: source.failureCount,
+        inPublishWindow: inPublishWindow(source.publishWindow, now),
+      });
       const due =
         source.lastFetchAt === null || now.getTime() - source.lastFetchAt.getTime() >= interval;
       if (!due) {
@@ -114,15 +128,17 @@ export class ResearchService {
             politenessMs: source.politenessMs,
           },
           since,
+          { etag: source.etag, lastModified: source.lastModified },
         );
       } catch (error) {
         // A source that keeps failing backs itself off through `failureCount`
         // rather than being retried at full rate forever. A newsroom whose feed
         // is down does not need this platform hammering it.
+        const message = error instanceof Error ? error.message : String(error);
         logger.warn({ sourceId: source.id, error }, 'source fetch failed');
         await this.prisma.source.update({
           where: { id: source.id },
-          data: { lastFetchAt: now, failureCount: { increment: 1 } },
+          data: { lastFetchAt: now, failureCount: { increment: 1 }, lastError: message },
         });
         continue;
       }
@@ -131,18 +147,59 @@ export class ResearchService {
         summary.skipped.notAllowed += 1;
         await this.prisma.source.update({
           where: { id: source.id },
-          data: { lastFetchAt: now, robotsAllows: false, robotsCheckedAt: now },
+          data: {
+            lastFetchAt: now,
+            lastError: result.note ?? 'not allowed',
+            // Only a robots verdict writes the robots columns. "No fetcher is
+            // configured" and "this kind needs HTML extraction" are facts about
+            // us, and recording them as a disallow would put a red robots flag
+            // on every source in a deployment that was simply never switched on.
+            ...(result.blockedBy === 'robots' ? { robotsAllows: false, robotsCheckedAt: now } : {}),
+          },
         });
         continue;
       }
 
       summary.sourcesRead += 1;
+
+      // A 304 is a success. It must not be stored as a failure, and it must not
+      // clear the validators — dropping them makes the next read unconditional
+      // and downloads the whole feed again to learn the same thing.
+      if (result.notModified === true) {
+        summary.unchanged += 1;
+        await this.prisma.source.update({
+          where: { id: source.id },
+          data: { lastFetchAt: now, lastOkAt: now, failureCount: 0, lastError: null },
+        });
+        continue;
+      }
+
       const stored = await this.store(source.id, result.items);
       summary.itemsStored += stored.length;
 
+      const newest = result.items.reduce<Date | null>(
+        (latest, item) =>
+          latest === null || item.publishedAt > latest ? item.publishedAt : latest,
+        null,
+      );
+
       await this.prisma.source.update({
         where: { id: source.id },
-        data: { lastFetchAt: now, lastOkAt: now, failureCount: 0, robotsAllows: true },
+        data: {
+          lastFetchAt: now,
+          lastOkAt: now,
+          failureCount: 0,
+          robotsAllows: true,
+          // A 200 that parsed to nothing is still worth saying out loud: it is
+          // how a feed that moved looks, and it is indistinguishable from a
+          // quiet news week unless the row says which it was.
+          lastError: result.note ?? null,
+          ...(stored.length > 0 && newest !== null ? { lastItemAt: newest } : {}),
+          // `undefined` where the fetcher does not speak HTTP at all, which
+          // must leave the stored validators alone rather than wipe them.
+          ...(result.etag !== undefined ? { etag: result.etag } : {}),
+          ...(result.lastModified !== undefined ? { lastModified: result.lastModified } : {}),
+        },
       });
     }
 
@@ -168,28 +225,157 @@ export class ResearchService {
     });
   }
 
-  /** New items only. The URL is unique, so a re-read of a feed is cheap. */
-  private async store(
-    sourceId: string,
-    items: readonly { headline: string; url: string; publishedAt: Date; facts: object }[],
-  ): Promise<string[]> {
+  /**
+   * New items only, deduped on the guid *and* the URL.
+   *
+   * Two different mistakes, which is why both are checked. The URL catches the
+   * same story reaching us down two routes — a feed and a sitemap, or two
+   * sections of one site. The guid catches the same story arriving twice from
+   * one publisher under two URLs, which is what happens when a headline is
+   * re-slugged, a tracking parameter is appended, or a site moves to https:
+   * the bytes differ, the guid does not, and without it the news panel shows
+   * one story three times.
+   *
+   * Within a batch as well as against the table. A feed that repeats an entry
+   * inside one document is not rare, and the unique index would turn that into
+   * an exception in the middle of a pass.
+   */
+  private async store(sourceId: string, items: readonly FetchedItem[]): Promise<string[]> {
     const stored: string[] = [];
+    const seen = new Set<string>();
+
     for (const item of items) {
-      const existing = await this.prisma.sourceItem.findUnique({ where: { url: item.url } });
+      const guid = item.guid ?? null;
+      const key = guid ?? item.url;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      const existing = await this.prisma.sourceItem.findFirst({
+        where: {
+          OR: [{ url: item.url }, ...(guid === null ? [] : [{ sourceId, guid }])],
+        },
+        select: { id: true },
+      });
       if (existing !== null) continue;
 
-      const row = await this.prisma.sourceItem.create({
-        data: {
-          sourceId,
-          headline: item.headline.trim(),
-          url: item.url,
-          publishedAt: item.publishedAt,
-          factsJson: JSON.parse(JSON.stringify(item.facts)) as Prisma.InputJsonValue,
-        },
-      });
-      stored.push(row.id);
+      try {
+        const row = await this.prisma.sourceItem.create({
+          data: {
+            sourceId,
+            headline: item.headline.trim(),
+            url: item.url,
+            guid,
+            publishedAt: item.publishedAt,
+            factsJson: JSON.parse(JSON.stringify(item.facts)) as Prisma.InputJsonValue,
+          },
+        });
+        stored.push(row.id);
+      } catch (error) {
+        // Two passes overlapping on the same feed. The unique index is the
+        // real guarantee; this read-then-write is only the cheap path, and
+        // losing that race means the item is already stored.
+        if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+          throw error;
+        }
+      }
     }
     return stored;
+  }
+
+  /**
+   * For each source, how many hours until the soonest market that depends on
+   * it settles — or absent from the map when nothing live does.
+   *
+   * This is what makes the cadence tiers mean anything. "Attached" is read two
+   * ways, because a source earns its place either by authority or by having
+   * actually produced something relevant:
+   *
+   * 1. the market names it as its resolution source, which is the strongest
+   *    possible attachment — that source's publication *is* the settlement; and
+   * 2. it has already had an item linked to the market by relevance scoring.
+   *
+   * A source attached to nothing falls to the idle interval rather than
+   * polling all day for markets that do not exist.
+   */
+  private async attachmentHours(
+    markets: readonly { id: string; sourceName: string; eventDate: Date }[],
+    now: Date,
+  ): Promise<Map<string, number>> {
+    const hours = new Map<string, number>();
+    const live = new Map<string, number>();
+    for (const market of markets) {
+      const toSettlement = (market.eventDate.getTime() - now.getTime()) / 3_600_000;
+      // A market past its event date is waiting on a person, not on the news.
+      if (toSettlement > 0) live.set(market.id, toSettlement);
+    }
+    if (live.size === 0) return hours;
+
+    const soonest = (sourceId: string, value: number): void => {
+      const held = hours.get(sourceId);
+      if (held === undefined || value < held) hours.set(sourceId, value);
+    };
+
+    const named = await this.prisma.source.findMany({
+      where: { name: { in: [...new Set(markets.map((market) => market.sourceName))] } },
+      select: { id: true, name: true },
+    });
+    for (const market of markets) {
+      const toSettlement = live.get(market.id);
+      if (toSettlement === undefined) continue;
+      for (const source of named) {
+        if (source.name === market.sourceName) soonest(source.id, toSettlement);
+      }
+    }
+
+    const links = await this.prisma.marketSourceItem.findMany({
+      where: { marketId: { in: [...live.keys()] } },
+      select: { marketId: true, item: { select: { sourceId: true } } },
+      take: 5_000,
+    });
+    for (const link of links) {
+      const toSettlement = live.get(link.marketId);
+      if (toSettlement !== undefined) soonest(link.item.sourceId, toSettlement);
+    }
+
+    return hours;
+  }
+
+  /**
+   * What each source's polling interval currently is, and why.
+   *
+   * Exported to the crawl-health screen rather than kept inside the pass: a
+   * cadence nobody can see is one nobody can tell has gone wrong, and "this
+   * source polls hourly because no live market depends on it" is exactly the
+   * sentence an operator needs when a market is settling and its feed looks
+   * quiet.
+   */
+  async cadencePlan(
+    now = new Date(),
+  ): Promise<Map<string, { label: string; intervalMs: number; attachedHours: number | null }>> {
+    const markets = await this.liveMarkets();
+    const attached = await this.attachmentHours(markets, now);
+    const sources = await this.prisma.source.findMany({
+      select: { id: true, cadence: true, failureCount: true, publishWindow: true },
+    });
+
+    const plan = new Map<
+      string,
+      { label: string; intervalMs: number; attachedHours: number | null }
+    >();
+    for (const source of sources) {
+      const input = {
+        cadence: source.cadence,
+        hoursToNearestSettlement: attached.get(source.id) ?? null,
+        failureCount: source.failureCount,
+        inPublishWindow: inPublishWindow(source.publishWindow, now),
+      };
+      plan.set(source.id, {
+        label: cadenceLabel(input),
+        intervalMs: crawlIntervalMs(input),
+        attachedHours: attached.get(source.id) ?? null,
+      });
+    }
+    return plan;
   }
 
   /** Score everything recent against every live market, and keep what lands. */

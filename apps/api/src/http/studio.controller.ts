@@ -118,6 +118,10 @@ export class SourceEntryDto {
   @IsOptional() @IsArray() categories?: string[];
   @IsOptional() @IsString() region?: string;
   @IsOptional() @IsString() language?: string;
+  @IsOptional()
+  @IsIn(['auto', 'urgent', 'normal', 'background'])
+  cadence?: 'auto' | 'urgent' | 'normal' | 'background';
+  @IsOptional() @IsString() @MaxLength(60) publishWindow?: string;
 }
 
 /** A list of sources to add or update. See docs/research-sources.md. */

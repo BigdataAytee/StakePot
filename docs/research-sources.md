@@ -1,11 +1,23 @@
 # Switching the research pipeline on
 
-The Research tab is honest and empty. This is what stands between that and a
-pipeline that actually reads.
-
 Read this before buying anything: **the blocker is not API keys.** Almost
-nothing here needs a credential. Two pieces of code are missing, and once they
-exist the rest is a list of URLs.
+nothing here needs a credential. What was missing was code, and half of it now
+exists — the rest is a list of URLs somebody has to verify.
+
+## Status
+
+- **The RSS/Atom fetcher is built.** `HttpFetcher`, wrapped in `PoliteFetcher`,
+  bound when `RESEARCH_FETCHER=http` is set. Conditional requests, robots.txt,
+  per-host pacing, guid and URL dedupe, and it never throws — a source having a
+  bad day costs one pass, not the sweep. Proven end to end over a real socket in
+  `http-fetcher.integration.test.ts`.
+- **HTML extraction is not built.** A `crawl` or `sitemap` source can be
+  registered and will show on the Research tab, and it is not read: the fetcher
+  refuses it with "needs HTML extraction" rather than fetching a home page and
+  reporting zero items, which would look like a quiet source rather than an
+  unfinished one.
+- **Nothing is switched on in production.** `RESEARCH_FETCHER` is unset, so
+  every deployment still reads nothing until somebody decides otherwise.
 
 ## What already works
 
@@ -23,32 +35,32 @@ exist the rest is a list of URLs.
 
 ## What is missing
 
-### 1. A fetcher that reads anything
+### 1. HTML extraction
 
-`SOURCE_FETCHER` is bound to `DisabledFetcher`, which returns nothing. The only
-other implementation is `PoliteFetcher`, and it is a **wrapper** — it throttles
-per host and delegates to an inner fetcher that does not exist yet.
+Most Nigerian official bodies publish a page, not a feed — see the verified
+findings below. Each needs a per-source rule: the page to read, the element that
+holds the release, and how to pull the figure out of it. A day per awkward
+source, and CBN, NBS and NNPC are awkward in different ways.
 
-So a concrete fetcher has to be written. For the Tier 1 six it needs to handle:
+### 2. Verified feed URLs
 
-- **RSS/Atom** where a feed exists — parse, map entries to
-  `{ headline, url, publishedAt, facts }`.
-- **HTML** where one does not, which for Nigerian official bodies is most of
-  them. That means a per-source extraction rule: the page to read, the element
-  that holds the release, and how to pull the figure out of it.
-- **`robots.txt`** — fetch, cache, honour. The `robotsAllows` and
-  `robotsCheckedAt` columns exist for this and are currently never written.
+**No URL is presented here as checked unless the runner checked it.** This
+sandbox cannot reach the public internet. Rather than guess, there is a
+workflow: **Actions → Discover feeds**. Leave the input blank to sweep the
+candidate list, or paste one home page. It reads `robots.txt` first and prints
+it, looks for a declared `<link rel="alternate">`, then tries the usual paths,
+and marks only those that returned 200 **and** actually began as XML — a site
+serving its 404 page with a 200 status is common enough that reading the status
+alone produces a list of "feeds" that parse to nothing.
 
-Estimate: RSS is a day. HTML extraction is a day per awkward source, and CBN,
-NBS and NNPC are all awkward in different ways.
+#### What the runner has established
 
-### 2. Nothing verified from here
+| Source  | Checked     | Result                                                                                                    |
+| ------- | ----------- | --------------------------------------------------------------------------------------------------------- |
+| **CAF** | 20 Aug 2026 | **No feed.** No `robots.txt` (404), no declared feed, and 404 on all eight usual paths. Needs extraction. |
 
-**No URL below has been checked.** This sandbox cannot reach the public
-internet, so every feed path is a starting point for you or the fetcher's first
-run to confirm — not a fact. A wrong `feedUrl` shows up as a source that is
-enabled, erroring, and visible as `failing` on the Research tab, which is the
-right failure but still a wasted cycle.
+That was the one I rated most likely to have a feed, and it does not. Do not
+onboard a source on the strength of a guess — run the workflow first.
 
 ## The Tier 1 six
 
@@ -75,16 +87,75 @@ scrape (a football data API instead of NPFL's site, say), it goes in the
 service environment exactly as `ANTHROPIC_API_KEY` does — `sync: false` in
 `render.yaml`, value typed into the dashboard, never committed.
 
+## Onboarding one source: the checklist
+
+Everything you have to supply, and nothing you do not. Add one at a time and
+watch its row flip before adding the next — a source added and never read shows
+as `stale`, which is exactly what that word is on the tab for.
+
+**Before you type anything:** run **Actions → Discover feeds** against the home
+page. Sixty seconds, and it answers the only question that matters.
+
+Then, in the Studio → Research → **Add a source**:
+
+| Field              | What to paste                                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Name**           | What a market cites and a reader sees. `CAF`, `CBN`, `Premium Times`. Exact — a market that names its settling source is matched on this string. |
+| **Home URL**       | The organisation's own address, `https://` only. Used for attribution and for the `robots.txt` lookup.                                           |
+| **Feed URL**       | The RSS/Atom address the discovery run marked `FEED`. Leave blank if there is none.                                                              |
+| **Tier**           | 1 only if its publication **is** the fact being settled. 2 for reputable news. 3 for staff-side signal.                                          |
+| **Kind**           | `RSS / Atom feed` if you have a feed URL. Anything else registers the source and waits for extraction rules.                                     |
+| **Cadence**        | Leave on _follow the markets_ unless you have a reason. See below.                                                                               |
+| **Publish window** | Only for calendar publishers. `mon-fri 08:00-10:30`, `d14-18 09:00-15:00` — Lagos time.                                                          |
+
+**For an HTML source, additionally write down** (there is nowhere to type them
+yet, so put them in the ticket that asks for the extraction rule): the page URL
+that carries the release, the CSS selector for the element holding it, and the
+selector or pattern for the figure itself.
+
+Then press **Run a pass now** and read the row. It should say `ok`, with
+`checked just now` and a `last item` time. If it says something else:
+
+| Row says                                      | Means                                                                      |
+| --------------------------------------------- | -------------------------------------------------------------------------- |
+| `fetched, but nothing in it parsed as a feed` | The URL answered but is not a feed. Usually a 404 page served with a 200.  |
+| `robots.txt disallows this path`              | They have asked us not to. Honour it; find another entry point.            |
+| `HTTP 403` / `HTTP 429`                       | Blocked or rate-limited. Raise politeness, or ask them.                    |
+| `stale` with no error                         | It answered and had nothing new. Fine on day one; suspicious on day three. |
+| `needs HTML extraction`                       | Registered, not read. Expected for a non-feed source.                      |
+
+## Cadence
+
+Each source keeps its own interval; the five-minute sweep only asks whether it
+is due. By default that interval follows the markets:
+
+| Tier         | Interval | When                                                 |
+| ------------ | -------- | ---------------------------------------------------- |
+| `urgent`     | 1 min    | A market that depends on it settles within 24 hours. |
+| `normal`     | 5 min    | A market that depends on it settles within a week.   |
+| `background` | 45 min   | Further out, or outside a declared publish window.   |
+| idle         | 6 h      | No live market depends on it at all.                 |
+
+Escalation and de-escalation are automatic: a source attached to a market
+settling tonight drops to one minute on its own and returns afterwards without
+anybody remembering. A source is "attached" to a market either because the
+market names it as its settling source or because relevance scoring has already
+linked one of its items. Consecutive failures back a source off exponentially,
+capped at 32×.
+
+Pin the cadence only for the two cases the markets cannot see: a source that
+matters before any market names it, and one that must be kept quiet without
+being switched off.
+
 ## Switch-on order
 
-1. Write the RSS half of the fetcher. Bind it in `IntelModule` behind
-   `PoliteFetcher`.
-2. Import **one** source — whichever of the six turns out to have a real feed —
-   and watch the Research tab. You want `items in 24h` moving and the source
-   reading `ok` rather than `stale`.
+1. Set `RESEARCH_FETCHER=http` on the API service. Nothing is read until this
+   is set, in production as anywhere else.
+2. Import **one** source with a verified feed and press _Run a pass now_. You
+   want the row reading `ok`, `items in 24h` moving, and the market's news tab
+   filling.
 3. Add HTML extraction, one source at a time, confirming each on the tab before
-   the next. A source added and never read shows as `stale`, which is exactly
-   the state this tab was built to make visible.
+   the next.
 4. Only then add Tier 2 breadth. Tier 2 is news that can appear on a context
    panel but never settle anything, so volume matters more than precision and
    the cost of a bad one is lower.

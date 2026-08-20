@@ -223,7 +223,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
-      'content-type': 'application/json',
+      // Only when there is actually a body. Fastify's JSON parser rejects an
+      // empty body that claims to be JSON — "Body cannot be empty when
+      // content-type is set to 'application/json'" — so declaring it
+      // unconditionally broke every bodyless POST on the admin panel: run a
+      // research pass, resolve a ticket, start a 2FA enrolment. Each of them
+      // failed with a parser error that reads like a server fault.
+      ...(init?.body === undefined ? {} : { 'content-type': 'application/json' }),
       authorization: `Bearer ${token}`,
       ...(init?.headers ?? {}),
     },
@@ -297,13 +303,22 @@ export interface CrawlHealth {
     id: string;
     name: string;
     tier: string;
+    kind: string;
+    feedUrl: string | null;
     status: 'ok' | 'stale' | 'failing' | 'off';
     trust: number;
     failureCount: number;
     conflicts: number;
     lastFetchAt: string | null;
     lastOkAt: string | null;
+    /** When it last published something we kept — not when we last asked. */
+    lastItemAt: string | null;
+    lastError: string | null;
     itemsLast24h: number;
+    cadence: string;
+    intervalMs: number;
+    nextCheckAt: string | null;
+    attachedHours: number | null;
     disabledReason: string | null;
   }[];
   totals: {
@@ -474,7 +489,33 @@ export const admin = {
       itemsStored: number;
       linksMade: number;
       conflictsFound: number;
+      unchanged: number;
     }>('/admin/studio/crawl/pass', { method: 'POST' }),
+  /**
+   * Add one source, or a list of them.
+   *
+   * The same endpoint the bulk import uses, called with a single entry: an
+   * operator adding CAF from a phone and an admin pasting eighty rows are the
+   * same operation, and two paths would be two sets of validation to keep in
+   * step.
+   */
+  importSources: (
+    sources: {
+      tier: 'resolution' | 'news' | 'signal';
+      kind: 'api' | 'rss' | 'sitemap' | 'crawl';
+      name: string;
+      homeUrl: string;
+      feedUrl?: string;
+      categories?: string[];
+      region?: string;
+      cadence?: 'auto' | 'urgent' | 'normal' | 'background';
+      publishWindow?: string;
+    }[],
+  ) =>
+    request<{ added: number; updated: number }>('/admin/studio/sources/import', {
+      method: 'POST',
+      body: JSON.stringify({ sources }),
+    }),
   /** The kill switch: one source, a whole tier, or everything. */
   setSourcesEnabled: (body: {
     scope: 'source' | 'tier' | 'all';

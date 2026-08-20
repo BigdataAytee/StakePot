@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, Power } from 'lucide-react';
+import { AlertTriangle, Plus, Power } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { admin, type CrawlHealth } from '@/lib/admin-api';
@@ -29,7 +29,9 @@ export function ResearchTab() {
     itemsStored: number;
     linksMade: number;
     conflictsFound: number;
+    unchanged: number;
   } | null>(null);
+  const [adding, setAdding] = useState(false);
 
   const load = useCallback(() => {
     void admin
@@ -174,9 +176,9 @@ export function ResearchTab() {
 
       {pass !== null && (
         <p className="font-mono text-xs text-text-muted">
-          Last pass: read {pass.sourcesRead} sources, stored {pass.itemsStored} items, linked{' '}
-          {pass.linksMade}, flagged {pass.conflictsFound} disagreement
-          {pass.conflictsFound === 1 ? '' : 's'}.
+          Last pass: read {pass.sourcesRead} sources ({pass.unchanged} unchanged since we last
+          asked), stored {pass.itemsStored} items, linked {pass.linksMade}, flagged{' '}
+          {pass.conflictsFound} disagreement{pass.conflictsFound === 1 ? '' : 's'}.
         </p>
       )}
 
@@ -207,7 +209,29 @@ export function ResearchTab() {
       )}
 
       <section>
-        <h3 className="text-sm font-semibold">Sources</h3>
+        <div className="flex items-baseline justify-between gap-2">
+          <h3 className="text-sm font-semibold">Sources</h3>
+          <button
+            type="button"
+            onClick={() => setAdding((open) => !open)}
+            className="flex items-center gap-1 rounded-sm border border-border px-2 py-0.5 text-xs font-semibold"
+          >
+            <Plus size={12} />
+            {adding ? 'Cancel' : 'Add a source'}
+          </button>
+        </div>
+        {/*
+          Said out loud because the two are not the same thing and a trader who
+          conflates them is being misled: prices and trades arrive over a socket
+          the moment they happen, and news is polled on a schedule. "Checked
+          4 minutes ago" is the honest label for the second, and the timestamps
+          below are what makes it checkable.
+        */}
+        <p className="mt-0.5 text-xs text-text-muted">
+          News is <b>polled</b> — each source shows when it was last checked. Prices and trades are
+          live over a socket; the two are never mixed.
+        </p>
+        {adding && <AddSource busy={busy} onAdded={load} onError={setError} />}
         <ul className="mt-2 divide-y divide-border rounded-xl border border-border">
           {health.sources.length === 0 && (
             <li className="p-3.5 text-sm text-text-muted">
@@ -253,6 +277,22 @@ export function ResearchTab() {
                   Resume
                 </button>
               )}
+              <span className="w-full font-mono text-[11px] text-text-muted">
+                {/*
+                  Three timestamps rather than one, because they fail apart. A
+                  feed can be checked every minute, answer 200 every time, and
+                  have published nothing for a fortnight — green by "last
+                  checked" and dead by "last item".
+                */}
+                checked {ago(source.lastFetchAt)} · last item {ago(source.lastItemAt)} · every{' '}
+                {everyLabel(source.intervalMs)} ({source.cadence})
+                {source.attachedHours !== null &&
+                  ` · settles in ${source.attachedHours < 48 ? `${Math.round(source.attachedHours)}h` : `${Math.round(source.attachedHours / 24)}d`}`}
+                {source.failureCount > 0 && ` · ${source.failureCount} failures in a row`}
+              </span>
+              {source.lastError !== null && source.status !== 'off' && (
+                <span className="w-full text-xs text-caution">{source.lastError}</span>
+              )}
               {source.disabledReason !== null && (
                 <span className="w-full text-xs text-text-muted">Off: {source.disabledReason}</span>
               )}
@@ -294,6 +334,164 @@ export function ResearchTab() {
       </section>
     </div>
   );
+}
+
+/**
+ * Add one source, from a phone.
+ *
+ * Deliberately the whole checklist and nothing more: what to read, where, and
+ * how often. Everything else about a source — its trust, when it is due, what
+ * it may settle — is derived rather than typed, because a registry meant to
+ * hold thousands cannot be a form with twenty fields.
+ */
+function AddSource({
+  busy,
+  onAdded,
+  onError,
+}: {
+  busy: boolean;
+  onAdded: () => void;
+  onError: (message: string | null) => void;
+}) {
+  const [form, setForm] = useState({
+    name: '',
+    homeUrl: '',
+    feedUrl: '',
+    tier: 'news' as 'resolution' | 'news' | 'signal',
+    kind: 'rss' as 'api' | 'rss' | 'sitemap' | 'crawl',
+    cadence: 'auto' as 'auto' | 'urgent' | 'normal' | 'background',
+    publishWindow: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [done, setDone] = useState<string | null>(null);
+
+  const set = (key: keyof typeof form) => (event: { target: { value: string } }) =>
+    setForm((current) => ({ ...current, [key]: event.target.value }));
+
+  const field = 'w-full rounded-sm border border-border bg-surface px-2 py-1.5 text-sm';
+
+  return (
+    <form
+      className="mt-2 space-y-2 rounded-xl border border-border p-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void (async () => {
+          setSaving(true);
+          onError(null);
+          setDone(null);
+          try {
+            const result = await admin.importSources([
+              {
+                name: form.name.trim(),
+                homeUrl: form.homeUrl.trim(),
+                tier: form.tier,
+                kind: form.kind,
+                ...(form.feedUrl.trim() === '' ? {} : { feedUrl: form.feedUrl.trim() }),
+                ...(form.cadence === 'auto' ? {} : { cadence: form.cadence }),
+                ...(form.publishWindow.trim() === ''
+                  ? {}
+                  : { publishWindow: form.publishWindow.trim() }),
+              },
+            ]);
+            setDone(
+              result.added === 1
+                ? 'Added. Press "Run a pass now" to see whether it answers.'
+                : 'Updated the source that was already there.',
+            );
+            setForm((current) => ({ ...current, name: '', homeUrl: '', feedUrl: '' }));
+            onAdded();
+          } catch (caught) {
+            onError((caught as Error).message);
+          } finally {
+            setSaving(false);
+          }
+        })();
+      }}
+    >
+      <input
+        className={field}
+        required
+        placeholder="Name — what a market cites. CAF, CBN, NBS"
+        value={form.name}
+        onChange={set('name')}
+      />
+      <input
+        className={field}
+        required
+        type="url"
+        placeholder="Home URL — https://www.cafonline.com"
+        value={form.homeUrl}
+        onChange={set('homeUrl')}
+      />
+      <input
+        className={field}
+        type="url"
+        placeholder="Feed URL — the RSS/Atom address, if it has one"
+        value={form.feedUrl}
+        onChange={set('feedUrl')}
+      />
+      <div className="grid grid-cols-2 gap-2">
+        <select className={field} value={form.tier} onChange={set('tier')}>
+          <option value="resolution">Tier 1 — settles markets</option>
+          <option value="news">Tier 2 — context</option>
+          <option value="signal">Tier 3 — staff only</option>
+        </select>
+        <select className={field} value={form.kind} onChange={set('kind')}>
+          <option value="rss">RSS / Atom feed</option>
+          <option value="api">JSON or XML API</option>
+          <option value="sitemap">Sitemap</option>
+          <option value="crawl">Page to scrape</option>
+        </select>
+        <select className={field} value={form.cadence} onChange={set('cadence')}>
+          <option value="auto">Cadence: follow the markets</option>
+          <option value="urgent">Pin: every minute</option>
+          <option value="normal">Pin: every 5 minutes</option>
+          <option value="background">Pin: every 45 minutes</option>
+        </select>
+        <input
+          className={field}
+          placeholder="Window — mon-fri 08:00-10:30"
+          value={form.publishWindow}
+          onChange={set('publishWindow')}
+        />
+      </div>
+      {/*
+        Only feeds are read today. Saying so at the point of entry rather than
+        letting the row sit at "stale" for a week and be mistaken for a quiet
+        source.
+      */}
+      {form.kind !== 'rss' && form.kind !== 'api' && (
+        <p className="text-xs text-caution">
+          Only feeds and APIs are fetched so far. This will be registered and shown, and read once
+          extraction rules exist for it.
+        </p>
+      )}
+      {done !== null && <p className="text-xs text-rise">{done}</p>}
+      <button
+        type="submit"
+        disabled={saving || busy}
+        className="rounded-sm bg-rise px-3 py-1.5 text-sm font-bold text-paper disabled:opacity-40"
+      >
+        {saving ? 'Adding…' : 'Add source'}
+      </button>
+    </form>
+  );
+}
+
+/** "4 min ago", or "never". Absolute timestamps are on the row's title. */
+function ago(iso: string | null): string {
+  if (iso === null) return 'never';
+  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function everyLabel(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  return minutes < 60 ? `${minutes} min` : `${Math.round(minutes / 60)}h`;
 }
 
 function Stat({ label, value, alarm = false }: { label: string; value: string; alarm?: boolean }) {

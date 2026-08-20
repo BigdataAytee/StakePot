@@ -24,13 +24,31 @@ export interface SourceHealth {
   readonly id: string;
   readonly name: string;
   readonly tier: string;
+  readonly kind: string;
+  readonly feedUrl: string | null;
   readonly status: SourceStatus;
   readonly trust: number;
   readonly failureCount: number;
   readonly conflicts: number;
   readonly lastFetchAt: string | null;
   readonly lastOkAt: string | null;
+  /**
+   * When this source last published something we kept.
+   *
+   * Separate from `lastOkAt` because they answer different questions, and the
+   * one everybody checks is the wrong one: a feed that answers 200 every
+   * minute and has published nothing in a fortnight is green by `lastOkAt` and
+   * dead by this.
+   */
+  readonly lastItemAt: string | null;
+  readonly lastError: string | null;
   readonly itemsLast24h: number;
+  /** Which polling tier it is on right now, and how often that means. */
+  readonly cadence: string;
+  readonly intervalMs: number;
+  readonly nextCheckAt: string | null;
+  /** Hours until the soonest live market that depends on it settles. */
+  readonly attachedHours: number | null;
   readonly disabledReason: string | null;
 }
 
@@ -135,7 +153,14 @@ export class CrawlHealthService {
 
     const itemsBy = new Map(recentBySource.map((row) => [row.sourceId, row._count._all]));
 
+    const cadences = await this.research.cadencePlan(now);
+
     const health: SourceHealth[] = sources.map((source) => {
+      const cadence = cadences.get(source.id) ?? {
+        label: 'normal',
+        intervalMs: 5 * 60_000,
+        attachedHours: null,
+      };
       const itemsLast24h = itemsBy.get(source.id) ?? 0;
       const status: SourceStatus = !source.enabled
         ? 'off'
@@ -152,13 +177,25 @@ export class CrawlHealthService {
         id: source.id,
         name: source.name,
         tier: source.tier,
+        kind: source.kind,
+        feedUrl: source.feedUrl,
         status,
         trust: Number(source.trust.toString()),
         failureCount: source.failureCount,
         conflicts: source.conflicts,
         lastFetchAt: source.lastFetchAt?.toISOString() ?? null,
         lastOkAt: source.lastOkAt?.toISOString() ?? null,
+        lastItemAt: source.lastItemAt?.toISOString() ?? null,
+        lastError: source.lastError,
         itemsLast24h,
+        cadence: cadence.label,
+        intervalMs: cadence.intervalMs,
+        nextCheckAt:
+          !source.enabled || source.lastFetchAt === null
+            ? null
+            : new Date(source.lastFetchAt.getTime() + cadence.intervalMs).toISOString(),
+        attachedHours:
+          cadence.attachedHours === null ? null : Math.round(cadence.attachedHours * 10) / 10,
         disabledReason: source.disabledReason,
       };
     });

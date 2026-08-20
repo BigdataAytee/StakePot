@@ -14,6 +14,8 @@ export interface FetchedItem {
   readonly headline: string;
   readonly url: string;
   readonly publishedAt: Date;
+  /** The feed's own id for the entry, where it gives one. */
+  readonly guid?: string | null;
   /**
    * Figures, dates, scores and statements pulled out of the item.
    *
@@ -39,11 +41,66 @@ export interface FetchResult {
   /** False when robots.txt, a ToS or a rate limit said no. Not an error. */
   readonly allowed: boolean;
   readonly note?: string;
+  /**
+   * Why, when `allowed` is false.
+   *
+   * A discriminator rather than a note the caller has to read for the word
+   * "robots": the source row records a robots verdict, and recording one
+   * because *no fetcher is configured* would put a red robots flag on every
+   * source in a deployment that has simply never been switched on.
+   */
+  readonly blockedBy?: 'robots' | 'unsupported' | 'disabled';
+}
+
+/** What kind of fetcher is bound, for the crawl-health screen. */
+export interface FetcherDescription {
+  readonly name: string;
+  /** Whether this fetcher talks to the network at all. */
+  readonly reads: boolean;
+}
+
+/**
+ * What a read told us beyond the items, so the source row can record it.
+ *
+ * `notModified` is the interesting one. A 304 is not "no items" — it is the
+ * server telling us nothing has changed since the validator we sent, which is
+ * a *success* and must not look like a silent source on the Research tab.
+ */
+export interface ConditionalResult extends FetchResult {
+  readonly notModified?: boolean;
+  readonly etag?: string | null;
+  readonly lastModified?: string | null;
+}
+
+/** Validators from the previous successful read of this source. */
+export interface Validators {
+  readonly etag?: string | null;
+  readonly lastModified?: string | null;
 }
 
 export interface SourceFetcher {
-  fetch(target: FetchTarget, since: Date): Promise<FetchResult>;
+  /**
+   * `validators` is optional on the way in and ignored by fetchers that do not
+   * speak HTTP — declaring it here rather than only on `ConditionalFetcher`
+   * means a wrapper can pass it through without knowing which kind it holds.
+   */
+  fetch(target: FetchTarget, since: Date, validators?: Validators): Promise<ConditionalResult>;
+  /**
+   * Optional so a fixture fetcher in a test need not implement it; the caller
+   * falls back to the class name.
+   */
+  describe?(): FetcherDescription;
 }
+
+/**
+ * A fetcher that actually speaks HTTP.
+ *
+ * Structurally the same as `SourceFetcher` — every extra field a conditional
+ * read reports is optional, so a fixture fetcher that knows nothing about
+ * validators still satisfies the base. The name is here to say which of the
+ * two a given class is meant to be.
+ */
+export type ConditionalFetcher = SourceFetcher;
 
 export const SOURCE_FETCHER = Symbol('stakeam:source-fetcher');
 
@@ -61,8 +118,13 @@ export class DisabledFetcher implements SourceFetcher {
     return {
       items: [],
       allowed: false,
+      blockedBy: 'disabled',
       note: 'no fetcher is configured — nothing is being read',
     };
+  }
+
+  describe(): FetcherDescription {
+    return { name: 'disabled', reads: false };
   }
 }
 
@@ -75,7 +137,7 @@ export class DisabledFetcher implements SourceFetcher {
  * two requests where there should have been one; the cost of it depending on
  * a cache is no politeness at all on the day the cache fails.
  */
-export class PoliteFetcher implements SourceFetcher {
+export class PoliteFetcher implements ConditionalFetcher {
   private readonly lastFetch = new Map<string, number>();
 
   constructor(
@@ -84,7 +146,11 @@ export class PoliteFetcher implements SourceFetcher {
     private readonly now: () => number = () => Date.now(),
   ) {}
 
-  async fetch(target: FetchTarget, since: Date): Promise<FetchResult> {
+  async fetch(
+    target: FetchTarget,
+    since: Date,
+    validators?: Validators,
+  ): Promise<ConditionalResult> {
     const host = hostOf(target.feedUrl ?? target.homeUrl);
     const last = this.lastFetch.get(host);
     const wait = last === undefined ? 0 : Math.max(0, target.politenessMs - (this.now() - last));
@@ -92,7 +158,12 @@ export class PoliteFetcher implements SourceFetcher {
     if (wait > 0) await this.sleep(wait);
     this.lastFetch.set(host, this.now());
 
-    return this.inner.fetch(target, since);
+    return this.inner.fetch(target, since, validators);
+  }
+
+  describe(): FetcherDescription {
+    const inner = this.inner.describe?.() ?? { name: this.inner.constructor.name, reads: true };
+    return { name: `polite→${inner.name}`, reads: inner.reads };
   }
 }
 

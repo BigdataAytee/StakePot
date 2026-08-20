@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, type Source, type SourceKind, type SourceTier } from '@prisma/client';
+import {
+  Prisma,
+  type Source,
+  type SourceCadence,
+  type SourceKind,
+  type SourceTier,
+} from '@prisma/client';
 import { maySettle, trustOf, TIERS } from '@stakeam/rules';
 
 import { AdminAuditService } from '../audit/admin-audit.service';
@@ -22,6 +28,17 @@ export interface SourceInput {
   readonly region?: string;
   readonly language?: string;
   readonly politenessMs?: number;
+  /**
+   * Pin the polling tier, instead of letting the markets decide.
+   *
+   * Omitted means `auto`, which is what almost every source should be. The
+   * override exists for the two cases the markets cannot see: a source that
+   * matters before any market names it, and one that must be kept quiet
+   * without being switched off.
+   */
+  readonly cadence?: SourceCadence;
+  /** e.g. `mon-fri 08:00-10:30` or `d14-18 09:00-15:00`, Lagos time. */
+  readonly publishWindow?: string;
 }
 
 /**
@@ -30,9 +47,10 @@ export interface SourceInput {
  * Built to hold thousands of feeds, which is why almost nothing here is
  * per-source configuration. The tier decides what a source may do, the trust
  * score is recomputed from its record rather than edited, and the crawl cadence
- * comes from the markets rather than from a field somebody sets. What is left
- * to configure is the small part that genuinely varies: where to fetch from,
- * and how politely.
+ * follows the markets by default rather than being set per source — the field
+ * exists, but as an override for the two cases the markets cannot see, not as
+ * the normal way to configure one. What is left is the small part that
+ * genuinely varies: where to fetch from, and how politely.
  *
  * The one rule this class exists to make unbreakable: a market may only name a
  * tier-1 source, and only a tier-1 source may be cited in a resolution
@@ -81,6 +99,10 @@ export class SourceRegistryService {
         region: input.region ?? null,
         language: input.language ?? 'en',
         politenessMs: input.politenessMs ?? 2000,
+        ...(input.cadence === undefined ? {} : { cadence: input.cadence }),
+        ...(input.publishWindow === undefined
+          ? {}
+          : { publishWindow: input.publishWindow.trim() || null }),
         // Trust starts at the tier's own figure rather than at zero: a source
         // somebody deliberately added to tier 1 is trusted from its first
         // fetch, and one starting at zero would be demoted before it had done

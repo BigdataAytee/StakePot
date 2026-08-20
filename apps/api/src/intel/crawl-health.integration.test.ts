@@ -197,7 +197,7 @@ describe.skipIf(!TEST_DATABASE_URL)('crawl health (integration)', () => {
     // caller at all, so every screen downstream rendered an empty list — which
     // is indistinguishable from a quiet news week unless something says which.
     expect(report.pipeline.fetching).toBe(false);
-    expect(report.pipeline.fetcher).toBe('DisabledFetcher');
+    expect(report.pipeline.fetcher).toBe('disabled');
     expect(report.pipeline.lastFetchAt).toBeNull();
   });
 });

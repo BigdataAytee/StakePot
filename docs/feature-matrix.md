@@ -335,19 +335,27 @@ now.
 
 ## Block M · Market intelligence layer
 
-| #   | Feature                                                      | Status      | Where                                                                                                                                              |
-| --- | ------------------------------------------------------------ | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| M1  | Tiered source registry, bulk import, trust, kill switches    | IMPLEMENTED | `intel/source-registry.service.ts`, `POST /admin/studio/sources/import`                                                                            |
-| M2  | Continuous research pipeline — cluster, link, flag conflicts | PARTIAL     | `intel/research.service.ts`; runs on a five-minute sweep, but **no concrete fetcher exists**, so it reads nothing. See `docs/research-sources.md`. |
-| M3  | Evidence-backed AI drafts                                    | IMPLEMENTED | `intel/briefing.service.ts`, Studio Suggestions tab                                                                                                |
-| M4  | Streaming context on the live ticket                         | IMPLEMENTED | `markets.controller.ts` `:id/context`, `market/context-panel.tsx`                                                                                  |
-| M5  | Resolution dossiers — AI proposes, humans decide             | IMPLEMENTED | `intel/dossier.service.ts`, Resolution Centre panel                                                                                                |
-| M6  | Crawl health, guardrails, cost controls                      | IMPLEMENTED | `intel/crawl-health.service.ts`, Studio Research tab                                                                                               |
+| #   | Feature                                                      | Status      | Where                                                                                                                                    |
+| --- | ------------------------------------------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| M1  | Tiered source registry, bulk import, trust, kill switches    | IMPLEMENTED | `intel/source-registry.service.ts`, `POST /admin/studio/sources/import`                                                                  |
+| M2  | Continuous research pipeline — cluster, link, flag conflicts | IMPLEMENTED | `intel/research.service.ts` on a five-minute sweep; `intel/http-fetcher.ts` reads RSS/Atom for real. Off unless `RESEARCH_FETCHER=http`. |
+| M3  | Evidence-backed AI drafts                                    | IMPLEMENTED | `intel/briefing.service.ts`, Studio Suggestions tab                                                                                      |
+| M4  | Streaming context on the live ticket                         | IMPLEMENTED | `markets.controller.ts` `:id/context`, `market/context-panel.tsx`                                                                        |
+| M5  | Resolution dossiers — AI proposes, humans decide             | IMPLEMENTED | `intel/dossier.service.ts`, Resolution Centre panel                                                                                      |
+| M6  | Crawl health, guardrails, cost controls                      | IMPLEMENTED | `intel/crawl-health.service.ts`, Studio Research tab                                                                                     |
 
-M2 is the honest PARTIAL of this block and the only one. Everything above and
-below it is built and reachable; the pipeline has a heartbeat and screens, and
-nothing to read until a fetcher is written. The Research tab says so in a
-banner rather than rendering an empty list that looks like a quiet news week.
+M2 was this block's PARTIAL and is now closed for feeds. `HttpFetcher`, wrapped
+in `PoliteFetcher`, does conditional requests (ETag / If-Modified-Since, 304),
+honours `robots.txt` before the first read, dedupes on guid as well as URL, and
+never throws — a source having a bad day costs one pass, not the sweep.
+`http-fetcher.integration.test.ts` drives the whole path over a real socket.
+
+Two things remain true and are stated rather than glossed. **HTML extraction is
+not built**, so a `crawl` or `sitemap` source is registered and visibly not
+read rather than silently returning nothing; the verified finding that pushed
+this up the list is that CAF — the source rated most likely to have a feed —
+publishes none. And **nothing is switched on in production**: the fetcher binds
+only when `RESEARCH_FETCHER=http` is set, and it is not.
 
 **The safety property is structural, not a promise.** No automated path can
 settle a market: `no-automated-settlement.integration.test.ts` asserts the
@@ -415,10 +423,13 @@ recorded in the architecture). What remains:
    allowlisted in `scripts/check-wiring.mjs` marked DEBT. Clearing it means
    moving that suite's fixtures onto the paths production actually uses.
 
-7. **The research pipeline reads nothing.** No concrete fetcher exists — see M2
-   above and `docs/research-sources.md`, which sets out what has to be written
-   and in what order. This is the single largest gap in the intelligence layer
-   and everything else in it is waiting on it.
+7. **HTML extraction is not built.** Feeds are read; a page is not. Most
+   Nigerian official bodies — CBN, NBS, NNPC, INEC, and now CAF, checked and
+   confirmed feedless — publish HTML, so each needs a per-source rule: the page,
+   the element carrying the release, and the figure inside it. Registered
+   sources of those kinds say `needs HTML extraction` on the Research tab rather
+   than reading `stale`, so the gap is visible rather than silent. See
+   `docs/research-sources.md`.
 
 **Not a gap but worth a decision:** the admin console is light, following the
 design reference. §6.10 originally specified an ink-green dark theme, and the

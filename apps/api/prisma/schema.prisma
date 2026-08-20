@@ -1579,6 +1579,17 @@ model AccountFreeze {
 // below is an advisory record that arrives in front of them, not instead of.
 // ---------------------------------------------------------------------------
 
+/// How often a source is read. `auto` is the default and the one that matters:
+/// it follows the markets the source is attached to, so a source feeding a
+/// market that settles tomorrow polls hard and drops back afterwards without
+/// anybody remembering to change it.
+enum SourceCadence {
+  auto
+  urgent
+  normal
+  background
+}
+
 /// Tier 1 settles markets. Tier 2 is context. Tier 3 never reaches a user.
 /// The policy behind these lives in `@stakeam/rules`, not in this column.
 enum SourceTier {
@@ -1634,6 +1645,32 @@ model Source {
   lastFetchAt  DateTime?
   lastOkAt     DateTime?
   failureCount Int       @default(0)
+  /// When this source last published something we kept. Distinct from
+  /// `lastOkAt`, which only says the request succeeded: a feed that returns 200
+  /// with nothing new for a fortnight is healthy by one measure and dead by the
+  /// one that matters.
+  lastItemAt   DateTime?
+  /// The last error, kept so "failing" on the Research tab can say why rather
+  /// than only that. Cleared on the next success.
+  lastError    String?
+
+  /// HTTP validators from the last successful read, sent back as
+  /// `If-None-Match` / `If-Modified-Since`.
+  ///
+  /// A feed polled every minute is 1,440 requests a day per source, and almost
+  /// all of them return the same bytes. Honouring 304 is the difference between
+  /// being a considerate client and being the reason a newsroom blocks the
+  /// range — and it is also most of the bandwidth bill.
+  etag         String?
+  lastModified String?
+
+  /// Which cadence tier this source polls on. `auto` follows the markets it is
+  /// attached to; the others pin it. See `packages/rules/src/sources.ts`.
+  cadence      SourceCadence @default(auto)
+  /// For sources that publish on a calendar — NBS monthly CPI, CBN daily rates
+  /// — the window to poll hard around, as a cron-ish hint rather than a
+  /// schedule the code obeys blindly. Null means poll on the tier.
+  publishWindow String?
 
   createdAt DateTime @default(now())
 
@@ -1657,6 +1694,15 @@ model SourceItem {
   headline String
   /// Unique so the same story fetched twice through two routes lands once.
   url      String @unique
+  /// The feed's own id for the entry, where it gives one.
+  ///
+  /// Deduped on separately from the URL, because the two catch different
+  /// mistakes: a publisher that appends a tracking parameter, moves to https
+  /// or re-slugs a headline emits a *new* URL for a story it has already
+  /// sent, and the guid is that publisher saying "this is the same item".
+  /// Null is common and allowed — Postgres lets a unique index hold many
+  /// nulls, so a feed with no guids simply falls back to the URL.
+  guid     String?
 
   publishedAt DateTime
   fetchedAt   DateTime @default(now())
@@ -1672,6 +1718,7 @@ model SourceItem {
   source Source             @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   links  MarketSourceItem[]
 
+  @@unique([sourceId, guid])
   @@index([sourceId, publishedAt])
   @@index([clusterId])
   @@map("source_items")

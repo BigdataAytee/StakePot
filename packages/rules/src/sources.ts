@@ -152,18 +152,200 @@ function clamp(value: number, low: number, high: number): number {
   return Math.min(high, Math.max(low, value));
 }
 
+/** The named tiers, as an operator pins them on a source. */
+export type Cadence = 'auto' | 'urgent' | 'normal' | 'background';
+
 /**
- * How often to re-read a source, given how close its markets are to settling.
+ * The tiers, in milliseconds.
  *
- * Minutes near settlement, hourly the rest of the time. The cadence is a
- * function rather than a column because it depends on the *markets*, not on
- * the source: the same CBN page is worth reading every two minutes on the
- * afternoon a rate decision lands and once an hour for the fortnight before.
+ * Named rather than inlined so the Research tab can print the same words the
+ * scheduler acts on. An operator reading "urgent · every 1m" and a sweep
+ * deciding 60s from a different constant is how a dashboard stops being
+ * evidence.
  */
-export function crawlIntervalMs(hoursToNearestSettlement: number | null): number {
-  if (hoursToNearestSettlement === null) return 6 * 3_600_000;
-  if (hoursToNearestSettlement <= 1) return 2 * 60_000;
-  if (hoursToNearestSettlement <= 6) return 10 * 60_000;
-  if (hoursToNearestSettlement <= 48) return 30 * 60_000;
-  return 3_600_000;
+export const CADENCE_MS: Readonly<Record<Exclude<Cadence, 'auto'>, number>> = {
+  urgent: 60_000,
+  normal: 5 * 60_000,
+  background: 45 * 60_000,
+};
+
+/** Inside this many hours of settlement, a source's markets make it urgent. */
+export const URGENT_WINDOW_HOURS = 24;
+
+/**
+ * A source no live market depends on at all.
+ *
+ * Longer than `background`, and the distinction is real rather than tidy:
+ * background is "nothing is happening soon", idle is "nothing is listening".
+ * A source kept for a season that has not started should cost less than one
+ * feeding a market a fortnight out.
+ */
+export const IDLE_MS = 6 * 3_600_000;
+
+export interface CadenceInput {
+  /** What the operator pinned, if anything. `auto` follows the markets. */
+  readonly cadence: Cadence;
+  /** Hours to the nearest settlement among the markets this source feeds. */
+  readonly hoursToNearestSettlement: number | null;
+  /**
+   * Consecutive failures. Backoff is part of the cadence rather than bolted on
+   * beside it: a source that has failed six times in a row and is still being
+   * asked every minute is not being polled, it is being hammered.
+   */
+  readonly failureCount?: number;
+  /**
+   * True when now is inside the source's declared publication window — the
+   * hour the NBS posts CPI, the morning CBN puts up rates. Outside it, a
+   * calendar source drops to background whatever else is true.
+   */
+  readonly inPublishWindow?: boolean | undefined;
+}
+
+/**
+ * How long to wait before reading this source again.
+ *
+ * The rule in one line: **the markets decide, the operator can override, and
+ * failure slows everything down.**
+ *
+ * `auto` is the default and the interesting case. A source is urgent because a
+ * market it feeds settles within the day — not because somebody remembered to
+ * mark it urgent, and not still urgent a week after that market paid out.
+ * Escalation and fallback both happen because the same function is asked again
+ * five minutes later and the answer has changed.
+ *
+ * Calendar sources are the exception that would otherwise waste the most
+ * requests: the NBS posts CPI once a month. Polling it every five minutes for
+ * thirty days to catch one publication is 8,600 requests for one item. Given a
+ * publication window, it sits on background until the window opens and then
+ * polls like anything else urgent.
+ */
+export function crawlIntervalMs(input: CadenceInput | number | null): number {
+  // The old signature — a bare hours-to-settlement — still works, because the
+  // sweep is not the only caller and a two-argument refactor across every one
+  // of them buys nothing.
+  const normalised: CadenceInput =
+    input === null || typeof input === 'number'
+      ? { cadence: 'auto', hoursToNearestSettlement: input }
+      : input;
+
+  const { cadence, hoursToNearestSettlement, failureCount = 0 } = normalised;
+
+  // Backoff first: it can only ever slow things down, so it composes with
+  // whatever the rest of the rules decide.
+  const backoff = failureCount <= 0 ? 1 : Math.min(2 ** failureCount, 32);
+
+  if (cadence !== 'auto') return CADENCE_MS[cadence] * backoff;
+
+  // A calendar source outside its window is background whatever its markets
+  // are doing — the publication is not going to happen early.
+  if (normalised.inPublishWindow === false) return CADENCE_MS.background * backoff;
+
+  if (hoursToNearestSettlement === null) return IDLE_MS * backoff;
+  if (hoursToNearestSettlement <= URGENT_WINDOW_HOURS) return CADENCE_MS.urgent * backoff;
+  if (hoursToNearestSettlement <= 7 * 24) return CADENCE_MS.normal * backoff;
+  return CADENCE_MS.background * backoff;
+}
+
+/** The tier a source is actually on right now, for the Research tab to print. */
+export function cadenceLabel(input: CadenceInput): Exclude<Cadence, 'auto'> {
+  const ms = crawlIntervalMs({ ...input, failureCount: 0 });
+  if (ms <= CADENCE_MS.urgent) return 'urgent';
+  if (ms <= CADENCE_MS.normal) return 'normal';
+  return 'background';
+}
+
+/**
+ * Nigeria has one timezone and no daylight saving. WAT is UTC+1, always, which
+ * is why a publish window can be a plain offset rather than a tz database.
+ */
+const WAT_OFFSET_MINUTES = 60;
+
+const DAYS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'] as const;
+
+/**
+ * Is this source inside the window it is expected to publish in?
+ *
+ * Some Tier-1 sources publish on a calendar rather than continuously: NBS puts
+ * out CPI mid-month, the CBN posts rates on working-day mornings. Polling those
+ * round the clock is 1,400 requests a day to be told nothing has changed, and
+ * polling them on a plain interval means finding a monthly release up to an
+ * hour late. So a source may carry a window, and outside it drops to
+ * background while inside it polls hard.
+ *
+ * The grammar is small on purpose — an operator adds these from a phone:
+ *
+ * - `08:00-11:00`               — every day, that window, WAT
+ * - `mon-fri 08:00-10:30`       — weekdays only
+ * - `d14-18 09:00-15:00`        — the 14th to the 18th of the month
+ * - `mon,wed,fri 07:00-08:00`   — listed days
+ *
+ * Returns `undefined` when there is no window, which is not the same as
+ * `false`: no window means the cadence tier decides alone, and a source with a
+ * malformed window is treated as having none rather than being silenced by a
+ * typo.
+ */
+export function inPublishWindow(spec: string | null | undefined, at: Date): boolean | undefined {
+  if (spec === null || spec === undefined || spec.trim().length === 0) return undefined;
+
+  const local = new Date(at.getTime() + WAT_OFFSET_MINUTES * 60_000);
+  const minutes = local.getUTCHours() * 60 + local.getUTCMinutes();
+  const weekday = DAYS[local.getUTCDay()] ?? 'sun';
+  const dayOfMonth = local.getUTCDate();
+
+  let sawTime = false;
+  let matches = true;
+
+  for (const token of spec.trim().toLowerCase().split(/\s+/)) {
+    const time = /^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/.exec(token);
+    if (time !== null) {
+      const from = Number(time[1]) * 60 + Number(time[2]);
+      const to = Number(time[3]) * 60 + Number(time[4]);
+      sawTime = true;
+      // A window that wraps midnight is written 22:00-02:00 and means what it
+      // looks like; comparing it as a straight range would mean never.
+      matches &&= from <= to ? minutes >= from && minutes < to : minutes >= from || minutes < to;
+      continue;
+    }
+
+    const dom = /^d(\d{1,2})(?:-(\d{1,2}))?$/.exec(token);
+    if (dom !== null) {
+      const from = Number(dom[1]);
+      const to = dom[2] === undefined ? from : Number(dom[2]);
+      matches &&= dayOfMonth >= from && dayOfMonth <= to;
+      continue;
+    }
+
+    const days = daysIn(token);
+    if (days !== null) {
+      matches &&= days.includes(weekday);
+      continue;
+    }
+
+    // A token we do not understand. Treated as no window at all rather than as
+    // a closed one: the failure mode of a typo should be polling normally, not
+    // a source that silently never gets read.
+    return undefined;
+  }
+
+  return sawTime ? matches : undefined;
+}
+
+/** `mon`, `mon-fri`, `mon,wed,fri` — or null if this is not a day token. */
+function daysIn(token: string): string[] | null {
+  const range = /^([a-z]{3})-([a-z]{3})$/.exec(token);
+  if (range !== null) {
+    const from = DAYS.indexOf(range[1] as (typeof DAYS)[number]);
+    const to = DAYS.indexOf(range[2] as (typeof DAYS)[number]);
+    if (from < 0 || to < 0) return null;
+    const out: string[] = [];
+    for (let i = from; ; i = (i + 1) % 7) {
+      out.push(DAYS[i] as string);
+      if (i === to) break;
+    }
+    return out;
+  }
+
+  const listed = token.split(',');
+  if (listed.every((day) => DAYS.includes(day as (typeof DAYS)[number]))) return listed;
+  return null;
 }
