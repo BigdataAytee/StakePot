@@ -9,12 +9,17 @@ name: Discover feeds
 #
 # Run it before onboarding a source. What comes back either gives you a feed
 # URL to paste into the Studio, or tells you the source needs HTML extraction.
+#
+# The first run answered the question it was built for and the answer was no:
+# CAF publishes no robots.txt, declares no feed, and 404s on all eight usual
+# paths. Hence the sweep — one candidate at a time is one run per guess, and
+# the point is to find the ones that work rather than to confirm a hunch.
 on:
   workflow_dispatch:
     inputs:
       home:
-        description: Source home page, e.g. https://www.cafonline.org/
-        required: true
+        description: One source home page. Leave blank to sweep the candidate list.
+        required: false
   push:
     paths: ['.github/workflows/discover-feeds.yml']
 
@@ -22,38 +27,88 @@ jobs:
   discover:
     name: does it publish a feed
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 20
     steps:
       - name: Look for a feed
         env:
-          HOME_URL: ${{ github.event.inputs.home || 'https://www.cafonline.com/' }}
+          ONE: ${{ github.event.inputs.home }}
         run: |
           set -u
           UA='StakeAmResearchBot/0.1 (+https://stakeam-web.onrender.com; contact: ops@stakeam.ng)'
-          say() { printf '\n=== %s ===\n' "$1"; }
 
-          say "robots.txt"
-          # Read it first, and out loud. A crawler that checks robots after it
-          # has already fetched the page is not honouring it, it is narrating.
-          root=$(echo "$HOME_URL" | sed -E 's#(https?://[^/]+).*#\1#')
-          curl -sSL -m 30 -A "$UA" -w '\nHTTP %{http_code}\n' "$root/robots.txt" | head -60 || echo "none"
+          # The Tier 1 six the operator named, then Tier 2 news. Tier 2 is here
+          # because the pipeline has to be provable end to end this week, and a
+          # working Nigerian newsroom feed proves it while the tier 1 bodies —
+          # which mostly publish as HTML tables — wait on extraction rules.
+          CANDIDATES="
+          https://www.cbn.gov.ng/
+          https://nigerianstat.gov.ng/
+          https://nnpcgroup.com/
+          https://www.inecnigeria.org/
+          https://www.cafonline.com/
+          https://npfl.ng/
+          https://www.premiumtimesng.com/
+          https://punchng.com/
+          https://www.vanguardngr.com/
+          https://www.channelstv.com/
+          https://businessday.ng/
+          https://www.thecable.ng/
+          "
+          [ -n "${ONE:-}" ] && CANDIDATES="$ONE"
 
-          say "home page — declared feeds"
-          page=$(curl -sSL -m 45 -A "$UA" "$HOME_URL" || echo '')
-          echo "HTTP fetched bytes: ${#page}"
-          # <link rel="alternate" type="application/rss+xml" href="...">
-          echo "$page" | grep -oE '<link[^>]+type="application/(rss|atom)\+xml"[^>]*>' | head -10 \
-            || echo "no <link rel=alternate> feed declared"
+          probe() {
+            local home="$1"
+            local root
+            root=$(echo "$home" | sed -E 's#(https?://[^/]+).*#\1#')
+            printf '\n════════ %s ════════\n' "$root"
 
-          say "common feed paths"
-          for path in /rss /feed /rss.xml /feed.xml /atom.xml /index.xml /news/rss /en/rss; do
-            code=$(curl -sSL -m 20 -A "$UA" -o /tmp/body -w '%{http_code}' "$root$path" || echo 000)
-            kind=$(head -c 200 /tmp/body | grep -oiE '<rss|<feed|<\?xml' | head -1 || echo '')
-            size=$(wc -c < /tmp/body)
-            printf '%-14s HTTP %s  %6s bytes  %s\n' "$path" "$code" "$size" "${kind:-not xml}"
+            # robots.txt first, and out loud. A crawler that checks robots after
+            # it has already fetched the page is not honouring it, it is
+            # narrating.
+            local rc
+            rc=$(curl -sSL -m 25 -A "$UA" -o /tmp/robots -w '%{http_code}' "$root/robots.txt" || echo 000)
+            echo "robots.txt: HTTP $rc"
+            if [ "$rc" = "200" ]; then
+              grep -iE '^(user-agent|disallow|allow|crawl-delay|sitemap)' /tmp/robots | head -25 || true
+            fi
+
+            local page
+            page=$(curl -sSL -m 45 -A "$UA" "$home" || echo '')
+            echo "home page: ${#page} bytes"
+            local declared
+            declared=$(echo "$page" \
+              | grep -oiE '<link[^>]+type="application/(rss|atom)\+xml"[^>]*>' | head -5 || true)
+            if [ -n "$declared" ]; then
+              echo "DECLARED FEED:"
+              echo "$declared"
+            else
+              echo "no <link rel=alternate> feed declared"
+            fi
+
+            for path in /feed /rss /rss.xml /feed.xml /atom.xml /index.xml /news/feed /?feed=rss2; do
+              local code kind size
+              code=$(curl -sSL -m 20 -A "$UA" -o /tmp/body -w '%{http_code}' "$root$path" || echo 000)
+              kind=$(head -c 400 /tmp/body | grep -oiE '<rss|<feed|<\?xml' | head -1 || echo '')
+              size=$(wc -c < /tmp/body)
+              # A 200 that is not XML is a site serving its 404 page with the
+              # wrong status, which is common enough that reading the status
+              # alone would produce a list of "feeds" that parse to nothing.
+              if [ "$code" = "200" ] && [ -n "$kind" ]; then
+                printf '  ✓ %-14s HTTP %s  %8s bytes  %s   <-- FEED\n' "$path" "$code" "$size" "$kind"
+                head -c 300 /tmp/body | tr -d '\n' | sed 's/^/      /'
+                echo
+              else
+                printf '    %-14s HTTP %s  %8s bytes  %s\n' "$path" "$code" "$size" "${kind:-not xml}"
+              fi
+            done
+          }
+
+          for home in $CANDIDATES; do
+            probe "$home" || echo "  (probe failed, moving on)"
           done
 
-          say "verdict"
-          echo "A path above that returns 200 with <rss or <feed is a feed URL you"
-          echo "can paste into the Studio. If none does, this source needs HTML"
-          echo "extraction and the page URL plus a selector, per docs/research-sources.md."
+          printf '\n════════ verdict ════════\n'
+          echo "Lines marked FEED are feed URLs that returned 200 and actually"
+          echo "began as XML. Those are what to paste into the Studio's Add a"
+          echo "source form. Anything else needs HTML extraction: the page URL"
+          echo "plus the selector carrying the release, per docs/research-sources.md."
