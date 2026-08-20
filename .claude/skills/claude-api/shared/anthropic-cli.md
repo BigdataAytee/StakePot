@@ -6,11 +6,11 @@ The `ant` CLI exposes every Claude API resource as a shell subcommand. Compared 
 
 **CLI for the control plane, SDK for the data plane.** Agents and environments are relatively static resources you define, configure, and debug with `ant` — check the YAML into your repo, apply from CI, inspect from a terminal. Sessions are dynamic and driven by your application through the SDK — create per task, stream events, react to tool calls, integrate into your product. Both hit the same API; the split is about where the call lives, not what's possible.
 
-|               | Control plane → `ant`                                                                 | Data plane → SDK                                        |
-| ------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| Resources     | agents, environments, skills, vaults, files                                           | sessions, events                                        |
-| Cadence       | Once per deploy / ad-hoc                                                              | Every task / every turn                                 |
-| Lives in      | `*.yaml` in your repo + CI + terminal                                                 | Application code                                        |
+| | Control plane → `ant` | Data plane → SDK |
+|---|---|---|
+| Resources | agents, environments, skills, vaults, files | sessions, events |
+| Cadence | Once per deploy / ad-hoc | Every task / every turn |
+| Lives in | `*.yaml` in your repo + CI + terminal | Application code |
 | Typical calls | `create < agent.yaml`, `update --version N`, `list`, `retrieve`, `archive`, `--debug` | `sessions.create()`, `events.stream()`, `events.send()` |
 
 ## Install and auth
@@ -91,15 +91,15 @@ ant beta:sessions:events list --session-id session_01...
 
 ## Global flags
 
-| Flag                                   | Purpose                                                                                                                                                     |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--format`                             | `auto` (default: pretty if TTY, compact if piped), `json`, `jsonl`, `yaml`, `pretty`, `raw`, `explore` (interactive TUI)                                    |
-| `--transform`                          | GJSON path applied to the response (per-item on list endpoints). Not applied when `--format raw`.                                                           |
-| `-r`, `--raw-output`                   | If the transformed result is a string, print it without quotes (jq semantics). Pair with `--transform` for scalar capture.                                  |
-| `--max-items`                          | Cap total results returned from auto-paginating list endpoints (distinct from `--limit`, which is the server page size).                                    |
+| Flag | Purpose |
+| --- | --- |
+| `--format` | `auto` (default: pretty if TTY, compact if piped), `json`, `jsonl`, `yaml`, `pretty`, `raw`, `explore` (interactive TUI) |
+| `--transform` | GJSON path applied to the response (per-item on list endpoints). Not applied when `--format raw`. |
+| `-r`, `--raw-output` | If the transformed result is a string, print it without quotes (jq semantics). Pair with `--transform` for scalar capture. |
+| `--max-items` | Cap total results returned from auto-paginating list endpoints (distinct from `--limit`, which is the server page size). |
 | `--format-error` / `--transform-error` | Same as `--format`/`--transform`, applied to error responses. `-r` does not apply to the error path — use `--format-error yaml` for unquoted error scalars. |
-| `--base-url`                           | Override API host                                                                                                                                           |
-| `--debug`                              | Print full HTTP request + response to stderr (API key redacted)                                                                                             |
+| `--base-url` | Override API host |
+| `--debug` | Print full HTTP request + response to stderr (API key redacted) |
 
 ## Output — `--transform` + `--format`
 
@@ -190,7 +190,7 @@ ant beta:sessions:events stream --session-id "$SID"   # live event stream
 
 ### Interactive session loop (stream-before-send)
 
-`ant beta:sessions:events stream` only delivers events emitted _after_ the stream opens — so open it **before** sending the kickoff to avoid missing early events. Use process substitution to hold the stream on a file descriptor, send, then read:
+`ant beta:sessions:events stream` only delivers events emitted *after* the stream opens — so open it **before** sending the kickoff to avoid missing early events. Use process substitution to hold the stream on a file descriptor, send, then read:
 
 ```sh
 exec {stream}< <(ant beta:sessions:events stream --session-id "$SID" \

@@ -25,3 +25,4 @@ await foreach (RawMessageStreamEvent streamEvent in client.Messages.CreateStream
 **`RawMessageStreamEvent` TryPick methods** (naming drops the `Message`/`Raw` prefix): `TryPickStart`, `TryPickDelta`, `TryPickStop`, `TryPickContentBlockStart`, `TryPickContentBlockDelta`, `TryPickContentBlockStop`. There is no `TryPickMessageStop` — use `TryPickStop`.
 
 ---
+

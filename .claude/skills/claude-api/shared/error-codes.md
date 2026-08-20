@@ -169,18 +169,18 @@ thinking: budget_tokens=10000, max_tokens=16000
 
 ## Common Mistakes and Fixes
 
-| Mistake                                                                   | Error                | Fix                                                                        |
-| ------------------------------------------------------------------------- | -------------------- | -------------------------------------------------------------------------- |
-| `temperature`/`top_p`/`top_k` on Claude Opus 5 / Fable 5 / Opus 4.8 / 4.7 | 400                  | Remove the parameter (see `shared/model-migration.md`)                     |
-| `budget_tokens` on Claude Opus 5 / Fable 5 / Opus 4.8 / 4.7               | 400                  | Use `thinking: {type: "adaptive"}`                                         |
-| `thinking: {type: "disabled"}` on Fable 5                                 | 400                  | Omit the `thinking` param entirely (accepted on Opus 4.8/4.7)              |
-| Org set to ZDR / retention below 30 days (Fable 5)                        | 400 on every request | Fix the org's data-retention configuration — the payload isn't the problem |
-| `budget_tokens` >= `max_tokens` (older models)                            | 400                  | Ensure `budget_tokens` < `max_tokens`                                      |
-| Typo in model ID                                                          | 404                  | Use valid model ID like `claude-opus-5`                                    |
-| First message is `assistant`                                              | 400                  | First message must be `user`                                               |
-| Consecutive same-role messages                                            | 400                  | Alternate `user` and `assistant`                                           |
-| API key in code                                                           | 401 (leaked key)     | Use environment variable                                                   |
-| Custom retry needs                                                        | 429/5xx              | SDK retries automatically; customize with `max_retries`                    |
+| Mistake                         | Error            | Fix                                                     |
+| ------------------------------- | ---------------- | ------------------------------------------------------- |
+| `temperature`/`top_p`/`top_k` on Claude Opus 5 / Fable 5 / Opus 4.8 / 4.7 | 400 | Remove the parameter (see `shared/model-migration.md`)  |
+| `budget_tokens` on Claude Opus 5 / Fable 5 / Opus 4.8 / 4.7 | 400  | Use `thinking: {type: "adaptive"}`                      |
+| `thinking: {type: "disabled"}` on Fable 5 | 400    | Omit the `thinking` param entirely (accepted on Opus 4.8/4.7) |
+| Org set to ZDR / retention below 30 days (Fable 5) | 400 on every request | Fix the org's data-retention configuration — the payload isn't the problem |
+| `budget_tokens` >= `max_tokens` (older models) | 400 | Ensure `budget_tokens` < `max_tokens`                  |
+| Typo in model ID                | 404              | Use valid model ID like `claude-opus-5`               |
+| First message is `assistant`    | 400              | First message must be `user`                            |
+| Consecutive same-role messages  | 400              | Alternate `user` and `assistant`                        |
+| API key in code                 | 401 (leaked key) | Use environment variable                                |
+| Custom retry needs              | 429/5xx          | SDK retries automatically; customize with `max_retries` |
 
 ## Typed Exceptions in SDKs
 
@@ -188,17 +188,17 @@ thinking: budget_tokens=10000, max_tokens=16000
 
 ### Exception class names by language
 
-| HTTP | Python (`anthropic.*`) / TypeScript (`Anthropic.*`) | Ruby (`Anthropic::Errors::*`) | Java (`com.anthropic.errors.*`) | C#                                      | PHP (`Anthropic\Core\Exceptions\*`)   |
-| ---- | --------------------------------------------------- | ----------------------------- | ------------------------------- | --------------------------------------- | ------------------------------------- |
-| 400  | `BadRequestError`                                   | `BadRequestError`             | `BadRequestException`           | `AnthropicBadRequestException`          | `BadRequestException`                 |
-| 401  | `AuthenticationError`                               | `AuthenticationError`         | `UnauthorizedException`         | `AnthropicUnauthorizedException`        | `AuthenticationException`             |
-| 403  | `PermissionDeniedError`                             | `PermissionDeniedError`       | `PermissionDeniedException`     | `AnthropicForbiddenException`           | `PermissionDeniedException`           |
-| 404  | `NotFoundError`                                     | `NotFoundError`               | `NotFoundException`             | `AnthropicNotFoundException`            | `NotFoundException`                   |
-| 422  | `UnprocessableEntityError`                          | `UnprocessableEntityError`    | `UnprocessableEntityException`  | `AnthropicUnprocessableEntityException` | `UnprocessableEntityException`        |
-| 429  | `RateLimitError`                                    | `RateLimitError`              | `RateLimitException`            | `AnthropicRateLimitException`           | `RateLimitException`                  |
-| ≥500 | `InternalServerError`                               | `InternalServerError`         | `InternalServerException`       | `Anthropic5xxException`                 | `InternalServerException`             |
-| net  | `APIConnectionError`                                | `APIConnectionError`          | `AnthropicIoException`          | `AnthropicIOException`                  | `APIConnectionException`              |
-| base | `APIError` (both); `APIStatusError` (Python only)   | `APIStatusError` / `APIError` | `AnthropicServiceException`     | `AnthropicApiException`                 | `APIStatusException` / `APIException` |
+| HTTP | Python (`anthropic.*`) / TypeScript (`Anthropic.*`) | Ruby (`Anthropic::Errors::*`) | Java (`com.anthropic.errors.*`) | C# | PHP (`Anthropic\Core\Exceptions\*`) |
+|---|---|---|---|---|---|
+| 400 | `BadRequestError` | `BadRequestError` | `BadRequestException` | `AnthropicBadRequestException` | `BadRequestException` |
+| 401 | `AuthenticationError` | `AuthenticationError` | `UnauthorizedException` | `AnthropicUnauthorizedException` | `AuthenticationException` |
+| 403 | `PermissionDeniedError` | `PermissionDeniedError` | `PermissionDeniedException` | `AnthropicForbiddenException` | `PermissionDeniedException` |
+| 404 | `NotFoundError` | `NotFoundError` | `NotFoundException` | `AnthropicNotFoundException` | `NotFoundException` |
+| 422 | `UnprocessableEntityError` | `UnprocessableEntityError` | `UnprocessableEntityException` | `AnthropicUnprocessableEntityException` | `UnprocessableEntityException` |
+| 429 | `RateLimitError` | `RateLimitError` | `RateLimitException` | `AnthropicRateLimitException` | `RateLimitException` |
+| ≥500 | `InternalServerError` | `InternalServerError` | `InternalServerException` | `Anthropic5xxException` | `InternalServerException` |
+| net | `APIConnectionError` | `APIConnectionError` | `AnthropicIoException` | `AnthropicIOException` | `APIConnectionException` |
+| base | `APIError` (both); `APIStatusError` (Python only) | `APIStatusError` / `APIError` | `AnthropicServiceException` | `AnthropicApiException` | `APIStatusException` / `APIException` |
 
 The Ruby and PHP classes live in a dedicated errors namespace — write `Anthropic::Errors::RateLimitError` and `Anthropic\Core\Exceptions\RateLimitException` (not bare `Anthropic::RateLimitError`). All 4xx C# exceptions also inherit from `Anthropic4xxException`.
 

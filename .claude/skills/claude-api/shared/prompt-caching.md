@@ -102,14 +102,14 @@ These are the decisions that matter more than marker placement. Fix these first.
 
 When reviewing code, grep for these inside anything that feeds the prompt prefix:
 
-| Pattern                                                          | Why it breaks caching                                   |
-| ---------------------------------------------------------------- | ------------------------------------------------------- |
-| `datetime.now()` / `Date.now()` / `time.time()` in system prompt | Prefix changes every request                            |
-| `uuid4()` / `crypto.randomUUID()` / request IDs early in content | Same — every request is unique                          |
-| `json.dumps(d)` without `sort_keys=True` / iterating a `set`     | Non-deterministic serialization → prefix bytes differ   |
-| f-string interpolating session/user ID into system prompt        | Per-user prefix; no cross-user sharing                  |
-| Conditional system sections (`if flag: system += ...`)           | Every flag combination is a distinct prefix             |
-| `tools=build_tools(user)` where set varies per user              | Tools render at position 0; nothing caches across users |
+| Pattern | Why it breaks caching |
+|---|---|
+| `datetime.now()` / `Date.now()` / `time.time()` in system prompt | Prefix changes every request |
+| `uuid4()` / `crypto.randomUUID()` / request IDs early in content | Same — every request is unique |
+| `json.dumps(d)` without `sort_keys=True` / iterating a `set` | Non-deterministic serialization → prefix bytes differ |
+| f-string interpolating session/user ID into system prompt | Per-user prefix; no cross-user sharing |
+| Conditional system sections (`if flag: system += ...`) | Every flag combination is a distinct prefix |
+| `tools=build_tools(user)` where set varies per user | Tools render at position 0; nothing caches across users |
 
 Fix by moving the dynamic piece after the last breakpoint, making it deterministic, or deleting it if it's not load-bearing.
 
@@ -127,12 +127,12 @@ Fix by moving the dynamic piece after the last breakpoint, making it determinist
 - Top-level `cache_control` on `messages.create()` auto-places on the last cacheable block — simplest option when you don't need fine-grained placement.
 - Minimum cacheable prefix is model-dependent. Shorter prefixes silently won't cache even with a marker — no error, just `cache_creation_input_tokens: 0`:
 
-| Model                                                                         |     Minimum |
-| ----------------------------------------------------------------------------- | ----------: |
-| Claude Opus 5, Claude Fable 5, Claude Mythos 5                                |  512 tokens |
+| Model | Minimum |
+|---|---:|
+| Claude Opus 5, Claude Fable 5, Claude Mythos 5 | 512 tokens |
 | Opus 4.8, Claude Sonnet 5, Sonnet 4.6, Sonnet 4.5, Opus 4.1, Opus 4, Sonnet 4 | 1024 tokens |
-| Opus 4.7, Mythos Preview, Haiku 3.5                                           | 2048 tokens |
-| Opus 4.6, Opus 4.5, Haiku 4.5                                                 | 4096 tokens |
+| Opus 4.7, Mythos Preview, Haiku 3.5 | 2048 tokens |
+| Opus 4.6, Opus 4.5, Haiku 4.5 | 4096 tokens |
 
 **The minimum is not monotonic across generations** — 512 on the newest models, but 4096 on Opus 4.6/4.5 and Haiku 4.5. A 3K-token prompt caches on Claude Opus 5, Opus 4.8, and Sonnet 4.5, and silently won't on Opus 4.6 or Haiku 4.5. Claude Opus 5 halves the Opus 4.8 minimum (1024 → 512), so prompts previously too short to cache now create entries with no code change.
 
@@ -146,11 +146,11 @@ These minimums apply on **every** platform where the model is available — the 
 
 The response `usage` object reports cache activity:
 
-| Field                         | Meaning                                                                  |
-| ----------------------------- | ------------------------------------------------------------------------ |
+| Field | Meaning |
+|---|---|
 | `cache_creation_input_tokens` | Tokens written to cache this request (you paid the ~1.25× write premium) |
-| `cache_read_input_tokens`     | Tokens served from cache this request (you paid ~0.1×)                   |
-| `input_tokens`                | Tokens processed at full price (not cached)                              |
+| `cache_read_input_tokens` | Tokens served from cache this request (you paid ~0.1×) |
+| `input_tokens` | Tokens processed at full price (not cached) |
 
 If `cache_read_input_tokens` is zero across repeated requests with identical prefixes, a silent invalidator is at work — diff the rendered prompt bytes between two requests to find it.
 
@@ -164,23 +164,23 @@ Language-specific access: `response.usage.cache_read_input_tokens` (Python/TS/Ru
 
 Not every parameter change invalidates everything. The API has three cache tiers, and changes only invalidate their own tier and below:
 
-| Change                                           | Tools cache | System cache | Messages cache |
-| ------------------------------------------------ | :---------: | :----------: | :------------: |
-| Tool definitions (add/remove/reorder)            |     ❌      |      ❌      |       ❌       |
-| Model switch                                     |     ❌      |      ❌      |       ❌       |
-| `speed`, web-search, citations toggle            |     ✅      |      ❌      |       ❌       |
-| System prompt content                            |     ✅      |      ❌      |       ❌       |
-| `tool_choice`, images, `thinking` enable/disable |     ✅      |      ✅      |       ❌       |
-| Message content                                  |     ✅      |      ✅      |       ❌       |
+| Change | Tools cache | System cache | Messages cache |
+|---|:---:|:---:|:---:|
+| Tool definitions (add/remove/reorder) | ❌ | ❌ | ❌ |
+| Model switch | ❌ | ❌ | ❌ |
+| `speed`, web-search, citations toggle | ✅ | ❌ | ❌ |
+| System prompt content | ✅ | ❌ | ❌ |
+| `tool_choice`, images, `thinking` enable/disable | ✅ | ✅ | ❌ |
+| Message content | ✅ | ✅ | ❌ |
 
 Implication: you can change `tool_choice` per-request or toggle `thinking` without losing the tools+system cache. Don't over-worry about these — only tool-definition and model changes force a full rebuild.
 
 **Two of these rows have a cache-preserving escape hatch**, each by moving the change out of the top-level request and into a system message inside `messages[]`, after the cached prefix. **Availability differs per row** — the two are not gated together:
 
-| Top-level change that invalidates | Cache-preserving form                                                                                       | Available on                                                                                                  |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| Tool definitions (add/remove)     | `tool_addition` / `tool_removal` blocks — see `shared/tool-use-concepts.md` § Mid-conversation tool changes | Claude Opus 5 onward, behind `mid-conversation-tool-changes-2026-07-01`                                       |
-| System prompt content             | A `{"role": "system", "content": "…"}` message — see § Mid-conversation system messages above               | Claude Opus 5, Claude Opus 4.8, Claude Fable 5, Claude Mythos 5 — **already available today**, no beta header |
+| Top-level change that invalidates | Cache-preserving form | Available on |
+|---|---|---|
+| Tool definitions (add/remove) | `tool_addition` / `tool_removal` blocks — see `shared/tool-use-concepts.md` § Mid-conversation tool changes | Claude Opus 5 onward, behind `mid-conversation-tool-changes-2026-07-01` |
+| System prompt content | A `{"role": "system", "content": "…"}` message — see § Mid-conversation system messages above | Claude Opus 5, Claude Opus 4.8, Claude Fable 5, Claude Mythos 5 — **already available today**, no beta header |
 
 Model switch has no escape hatch: caches are model-scoped. Keep the main loop on one model and spawn a subagent for cheaper sub-tasks (see `agent-design.md` § Caching for Agents).
 
@@ -202,16 +202,16 @@ For fan-out patterns: send 1 request, await the first streamed token (not the fu
 
 ## Pre-warming the cache
 
-To eliminate the cache-miss latency on the _first_ real request, send a **`max_tokens: 0`** request at startup (or on an interval). The API runs prefill — writing the cache at your `cache_control` breakpoint — and returns immediately with `content: []`, `stop_reason: "max_tokens"`, and a populated `usage` block (zero output tokens billed; normal cache-write charge on `cache_creation_input_tokens`).
+To eliminate the cache-miss latency on the *first* real request, send a **`max_tokens: 0`** request at startup (or on an interval). The API runs prefill — writing the cache at your `cache_control` breakpoint — and returns immediately with `content: []`, `stop_reason: "max_tokens"`, and a populated `usage` block (zero output tokens billed; normal cache-write charge on `cache_creation_input_tokens`).
 
-**When to pre-warm** — pre-warming trades a cache-write charge _now_ for lower TTFT on the _next_ real request. It's worth it when all three hold: (a) first-request latency is user-visible (chat/voice/interactive — not background jobs), (b) the shared prefix is large enough that a cold write is noticeably slow, and (c) there's a moment _before_ traffic to fire it — app startup, worker boot, post-deploy, start of a scheduled window.
+**When to pre-warm** — pre-warming trades a cache-write charge *now* for lower TTFT on the *next* real request. It's worth it when all three hold: (a) first-request latency is user-visible (chat/voice/interactive — not background jobs), (b) the shared prefix is large enough that a cold write is noticeably slow, and (c) there's a moment *before* traffic to fire it — app startup, worker boot, post-deploy, start of a scheduled window.
 
-| Skip pre-warming when…                              | Because                                                                                                             |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Traffic is continuous (requests ≤ TTL apart)        | The first real request warms the cache and every subsequent one hits it; a separate warm call is a pure extra write |
-| The prefix is small or below the cacheable minimum  | The cold-write penalty is negligible                                                                                |
-| The prefix varies per request/user                  | Nothing shared to pre-warm                                                                                          |
-| You'd pre-warm many distinct prefixes speculatively | Each is a ~1.25× write; cost can exceed the latency you save                                                        |
+| Skip pre-warming when… | Because |
+|---|---|
+| Traffic is continuous (requests ≤ TTL apart) | The first real request warms the cache and every subsequent one hits it; a separate warm call is a pure extra write |
+| The prefix is small or below the cacheable minimum | The cold-write penalty is negligible |
+| The prefix varies per request/user | Nothing shared to pre-warm |
+| You'd pre-warm many distinct prefixes speculatively | Each is a ~1.25× write; cost can exceed the latency you save |
 
 **Scheduled re-warms:** only needed when traffic has gaps longer than the TTL. If real requests arrive more often than every 5 minutes, they keep the cache warm on their own — don't add an interval re-warm. For bursty traffic with long idle gaps, either re-warm just under the TTL or switch to `ttl: "1h"` and re-warm less often.
 

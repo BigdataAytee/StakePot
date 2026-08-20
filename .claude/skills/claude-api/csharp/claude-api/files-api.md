@@ -20,3 +20,4 @@ new BetaRequestDocumentBlock {
 The non-beta `DocumentBlockParamSource` union has no file-ID variant — file references need `client.Beta.Messages.Create()`.
 
 ---
+

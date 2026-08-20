@@ -4,13 +4,16 @@
 
 ```typescript
 const stream = client.messages.stream({
-  model: 'claude-opus-5',
+  model: "claude-opus-5",
   max_tokens: 64000,
-  messages: [{ role: 'user', content: 'Write a story' }],
+  messages: [{ role: "user", content: "Write a story" }],
 });
 
 for await (const event of stream) {
-  if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+  if (
+    event.type === "content_block_delta" &&
+    event.delta.type === "text_delta"
+  ) {
     process.stdout.write(event.delta.text);
   }
 }
@@ -24,30 +27,30 @@ for await (const event of stream) {
 
 ```typescript
 const stream = client.messages.stream({
-  model: 'claude-opus-5',
+  model: "claude-opus-5",
   max_tokens: 64000,
-  thinking: { type: 'adaptive', display: 'summarized' }, // display opt-in: default is omitted (empty thinking text) on Fable 5 / Mythos 5 / Claude Opus 5 / Opus 4.8 / 4.7
-  messages: [{ role: 'user', content: 'Analyze this problem' }],
+  thinking: { type: "adaptive", display: "summarized" }, // display opt-in: default is omitted (empty thinking text) on Fable 5 / Mythos 5 / Claude Opus 5 / Opus 4.8 / 4.7
+  messages: [{ role: "user", content: "Analyze this problem" }],
 });
 
 for await (const event of stream) {
   switch (event.type) {
-    case 'content_block_start':
+    case "content_block_start":
       switch (event.content_block.type) {
-        case 'thinking':
-          console.log('\n[Thinking...]');
+        case "thinking":
+          console.log("\n[Thinking...]");
           break;
-        case 'text':
-          console.log('\n[Response:]');
+        case "text":
+          console.log("\n[Response:]");
           break;
       }
       break;
-    case 'content_block_delta':
+    case "content_block_delta":
       switch (event.delta.type) {
-        case 'thinking_delta':
+        case "thinking_delta":
           process.stdout.write(event.delta.thinking);
           break;
-        case 'text_delta':
+        case "text_delta":
           process.stdout.write(event.delta.text);
           break;
       }
@@ -63,26 +66,28 @@ for await (const event of stream) {
 Use the tool runner with `stream: true`. The outer loop iterates over tool runner iterations (messages), the inner loop processes stream events:
 
 ```typescript
-import Anthropic from '@anthropic-ai/sdk';
-import { betaZodTool } from '@anthropic-ai/sdk/helpers/beta/zod';
-import { z } from 'zod';
+import Anthropic from "@anthropic-ai/sdk";
+import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
+import { z } from "zod";
 
 const client = new Anthropic();
 
 const getWeather = betaZodTool({
-  name: 'get_weather',
-  description: 'Get current weather for a location',
+  name: "get_weather",
+  description: "Get current weather for a location",
   inputSchema: z.object({
-    location: z.string().describe('City and state, e.g., San Francisco, CA'),
+    location: z.string().describe("City and state, e.g., San Francisco, CA"),
   }),
   run: async ({ location }) => `72°F and sunny in ${location}`,
 });
 
 const runner = client.beta.messages.toolRunner({
-  model: 'claude-opus-5',
+  model: "claude-opus-5",
   max_tokens: 64000,
   tools: [getWeather],
-  messages: [{ role: 'user', content: "What's the weather in Paris and London?" }],
+  messages: [
+    { role: "user", content: "What's the weather in Paris and London?" },
+  ],
   stream: true,
 });
 
@@ -91,12 +96,12 @@ for await (const messageStream of runner) {
   // Inner loop: stream events for this iteration
   for await (const event of messageStream) {
     switch (event.type) {
-      case 'content_block_delta':
+      case "content_block_delta":
         switch (event.delta.type) {
-          case 'text_delta':
+          case "text_delta":
             process.stdout.write(event.delta.text);
             break;
-          case 'input_json_delta':
+          case "input_json_delta":
             // Tool input being streamed
             break;
         }
@@ -112,9 +117,9 @@ for await (const messageStream of runner) {
 
 ```typescript
 const stream = client.messages.stream({
-  model: 'claude-opus-5',
+  model: "claude-opus-5",
   max_tokens: 64000,
-  messages: [{ role: 'user', content: 'Hello' }],
+  messages: [{ role: "user", content: "Hello" }],
 });
 
 for await (const event of stream) {

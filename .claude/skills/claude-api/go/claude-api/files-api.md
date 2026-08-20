@@ -18,3 +18,4 @@ meta, err := client.Beta.Files.Upload(ctx, anthropic.BetaFileUploadParams{
 Other `Beta.Files` methods: `List`, `Delete`, `Download`, `GetMetadata`.
 
 ---
+

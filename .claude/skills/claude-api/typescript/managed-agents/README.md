@@ -13,7 +13,7 @@ npm install @anthropic-ai/sdk
 ## Client Initialization
 
 ```typescript
-import Anthropic from '@anthropic-ai/sdk';
+import Anthropic from "@anthropic-ai/sdk";
 
 // Default — resolves credentials from the environment:
 // ANTHROPIC_API_KEY, or ANTHROPIC_AUTH_TOKEN, or an `ant auth login` profile.
@@ -21,7 +21,7 @@ import Anthropic from '@anthropic-ai/sdk';
 const client = new Anthropic();
 
 // Explicit API key (only when you must inject a specific key)
-const client = new Anthropic({ apiKey: 'your-api-key' });
+const client = new Anthropic({ apiKey: "your-api-key" });
 ```
 
 ---
@@ -29,13 +29,15 @@ const client = new Anthropic({ apiKey: 'your-api-key' });
 ## Create an Environment
 
 ```typescript
-const environment = await client.beta.environments.create({
-  name: 'my-dev-env',
-  config: {
-    type: 'cloud',
-    networking: { type: 'unrestricted' },
+const environment = await client.beta.environments.create(
+  {
+    name: "my-dev-env",
+    config: {
+      type: "cloud",
+      networking: { type: "unrestricted" },
+    },
   },
-});
+);
 console.log(environment.id); // env_...
 ```
 
@@ -49,17 +51,21 @@ console.log(environment.id); // env_...
 
 ```typescript
 // 1. Create the agent (reusable, versioned)
-const agent = await client.beta.agents.create({
-  name: 'Coding Assistant',
-  model: 'claude-opus-5',
-  tools: [{ type: 'agent_toolset_20260401', default_config: { enabled: true } }],
-});
+const agent = await client.beta.agents.create(
+  {
+    name: "Coding Assistant",
+    model: "claude-opus-5",
+    tools: [{ type: "agent_toolset_20260401", default_config: { enabled: true } }],
+  },
+);
 
 // 2. Start a session
-const session = await client.beta.sessions.create({
-  agent: { type: 'agent', id: agent.id, version: agent.version },
-  environment_id: environment.id,
-});
+const session = await client.beta.sessions.create(
+  {
+    agent: { type: "agent", id: agent.id, version: agent.version },
+    environment_id: environment.id,
+  },
+);
 console.log(session.id, session.status);
 console.log(`Trace: https://platform.claude.com/workspaces/default/sessions/${session.id}`); // swap 'default' for your workspace ID if the API key is not in the Default workspace
 ```
@@ -67,41 +73,45 @@ console.log(`Trace: https://platform.claude.com/workspaces/default/sessions/${se
 ### With system prompt and custom tools
 
 ```typescript
-const agent = await client.beta.agents.create({
-  name: 'Code Reviewer',
-  model: 'claude-opus-5',
-  system: 'You are a senior code reviewer.',
-  tools: [
-    { type: 'agent_toolset_20260401', default_config: { enabled: true } },
-    {
-      type: 'custom',
-      name: 'run_tests',
-      description: 'Run the test suite',
-      input_schema: {
-        type: 'object',
-        properties: {
-          test_path: { type: 'string', description: 'Path to test file' },
+const agent = await client.beta.agents.create(
+  {
+    name: "Code Reviewer",
+    model: "claude-opus-5",
+    system: "You are a senior code reviewer.",
+    tools: [
+      { type: "agent_toolset_20260401", default_config: { enabled: true } },
+      {
+        type: "custom",
+        name: "run_tests",
+        description: "Run the test suite",
+        input_schema: {
+          type: "object",
+          properties: {
+            test_path: { type: "string", description: "Path to test file" },
+          },
+          required: ["test_path"],
         },
-        required: ['test_path'],
       },
-    },
-  ],
-});
+    ],
+  },
+);
 
-const session = await client.beta.sessions.create({
-  agent: { type: 'agent', id: agent.id, version: agent.version },
-  environment_id: environment.id,
-  title: 'Code review session',
-  resources: [
-    {
-      type: 'github_repository',
-      url: 'https://github.com/owner/repo',
-      mount_path: '/workspace/repo',
-      authorization_token: process.env.GITHUB_TOKEN,
-      branch: 'main',
-    },
-  ],
-});
+const session = await client.beta.sessions.create(
+  {
+    agent: { type: "agent", id: agent.id, version: agent.version },
+    environment_id: environment.id,
+    title: "Code review session",
+    resources: [
+      {
+        type: "github_repository",
+        url: "https://github.com/owner/repo",
+        mount_path: "/workspace/repo",
+        authorization_token: process.env.GITHUB_TOKEN,
+        branch: "main",
+      },
+    ],
+  },
+);
 ```
 
 ---
@@ -109,17 +119,20 @@ const session = await client.beta.sessions.create({
 ## Send a User Message
 
 ```typescript
-await client.beta.sessions.events.send(session.id, {
-  events: [
-    {
-      type: 'user.message',
-      content: [{ type: 'text', text: 'Review the auth module' }],
-    },
-  ],
-});
+await client.beta.sessions.events.send(
+  session.id,
+  {
+    events: [
+      {
+        type: "user.message",
+        content: [{ type: "text", text: "Review the auth module" }],
+      },
+    ],
+  },
+);
 ```
 
-> 💡 **Stream-first:** Open the stream _before_ (or concurrently with) sending the message. The stream only delivers events that occur after it opens — stream-after-send means early events arrive buffered in one batch. See [Steering Patterns](../../shared/managed-agents-events.md#steering-patterns).
+> 💡 **Stream-first:** Open the stream *before* (or concurrently with) sending the message. The stream only delivers events that occur after it opens — stream-after-send means early events arrive buffered in one batch. See [Steering Patterns](../../shared/managed-agents-events.md#steering-patterns).
 
 ---
 
@@ -129,33 +142,36 @@ await client.beta.sessions.events.send(session.id, {
 // Stream-first: open stream and send concurrently
 const [events] = await Promise.all([
   collectStream(session.id),
-  client.beta.sessions.events.send(session.id, {
-    events: [{ type: 'user.message', content: [{ type: 'text', text: '...' }] }],
-  }),
+  client.beta.sessions.events.send(
+    session.id,
+    { events: [{ type: "user.message", content: [{ type: "text", text: "..." }] }] },
+  ),
 ]);
 
 // Standalone stream iteration:
-const stream = await client.beta.sessions.events.stream(session.id);
+const stream = await client.beta.sessions.events.stream(
+  session.id,
+);
 
 for await (const event of stream) {
   switch (event.type) {
-    case 'agent.message':
+    case "agent.message":
       for (const block of event.content) {
-        if (block.type === 'text') {
+        if (block.type === "text") {
           process.stdout.write(block.text);
         }
       }
       break;
-    case 'agent.custom_tool_use':
+    case "agent.custom_tool_use":
       // Custom tool invocation — session is now idle
       console.log(`\nCustom tool call: ${event.name}`);
       console.log(`Input: ${JSON.stringify(event.input)}`);
       break;
-    case 'session.status_idle':
-      console.log('\n--- Agent idle ---');
+    case "session.status_idle":
+      console.log("\n--- Agent idle ---");
       break;
-    case 'session.status_terminated':
-      console.log('\n--- Session terminated ---');
+    case "session.status_terminated":
+      console.log("\n--- Session terminated ---");
       break;
   }
 }
@@ -166,15 +182,18 @@ for await (const event of stream) {
 ## Provide Custom Tool Result
 
 ```typescript
-await client.beta.sessions.events.send(session.id, {
-  events: [
-    {
-      type: 'user.custom_tool_result',
-      custom_tool_use_id: 'sevt_abc123',
-      content: [{ type: 'text', text: 'All 42 tests passed.' }],
-    },
-  ],
-});
+await client.beta.sessions.events.send(
+  session.id,
+  {
+    events: [
+      {
+        type: "user.custom_tool_result",
+        custom_tool_use_id: "sevt_abc123",
+        content: [{ type: "text", text: "All 42 tests passed." }],
+      },
+    ],
+  },
+);
 ```
 
 ---
@@ -182,7 +201,9 @@ await client.beta.sessions.events.send(session.id, {
 ## Poll Events
 
 ```typescript
-const events = await client.beta.sessions.events.list(session.id);
+const events = await client.beta.sessions.events.list(
+  session.id,
+);
 for (const event of events.data) {
   console.log(`${event.type}: ${event.id}`);
 }
@@ -194,31 +215,33 @@ for (const event of events.data) {
 
 ```typescript
 function runCustomTool(toolName: string, toolInput: unknown): string {
-  if (toolName === 'run_tests') {
+  if (toolName === "run_tests") {
     // Your tool implementation here
-    return 'All tests passed.';
+    return "All tests passed.";
   }
   return `Unknown tool: ${toolName}`;
 }
 
 async function runSession(client: Anthropic, sessionId: string) {
   while (true) {
-    const stream = await client.beta.sessions.events.stream(sessionId);
+    const stream = await client.beta.sessions.events.stream(
+      sessionId,
+    );
 
     const toolCalls: Anthropic.Beta.Sessions.BetaManagedAgentsAgentCustomToolUseEvent[] = [];
 
     for await (const event of stream) {
-      if (event.type === 'agent.message') {
+      if (event.type === "agent.message") {
         for (const block of event.content) {
-          if (block.type === 'text') {
+          if (block.type === "text") {
             process.stdout.write(block.text);
           }
         }
-      } else if (event.type === 'agent.custom_tool_use') {
+      } else if (event.type === "agent.custom_tool_use") {
         toolCalls.push(event);
-      } else if (event.type === 'session.status_idle') {
+      } else if (event.type === "session.status_idle") {
         break;
-      } else if (event.type === 'session.status_terminated') {
+      } else if (event.type === "session.status_terminated") {
         return;
       }
     }
@@ -227,12 +250,15 @@ async function runSession(client: Anthropic, sessionId: string) {
 
     // Process custom tool calls
     const results = toolCalls.map((call) => ({
-      type: 'user.custom_tool_result' as const,
+      type: "user.custom_tool_result" as const,
       custom_tool_use_id: call.id,
-      content: [{ type: 'text' as const, text: runCustomTool(call.name, call.input) }],
+      content: [{ type: "text" as const, text: runCustomTool(call.name, call.input) }],
     }));
 
-    await client.beta.sessions.events.send(sessionId, { events: results });
+    await client.beta.sessions.events.send(
+      sessionId,
+      { events: results },
+    );
   }
 }
 ```
@@ -242,19 +268,21 @@ async function runSession(client: Anthropic, sessionId: string) {
 ## Upload a File
 
 ```typescript
-import fs from 'fs';
+import fs from "fs";
 
 const file = await client.beta.files.upload({
-  file: fs.createReadStream('data.csv'),
-  purpose: 'agent',
+  file: fs.createReadStream("data.csv"),
+  purpose: "agent",
 });
 
 // Use in a session
-const session = await client.beta.sessions.create({
-  agent: { type: 'agent', id: agent.id, version: agent.version },
-  environment_id: environment.id,
-  resources: [{ type: 'file', file_id: file.id, mount_path: '/workspace/data.csv' }],
-});
+const session = await client.beta.sessions.create(
+  {
+    agent: { type: "agent", id: agent.id, version: agent.version },
+    environment_id: environment.id,
+    resources: [{ type: "file", file_id: file.id, mount_path: "/workspace/data.csv" }],
+  },
+);
 ```
 
 ---
@@ -264,12 +292,12 @@ const session = await client.beta.sessions.create({
 List files the agent wrote to `/mnt/session/outputs/` during a session, then download them.
 
 ```typescript
-import fs from 'fs';
+import fs from "fs";
 
 // List files associated with a session
 const files = await client.beta.files.list({
   scope_id: session.id,
-  betas: ['managed-agents-2026-04-01'],
+  betas: ["managed-agents-2026-04-01"],
 });
 for (const f of files.data) {
   console.log(f.filename, f.size_bytes);
@@ -289,17 +317,17 @@ for (const f of files.data) {
 
 ```typescript
 // Get session details
-const session = await client.beta.sessions.retrieve('sesn_011CZxAbc123Def456');
+const session = await client.beta.sessions.retrieve("sesn_011CZxAbc123Def456");
 console.log(session.status, session.usage);
 
 // List sessions
 const sessions = await client.beta.sessions.list();
 
 // Delete a session
-await client.beta.sessions.delete('sesn_011CZxAbc123Def456');
+await client.beta.sessions.delete("sesn_011CZxAbc123Def456");
 
 // Archive a session
-await client.beta.sessions.archive('sesn_011CZxAbc123Def456');
+await client.beta.sessions.archive("sesn_011CZxAbc123Def456");
 ```
 
 ---
@@ -309,12 +337,14 @@ await client.beta.sessions.archive('sesn_011CZxAbc123Def456');
 ```typescript
 // Agent declares MCP server (no auth here — auth goes in a vault)
 const agent = await client.beta.agents.create({
-  name: 'MCP Agent',
-  model: 'claude-opus-5',
-  mcp_servers: [{ type: 'url', name: 'my-tools', url: 'https://my-mcp-server.example.com/sse' }],
+  name: "MCP Agent",
+  model: "claude-opus-5",
+  mcp_servers: [
+    { type: "url", name: "my-tools", url: "https://my-mcp-server.example.com/sse" },
+  ],
   tools: [
-    { type: 'agent_toolset_20260401', default_config: { enabled: true } },
-    { type: 'mcp_toolset', mcp_server_name: 'my-tools' },
+    { type: "agent_toolset_20260401", default_config: { enabled: true } },
+    { type: "mcp_toolset", mcp_server_name: "my-tools" },
   ],
 });
 

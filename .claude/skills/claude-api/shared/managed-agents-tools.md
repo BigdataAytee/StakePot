@@ -4,11 +4,11 @@
 
 ### Server tools vs client tools
 
-| Type                                                       | Who runs it                                                                                                                                                                | How it works                                                                                                       |
-| ---------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| **Prebuilt Claude Agent tools** (`agent_toolset_20260401`) | Anthropic, on the session's container (for `cloud` envs; for `self_hosted`, **your** worker supplies and runs them — see `shared/managed-agents-self-hosted-sandboxes.md`) | File ops, bash, web search, etc. Enable all at once or configure individually with `enabled: true/false`.          |
-| **MCP tools** (`mcp_toolset`)                              | Anthropic's orchestration layer                                                                                                                                            | Capabilities exposed by connected MCP servers. Grant access per-server via the toolset.                            |
-| **Custom tools**                                           | **You** — your application handles the call and returns results                                                                                                            | Agent emits a `agent.custom_tool_use` event, session goes `idle`, you send back a `user.custom_tool_result` event. |
+| Type | Who runs it | How it works |
+|---|---|---|
+| **Prebuilt Claude Agent tools** (`agent_toolset_20260401`) | Anthropic, on the session's container (for `cloud` envs; for `self_hosted`, **your** worker supplies and runs them — see `shared/managed-agents-self-hosted-sandboxes.md`) | File ops, bash, web search, etc. Enable all at once or configure individually with `enabled: true/false`. |
+| **MCP tools** (`mcp_toolset`) | Anthropic's orchestration layer | Capabilities exposed by connected MCP servers. Grant access per-server via the toolset. |
+| **Custom tools** | **You** — your application handles the call and returns results | Agent emits a `agent.custom_tool_use` event, session goes `idle`, you send back a `user.custom_tool_result` event. |
 
 **Recommendation:** Enable all prebuilt tools via `agent_toolset_20260401`, then disable individually as needed.
 
@@ -18,22 +18,24 @@
 
 The `agent_toolset_20260401` provides these built-in tools:
 
-| Tool         | Description                                                                                |
-| ------------ | ------------------------------------------------------------------------------------------ |
-| `bash`       | Execute bash commands in a shell session                                                   |
-| `read`       | Read a file from the local filesystem, including text, images, PDFs, and Jupyter notebooks |
-| `write`      | Write a file to the local filesystem                                                       |
-| `edit`       | Perform string replacement in a file                                                       |
-| `glob`       | Fast file pattern matching using glob patterns                                             |
-| `grep`       | Text search using regex patterns                                                           |
-| `web_fetch`  | Fetch content from a URL                                                                   |
-| `web_search` | Search the web for information                                                             |
+| Tool                   | Description                              |
+| ---------------------- | ---------------------------------------- |
+| `bash` | Execute bash commands in a shell session |
+| `read` | Read a file from the local filesystem, including text, images, PDFs, and Jupyter notebooks |
+| `write` | Write a file to the local filesystem |
+| `edit` | Perform string replacement in a file |
+| `glob` | Fast file pattern matching using glob patterns |
+| `grep` | Text search using regex patterns |
+| `web_fetch` | Fetch content from a URL |
+| `web_search` | Search the web for information |
 
 Enable the full toolset:
 
 ```json
 {
-  "tools": [{ "type": "agent_toolset_20260401" }]
+  "tools": [
+    { "type": "agent_toolset_20260401" }
+  ]
 }
 ```
 
@@ -47,26 +49,28 @@ Override defaults for individual tools. This example enables everything except b
     {
       "type": "agent_toolset_20260401",
       "default_config": { "enabled": true },
-      "configs": [{ "name": "bash", "enabled": false }]
+      "configs": [
+        { "name": "bash", "enabled": false }
+      ]
     }
   ]
 }
 ```
 
-| Field            | Required | Description                                                                            |
-| ---------------- | -------- | -------------------------------------------------------------------------------------- |
-| `type`           | ✅       | `"agent_toolset_20260401"`                                                             |
-| `default_config` | ❌       | Applied to all tools. `{ "enabled": bool, "permission_policy": {...} }`                |
-| `configs`        | ❌       | Per-tool overrides: `[{ "name": "...", "enabled": bool, "permission_policy": {...} }]` |
+| Field | Required | Description |
+|---|---|---|
+| `type` | ✅ | `"agent_toolset_20260401"` |
+| `default_config` | ❌ | Applied to all tools. `{ "enabled": bool, "permission_policy": {...} }` |
+| `configs` | ❌ | Per-tool overrides: `[{ "name": "...", "enabled": bool, "permission_policy": {...} }]` |
 
 ### Permission Policies
 
 Control when server-executed tools (agent toolset + MCP) run automatically vs wait for approval. Does not apply to custom tools.
 
-| Policy         | Behavior                                                                                       |
-| -------------- | ---------------------------------------------------------------------------------------------- |
-| `always_allow` | Tool executes automatically (default)                                                          |
-| `always_ask`   | Session emits `session.status_idle` and pauses until you send a `user.tool_confirmation` event |
+| Policy | Behavior |
+|---|---|
+| `always_allow` | Tool executes automatically (default) |
+| `always_ask` | Session emits `session.status_idle` and pauses until you send a `user.tool_confirmation` event |
 
 ```json
 {
@@ -75,7 +79,9 @@ Control when server-executed tools (agent toolset + MCP) run automatically vs wa
     "enabled": true,
     "permission_policy": { "type": "always_allow" }
   },
-  "configs": [{ "name": "bash", "permission_policy": { "type": "always_ask" } }]
+  "configs": [
+    { "name": "bash", "permission_policy": { "type": "always_ask" } }
+  ]
 }
 ```
 
@@ -147,16 +153,20 @@ This keeps secrets out of reusable agent definitions. Each vault credential is t
 
 **Agent side — declare servers (no auth):**
 
-| Field  | Required | Description                                               |
-| ------ | -------- | --------------------------------------------------------- |
-| `type` | ✅       | `"url"`                                                   |
-| `name` | ✅       | Unique name — referenced by `mcp_toolset.mcp_server_name` |
-| `url`  | ✅       | The MCP server's endpoint URL (Streamable HTTP transport) |
+| Field | Required | Description |
+|---|---|---|
+| `type` | ✅ | `"url"` |
+| `name` | ✅ | Unique name — referenced by `mcp_toolset.mcp_server_name` |
+| `url` | ✅ | The MCP server's endpoint URL (Streamable HTTP transport) |
 
 ```json
 {
-  "mcp_servers": [{ "type": "url", "name": "linear", "url": "https://mcp.linear.app/mcp" }],
-  "tools": [{ "type": "mcp_toolset", "mcp_server_name": "linear" }]
+  "mcp_servers": [
+    { "type": "url", "name": "linear", "url": "https://mcp.linear.app/mcp" }
+  ],
+  "tools": [
+    { "type": "mcp_toolset", "mcp_server_name": "linear" }
+  ]
 }
 ```
 
@@ -174,7 +184,7 @@ This keeps secrets out of reusable agent definitions. Each vault credential is t
 
 > 💡 **Changing tools/MCP servers on a running session:** `sessions.update()` can replace `agent.tools` and `agent.mcp_servers` while the session is `idle` — a session-local override that doesn't touch the agent object. `vault_ids` is create-only. See `shared/managed-agents-core.md` → Updating the agent configuration mid-session.
 
-**Large tool outputs.** If a tool returns more than **100,000 characters (roughly 25,000 tokens)**, the output is automatically offloaded to a file in the sandbox — the agent receives a truncated preview plus the file path and can `read` the full content. No configuration required. The threshold is in _characters_, not tokens, and applies to built-in agent tools as well as MCP tools.
+**Large tool outputs.** If a tool returns more than **100,000 characters (roughly 25,000 tokens)**, the output is automatically offloaded to a file in the sandbox — the agent receives a truncated preview plus the file path and can `read` the full content. No configuration required. The threshold is in *characters*, not tokens, and applies to built-in agent tools as well as MCP tools.
 
 **Invalid vault credentials don't block session creation.** If a vault credential is invalid for a declared MCP server, the session still creates successfully; a `session.error` event describes the MCP auth failure, and auth retries on the next `session.status_idle` → `session.status_running` transition.
 
@@ -184,7 +194,7 @@ This keeps secrets out of reusable agent definitions. Each vault credential is t
 
 **Vaults** store credentials that Anthropic manages on your behalf. Two credential categories:
 
-- **MCP credentials** (`mcp_oauth`, `static_bearer`) — keyed by `mcp_server_url`. When the agent connects to a server at that URL, the token is injected automatically. **Matching is normalized, not byte-exact:** scheme and host are lowercased, and default ports and trailing slashes are stripped, so host casing, an explicit default port, or a trailing slash won't break the match. A different path, subdomain, or _non-default_ port will. If nothing matches, the connection is attempted unauthenticated. `mcp_oauth` tokens are auto-refreshed via the standard OAuth 2.0 `refresh_token` grant. This is the only way to authenticate MCP servers.
+- **MCP credentials** (`mcp_oauth`, `static_bearer`) — keyed by `mcp_server_url`. When the agent connects to a server at that URL, the token is injected automatically. **Matching is normalized, not byte-exact:** scheme and host are lowercased, and default ports and trailing slashes are stripped, so host casing, an explicit default port, or a trailing slash won't break the match. A different path, subdomain, or *non-default* port will. If nothing matches, the connection is attempted unauthenticated. `mcp_oauth` tokens are auto-refreshed via the standard OAuth 2.0 `refresh_token` grant. This is the only way to authenticate MCP servers.
 - **Environment variables** (`environment_variable`) — keyed by `secret_name` (the env var name). The sandbox sees only an **opaque placeholder**; the real secret is substituted into the outbound request **at egress**. Use this for any service that authenticates through an environment variable: CLIs (`aws`, `gcloud`, `stripe`), SDKs, or direct `curl` calls from the `bash` tool.
 
 Secret fields you supply (`token`, `access_token`, `refresh_token`, `client_secret`, `secret_value`) are write-only — never returned in API responses.
@@ -232,11 +242,11 @@ Vaults store credentials; those credentials **never enter the sandbox**. This is
 
 The `refresh` block is what enables auto-refresh — `token_endpoint` is where Anthropic posts the `refresh_token` grant. `token_endpoint_auth` is a discriminated union:
 
-| `type`                  | Shape                                                 | Use when                                        |
-| ----------------------- | ----------------------------------------------------- | ----------------------------------------------- |
-| `"none"`                | `{type: "none"}`                                      | Public OAuth client (no secret)                 |
+| `type` | Shape | Use when |
+|---|---|---|
+| `"none"` | `{type: "none"}` | Public OAuth client (no secret) |
 | `"client_secret_basic"` | `{type: "client_secret_basic", client_secret: "..."}` | Confidential client, secret via HTTP Basic auth |
-| `"client_secret_post"`  | `{type: "client_secret_post", client_secret: "..."}`  | Confidential client, secret in request body     |
+| `"client_secret_post"` | `{type: "client_secret_post", client_secret: "..."}` | Confidential client, secret in request body |
 
 Omit `refresh` entirely if you only have an access token with no refresh capability — it'll work until it expires, then the agent loses access.
 
@@ -261,20 +271,20 @@ Omit `refresh` entirely if you only have an access token with no refresh capabil
 
 `networking.allowed_hosts` controls which outbound hosts the secret can be substituted for — `{"type": "limited", "allowed_hosts": [...]}` or `{"type": "unrestricted"}` if you can't enumerate the domains in advance. Limiting is strongly recommended: it prevents the key from ever being sent to unauthorized hosts.
 
-**`injection_location`** (optional, sibling of `networking`) controls **where** in the outbound request the secret is substituted — `{header: bool, body: bool}`. The two are independent: `allowed_hosts` scopes _which hosts_ a substituted request can target; `injection_location` scopes _which parts of the request_ the secret is substituted into across all of those hosts. Most services read an API key from a request header, so `{"header": true}` is the narrower configuration — request bodies are often assembled from content the agent is working with, making the body the broader exposure surface. A placeholder in a disabled location is **neither substituted nor stripped** — the literal opaque placeholder string is sent to the third party in that location.
+**`injection_location`** (optional, sibling of `networking`) controls **where** in the outbound request the secret is substituted — `{header: bool, body: bool}`. The two are independent: `allowed_hosts` scopes *which hosts* a substituted request can target; `injection_location` scopes *which parts of the request* the secret is substituted into across all of those hosts. Most services read an API key from a request header, so `{"header": true}` is the narrower configuration — request bodies are often assembled from content the agent is working with, making the body the broader exposure surface. A placeholder in a disabled location is **neither substituted nor stripped** — the literal opaque placeholder string is sent to the third party in that location.
 
-| Operation         | `injection_location` semantics                                                                                                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Create credential | Omit the field entirely → both locations enabled. Provide the object → any field you omit defaults to `false` (`{"header": true}` creates a header-only credential).                        |
+| Operation | `injection_location` semantics |
+|---|---|
+| Create credential | Omit the field entirely → both locations enabled. Provide the object → any field you omit defaults to `false` (`{"header": true}` creates a header-only credential). |
 | Update credential | Fields **merge individually** — `{"body": false}` disables body substitution and leaves `header` unchanged. For a running session, the update takes effect on the session's next operation. |
 
 A credential must have at least one location enabled; a create or update that would disable both returns 400, as does explicit `null` for the object or either field (omit instead). The response always returns both fields with their resolved values.
 
 > ⚠️ **Credentials created in the Console are header-only by default** — unlike the API, where omitting the field enables both. If your client sends the secret in the request body (a form-encoded token request, for example), the placeholder passes through literally and the service rejects it with its own authentication error. Tick body injection in the Console form, or `POST` the credential with `{"injection_location": {"body": true}}`.
 
-> ⚠️ **Two networking layers, both required.** `networking.allowed_hosts` on the credential controls which requests _use the secret_, not which requests are _allowed_. The agent must also be able to reach the domain at the **environment level** (`unrestricted`, or the host listed in the environment's `allowed_hosts` — see `shared/managed-agents-environments.md`). A domain missing from either layer means the secret-substituted request fails.
+> ⚠️ **Two networking layers, both required.** `networking.allowed_hosts` on the credential controls which requests *use the secret*, not which requests are *allowed*. The agent must also be able to reach the domain at the **environment level** (`unrestricted`, or the host listed in the environment's `allowed_hosts` — see `shared/managed-agents-environments.md`). A domain missing from either layer means the secret-substituted request fails.
 
-> ⚠️ **Client-side validation caveat.** Substitution happens at egress, not inside the sandbox — clients that validate the credential _format_ locally before making a network request (e.g. a CLI that checks the key starts with `sk-`) will see the opaque placeholder and may fail at startup. If a client rejects the credential before any network call, that's why.
+> ⚠️ **Client-side validation caveat.** Substitution happens at egress, not inside the sandbox — clients that validate the credential *format* locally before making a network request (e.g. a CLI that checks the key starts with `sk-`) will see the opaque placeholder and may fail at startup. If a client rejects the credential before any network call, that's why.
 
 > 💡 **Scope the key minimally.** The agent can do anything the key allows; a key with broader permissions than the task needs increases the blast radius if the agent behaves unexpectedly.
 
@@ -297,10 +307,10 @@ Skills are reusable, filesystem-based resources that provide your agent with dom
 
 Skills reach the agent two ways: **attached** through the agent's `skills` array, or **loaded from a GitHub repository** mounted on the session (see § Skills from a GitHub repository below). The agent automatically uses them when relevant to the task at hand:
 
-| Type                           | What it is                                                                                                   |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------ |
-| **Pre-built Anthropic skills** | Common document tasks (PowerPoint, Excel, Word, PDF). Reference by name (e.g. `xlsx`).                       |
-| **Custom skills**              | Skills you've created in your organization via the Skills API. Reference by `skill_id` + optional `version`. |
+| Type | What it is |
+|---|---|
+| **Pre-built Anthropic skills** | Common document tasks (PowerPoint, Excel, Word, PDF). Reference by name (e.g. `xlsx`). |
+| **Custom skills** | Skills you've created in your organization via the Skills API. Reference by `skill_id` + optional `version`. |
 
 **Max 20 skills per agent.** Agent creation uses `managed-agents-2026-04-01`; the separate Skills API (for managing custom skill definitions) uses `skills-2025-10-02`.
 
@@ -309,15 +319,17 @@ Skills reach the agent two ways: **attached** through the agent's `skills` array
 Skills are attached to the **agent** definition via `agents.create()`:
 
 ```ts
-const agent = await client.beta.agents.create({
-  name: 'Financial Agent',
-  model: 'claude-opus-5',
-  system: 'You are a financial analysis agent.',
-  skills: [
-    { type: 'anthropic', skill_id: 'xlsx' },
-    { type: 'custom', skill_id: 'skill_abc123', version: 'latest' },
-  ],
-});
+const agent = await client.beta.agents.create(
+  {
+    name: "Financial Agent",
+    model: "claude-opus-5",
+    system: "You are a financial analysis agent.",
+    skills: [
+      { type: "anthropic", skill_id: "xlsx" },
+      { type: "custom", skill_id: "skill_abc123", version: "latest" },
+    ],
+  }
+);
 ```
 
 Python:
@@ -336,11 +348,11 @@ agent = client.beta.agents.create(
 
 **Skill reference fields:**
 
-| Field      | Anthropic skill                                         | Custom skill                                     |
-| ---------- | ------------------------------------------------------- | ------------------------------------------------ |
-| `type`     | `"anthropic"`                                           | `"custom"`                                       |
+| Field | Anthropic skill | Custom skill |
+|---|---|---|
+| `type` | `"anthropic"` | `"custom"` |
 | `skill_id` | Skill name (e.g. `"xlsx"`, `"docx"`, `"pptx"`, `"pdf"`) | Skill ID from Skills API (e.g. `"skill_abc123"`) |
-| `version`  | `"latest"` or a specific version number                 | `"latest"` or a specific version number          |
+| `version` | `"latest"` or a specific version number | `"latest"` or a specific version number |
 
 `version` is optional on **both** kinds and defaults to `"latest"` — it is not custom-skill-only.
 
@@ -353,20 +365,20 @@ Skills can also live in your codebase. When a session mounts a repository via th
 > ⚠️ **Repository skills are agent instructions — treat them as part of your trust boundary.** Anyone who can commit to a mounted repository (a merged external PR, a compromised dependency, a contributor) can add or edit `.claude/skills/` content, and the platform loads it at session start with no review step — where session tools like `bash` and `web_fetch` give injected instructions real capability. Only mount repositories you trust, and audit `.claude/skills/` before mounting one with external contributors.
 
 Rules:
-
 - **Cloud sandboxes only** — self-hosted sandboxes don't support `github_repository` resources, so they can't load repository skills.
-- **Scanned once, at session start**, from the repository state checked out then (the resource's `checkout` branch/commit, else the default branch). Commits pushed mid-session are not picked up — start a new session for updated skills. Repositories added to a _running_ session are not scanned either.
+- **Scanned once, at session start**, from the repository state checked out then (the resource's `checkout` branch/commit, else the default branch). Commits pushed mid-session are not picked up — start a new session for updated skills. Repositories added to a *running* session are not scanned either.
 - **Coexists with attached skills.** If a repository skill shares a name with an attached skill (or a skill from another mounted repo), both are available, each announced with its own path.
 
 ### Skills API
 
-| Operation      | Method   | Path                                 |
-| -------------- | -------- | ------------------------------------ |
-| Create Skill   | `POST`   | `/v1/skills`                         |
-| List Skills    | `GET`    | `/v1/skills`                         |
-| Get Skill      | `GET`    | `/v1/skills/{id}`                    |
-| Delete Skill   | `DELETE` | `/v1/skills/{id}`                    |
-| Create Version | `POST`   | `/v1/skills/{id}/versions`           |
-| List Versions  | `GET`    | `/v1/skills/{id}/versions`           |
-| Get Version    | `GET`    | `/v1/skills/{id}/versions/{version}` |
-| Delete Version | `DELETE` | `/v1/skills/{id}/versions/{version}` |
+| Operation             | Method   | Path                                            |
+| --------------------- | -------- | ----------------------------------------------- |
+| Create Skill          | `POST`   | `/v1/skills`                                    |
+| List Skills           | `GET`    | `/v1/skills`                                    |
+| Get Skill             | `GET`    | `/v1/skills/{id}`                               |
+| Delete Skill          | `DELETE` | `/v1/skills/{id}`                               |
+| Create Version        | `POST`   | `/v1/skills/{id}/versions`                      |
+| List Versions         | `GET`    | `/v1/skills/{id}/versions`                      |
+| Get Version           | `GET`    | `/v1/skills/{id}/versions/{version}`            |
+| Delete Version        | `DELETE` | `/v1/skills/{id}/versions/{version}`            |
+

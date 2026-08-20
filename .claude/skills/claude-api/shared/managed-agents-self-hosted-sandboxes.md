@@ -54,21 +54,21 @@ asyncio.run(main())
 **TypeScript — always-on:**
 
 ```typescript
-import Anthropic from '@anthropic-ai/sdk';
-import { EnvironmentWorker } from '@anthropic-ai/sdk/helpers/beta/environments';
+import Anthropic from "@anthropic-ai/sdk";
+import { EnvironmentWorker } from "@anthropic-ai/sdk/helpers/beta/environments";
 
 const environmentKey = process.env.ANTHROPIC_ENVIRONMENT_KEY!;
 const environmentId = process.env.ANTHROPIC_ENVIRONMENT_ID!;
 const client = new Anthropic({ authToken: environmentKey });
 const ctrl = new AbortController();
-process.once('SIGTERM', () => ctrl.abort());
+process.once("SIGTERM", () => ctrl.abort());
 
 await new EnvironmentWorker({
   client,
   environmentId,
   environmentKey,
-  workdir: '/workspace',
-  signal: ctrl.signal,
+  workdir: "/workspace",
+  signal: ctrl.signal
 }).run();
 ```
 
@@ -130,13 +130,13 @@ TypeScript: same shape with `client.beta.webhooks.unwrap(body, {headers})` and `
 
 `EnvironmentWorker.run()` polls and executes tools in the same process. To run each session in its **own** container, use the mid-level poller in a thin orchestrator — Python `client.beta.environments.work.poller(environment_id=, environment_key=, drain=, block_ms=, reclaim_older_than_ms=, auto_stop=)`; TypeScript `new WorkPoller({client, environmentId, environmentKey, autoStop})` from `@anthropic-ai/sdk/helpers/beta/environments` — and, for each yielded `work` item, start a fresh container with these env vars injected, whose entrypoint runs `ant beta:worker run` or an `EnvironmentWorker(...).run_one()`. `block_ms` is 1–999 (or `None` for non-blocking); `reclaim_older_than_ms` re-claims items leased to a dead worker; `drain` stops once the queue is empty; `auto_stop` posts a stop signal after the iterator exits (set `False` when the launched container owns the stop call). **Go's poller has no `auto_stop` opt-out** — it calls `work.Stop` when the handler returns, so block in the handler until the session completes rather than detaching.
 
-| Env var                     | Value                 |
-| --------------------------- | --------------------- |
-| `ANTHROPIC_SESSION_ID`      | `work.data.id`        |
-| `ANTHROPIC_WORK_ID`         | `work.id`             |
-| `ANTHROPIC_ENVIRONMENT_ID`  | `work.environment_id` |
-| `ANTHROPIC_ENVIRONMENT_KEY` | pass through          |
-| `ANTHROPIC_BASE_URL`        | pass through          |
+| Env var | Value |
+|---|---|
+| `ANTHROPIC_SESSION_ID` | `work.data.id` |
+| `ANTHROPIC_WORK_ID` | `work.id` |
+| `ANTHROPIC_ENVIRONMENT_ID` | `work.environment_id` |
+| `ANTHROPIC_ENVIRONMENT_KEY` | pass through |
+| `ANTHROPIC_BASE_URL` | pass through |
 
 Skip items where `work.data.type != "session"`.
 
@@ -144,30 +144,30 @@ Skip items where `work.data.type != "session"`.
 
 These are **control-plane** calls — authenticate with `x-api-key` (not the environment key); `managed-agents-2026-04-01` beta header. **Call them from outside the worker host** — setting `ANTHROPIC_API_KEY` on the worker host exposes an organization-scoped credential to agent tool calls.
 
-| SDK (`client.beta.environments.work.*`) | REST                                             | CLI                                | Returns                                                                        |
-| --------------------------------------- | ------------------------------------------------ | ---------------------------------- | ------------------------------------------------------------------------------ |
-| `stats(environment_id)`                 | `GET /v1/environments/{id}/work/stats`           | `ant beta:environments:work stats` | `{type:"work_queue_stats", depth, pending, oldest_queued_at, workers_polling}` |
-| `stop(work_id, environment_id=)`        | `POST /v1/environments/{id}/work/{work_id}/stop` | `ant beta:environments:work stop`  | `work.state`                                                                   |
+| SDK (`client.beta.environments.work.*`) | REST | CLI | Returns |
+|---|---|---|---|
+| `stats(environment_id)` | `GET /v1/environments/{id}/work/stats` | `ant beta:environments:work stats` | `{type:"work_queue_stats", depth, pending, oldest_queued_at, workers_polling}` |
+| `stop(work_id, environment_id=)` | `POST /v1/environments/{id}/work/{work_id}/stop` | `ant beta:environments:work stop` | `work.state` |
 
 ## What changes vs `cloud`
 
-| Concern                                        | `cloud`                                             | `self_hosted`                                                                                                                                                                               |
-| ---------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Container lifecycle, hardening, networking     | Anthropic                                           | **You** — run non-root, read-only rootfs, drop caps; egress is whatever your VPC/firewall allows                                                                                            |
-| `file` / `github_repository` resource mounting | Anthropic mounts into the container                 | **You** — pass pointers via `sessions.create(metadata={...})` and have your orchestrator fetch/clone before dispatch                                                                        |
-| `memory_store` resources                       | Supported                                           | **Not yet supported**                                                                                                                                                                       |
-| Vault `environment_variable` credentials       | Supported (substituted at Anthropic-managed egress) | **Not yet supported** — egress is yours, so there's nowhere to substitute the secret. Use MCP credentials or a host-side custom tool (`shared/managed-agents-client-patterns.md` Pattern 9) |
-| Built-in tools                                 | Via `agent_toolset_20260401`                        | Supplied by your worker (`EnvironmentWorker` default / `beta_agent_toolset(env)` / `ant` CLI fixed set)                                                                                     |
-| Skills download                                | Automatic                                           | `EnvironmentWorker` / `AgentToolContext` fetch into `{workdir}/skills/` (needs `client` + `session_id`)                                                                                     |
-| Claude Platform on AWS                         | Supported                                           | **Not available**                                                                                                                                                                           |
-| SDK worker helpers                             | All SDKs                                            | **Python, TypeScript, Go only** (`EnvironmentWorker` / poller not in Java, Ruby, PHP, or C#) — use one of those three or the `ant` CLI                                                      |
+| Concern | `cloud` | `self_hosted` |
+|---|---|---|
+| Container lifecycle, hardening, networking | Anthropic | **You** — run non-root, read-only rootfs, drop caps; egress is whatever your VPC/firewall allows |
+| `file` / `github_repository` resource mounting | Anthropic mounts into the container | **You** — pass pointers via `sessions.create(metadata={...})` and have your orchestrator fetch/clone before dispatch |
+| `memory_store` resources | Supported | **Not yet supported** |
+| Vault `environment_variable` credentials | Supported (substituted at Anthropic-managed egress) | **Not yet supported** — egress is yours, so there's nowhere to substitute the secret. Use MCP credentials or a host-side custom tool (`shared/managed-agents-client-patterns.md` Pattern 9) |
+| Built-in tools | Via `agent_toolset_20260401` | Supplied by your worker (`EnvironmentWorker` default / `beta_agent_toolset(env)` / `ant` CLI fixed set) |
+| Skills download | Automatic | `EnvironmentWorker` / `AgentToolContext` fetch into `{workdir}/skills/` (needs `client` + `session_id`) |
+| Claude Platform on AWS | Supported | **Not available** |
+| SDK worker helpers | All SDKs | **Python, TypeScript, Go only** (`EnvironmentWorker` / poller not in Java, Ruby, PHP, or C#) — use one of those three or the `ant` CLI |
 
 ## Credentials
 
-| Credential                      | Format             | Scope                                                                                                                                                                                                                                                      |
-| ------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ANTHROPIC_ENVIRONMENT_KEY`     | `sk-ant-oat01-...` | One environment's work queue. Generate in Console ("Generate environment key"). Pass as `auth_token=` / `authToken` on the client **and** as `environment_key=` / `environmentKey` on `EnvironmentWorker`. Store in a secrets manager; rotate on exposure. |
-| `ANTHROPIC_WEBHOOK_SIGNING_KEY` | `whsec_...`        | Webhook signature verification (if using webhook-driven wake). The SDK reads this env var automatically for `client.beta.webhooks.unwrap()`.                                                                                                               |
+| Credential | Format | Scope |
+|---|---|---|
+| `ANTHROPIC_ENVIRONMENT_KEY` | `sk-ant-oat01-...` | One environment's work queue. Generate in Console ("Generate environment key"). Pass as `auth_token=` / `authToken` on the client **and** as `environment_key=` / `environmentKey` on `EnvironmentWorker`. Store in a secrets manager; rotate on exposure. |
+| `ANTHROPIC_WEBHOOK_SIGNING_KEY` | `whsec_...` | Webhook signature verification (if using webhook-driven wake). The SDK reads this env var automatically for `client.beta.webhooks.unwrap()`. |
 
 ## Security — what you own
 
