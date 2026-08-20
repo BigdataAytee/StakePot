@@ -14,6 +14,7 @@ import { PlatformConfigService } from '../platform-config/platform-config.servic
 import type { PrismaService } from '../prisma/prisma.service';
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { RgService } from '../rg/rg.service';
+import { testOrderBook } from '../testing/order-book';
 import { resetDatabase } from '../testing/reset';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { TradeService } from '../trade/trade.service';
@@ -98,6 +99,7 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
       config,
       { publish: async () => undefined } as unknown as PriceCacheService,
       new RgService(prisma, config),
+      testOrderBook(prisma, ledger, wallet),
     );
     reconciliation = new ReconciliationService(prisma, config);
   });

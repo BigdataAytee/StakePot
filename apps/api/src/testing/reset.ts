@@ -32,6 +32,16 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   await prisma.sourceItem.deleteMany();
   await prisma.source.deleteMany();
 
+  // The order book. First among the market-scoped deletes for the same reason
+  // the intelligence layer is: a table missing from this function is not a
+  // loud failure but a suite where every test sees the one before it. This one
+  // announced itself as a matched fill that reported 1,000 shares while the
+  // database held none of them — a *previous run's* `order_fills` row replayed
+  // through the idempotency check under the same request id.
+  await prisma.orderFill.deleteMany();
+  await prisma.order.deleteMany();
+  await prisma.matchedPosition.deleteMany();
+
   await prisma.trade.deleteMany();
   await prisma.position.deleteMany();
   await prisma.resolution.deleteMany();

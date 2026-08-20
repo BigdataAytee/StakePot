@@ -10,7 +10,17 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { Decimal } from '@stakeam/engine';
-import { IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { AnalyticsService } from '../analytics/analytics.service';
@@ -39,6 +49,14 @@ export class PlaceTradeDto {
    * feeds the thread. "The best forecasting education new users can get."
    */
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
+  /**
+   * The most this trader will pay per share, in kobo. Absent means "at the
+   * market price", which is what every trade did before the book existed.
+   *
+   * Buys only. A pot sell returns shares to the curve at whatever it is
+   * currently paying; there is no counterparty to name a price to.
+   */
+  @IsOptional() @IsInt() @Min(1) @Max(99) limitKobo?: number;
 }
 
 @Controller()
@@ -71,6 +89,7 @@ export class TradesController {
             userId: user.userId,
             amount: body.amount,
             requestId: body.requestId,
+            ...(body.limitKobo === undefined ? {} : { limitKobo: body.limitKobo }),
             ...(body.reason === undefined ? {} : { reason: body.reason }),
           }
         : {
@@ -87,14 +106,14 @@ export class TradesController {
     if (outcome.status === 'rejected') {
       throw new BadRequestException(outcome.reason ?? 'trade refused');
     }
-    if (outcome.status === 'queued' || outcome.trade === undefined) {
+    if (outcome.status === 'queued' || outcome.report === undefined) {
       // §11: "users see 'order placed' instantly (accepted into queue) and
       // confirmation when executed." The id is what the client polls with, and
       // `status` is what tells it this is not a fill — a client that reads only
       // the HTTP code sees 2xx and believes it is done.
       return { status: 'queued' as const, accepted: true, requestId: body.requestId };
     }
-    const trade = outcome.trade;
+    const report = outcome.report;
 
     // §3's analytics table. Best-effort by construction — `record` swallows its
     // own failures — because a dashboard is never a reason a trade fails.
@@ -124,14 +143,34 @@ export class TradesController {
     // deferred returned 202 from the branch above and its take was dropped on
     // the floor, silently, and precisely under the load that makes the queue
     // defer in the first place.
+    /*
+      Every leg, named.
+
+      The pot fields keep their old names and their old meanings so nothing
+      that already reads them has to change — but they are now nullable,
+      because a fully matched trade has no pot leg at all. `matched` and
+      `resting` are the new halves, and the client is expected to show all
+      three: what was matched pays an exact ₦1 a share, what came from the pot
+      pays an estimate, and what is resting has not happened yet.
+    */
     return {
       status: 'filled' as const,
-      id: trade.id,
-      side: trade.side,
-      shares: trade.shares.toString(),
-      cost: trade.cost.toString(),
-      fee: trade.fee.toString(),
-      priceAfter: trade.priceAfter.toString(),
+      ...(report.trade === null
+        ? { id: null, pot: null }
+        : {
+            id: report.trade.id,
+            side: report.trade.side,
+            shares: report.trade.shares.toString(),
+            cost: report.trade.cost.toString(),
+            fee: report.trade.fee.toString(),
+            priceAfter: report.trade.priceAfter.toString(),
+            pot: {
+              shares: report.trade.shares.toString(),
+              cost: report.trade.cost.toString(),
+            },
+          }),
+      matched: report.matched,
+      resting: report.resting,
     };
   }
 
@@ -142,13 +181,14 @@ export class TradesController {
     const outcome = await this.queue.outcomeOf(requestId);
     // Only the requester's own trades: a request id is client-generated, and
     // another account's ids are none of this one's business.
-    if (outcome.trade !== undefined && outcome.trade.userId !== request.user!.userId) {
+    if (outcome.trade != null && outcome.trade.userId !== request.user!.userId) {
       throw new BadRequestException('not your trade');
     }
     return {
       status: outcome.status,
       ...(outcome.reason === undefined ? {} : { reason: outcome.reason }),
-      ...(outcome.trade === undefined
+      ...(outcome.report === undefined ? {} : { report: outcome.report }),
+      ...(outcome.trade == null
         ? {}
         : {
             trade: {

@@ -9,6 +9,7 @@ import { PlatformConfigService } from '../platform-config/platform-config.servic
 import type { PrismaService } from '../prisma/prisma.service';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { RgService } from '../rg/rg.service';
+import { testOrderBook } from '../testing/order-book';
 import { resetDatabase } from '../testing/reset';
 import { TradeService } from '../trade/trade.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -59,6 +60,7 @@ describe.skipIf(!TEST_DATABASE_URL)('tier 0 access (integration)', () => {
       config,
       { publish: async () => undefined } as unknown as PriceCacheService,
       new RgService(prisma, config),
+      testOrderBook(prisma, ledger, wallet),
     );
   });
 
@@ -121,8 +123,8 @@ describe.skipIf(!TEST_DATABASE_URL)('tier 0 access (integration)', () => {
       requestId: `t0-official-${userId}`,
     });
 
-    expect(trade.cost.toString()).toBe('1000');
-    expect(new Decimal(trade.shares.toString()).gt(0)).toBe(true);
+    expect(trade.trade!.cost.toString()).toBe('1000');
+    expect(new Decimal(trade.trade!.shares.toString()).gt(0)).toBe(true);
   });
 
   it('stakes on a community market too — the shelf makes no difference', async () => {
@@ -137,7 +139,7 @@ describe.skipIf(!TEST_DATABASE_URL)('tier 0 access (integration)', () => {
       requestId: `t0-community-${userId}`,
     });
 
-    expect(trade.cost.toString()).toBe('1000');
+    expect(trade.trade!.cost.toString()).toBe('1000');
   });
 
   it('can get out again — entry without an exit would be the same trap', async () => {
@@ -156,13 +158,13 @@ describe.skipIf(!TEST_DATABASE_URL)('tier 0 access (integration)', () => {
       marketId: m.id,
       outcomeId: m.outcomes[0]!.id,
       userId,
-      shares: bought.shares.toString(),
+      shares: bought.trade!.shares.toString(),
       requestId: `t0-sell-${userId}`,
     });
 
     // Out at a loss, because §2.3's early-exit fee is withheld from the seller —
     // but out.
-    expect(new Decimal(sold.cost.toString()).abs().gt(0)).toBe(true);
+    expect(new Decimal(sold.trade!.cost.toString()).abs().gt(0)).toBe(true);
   });
 
   it('holds a position and sees the market like anybody else', async () => {

@@ -9,7 +9,15 @@ import { logger } from '../logger';
 import { PrismaService } from '../prisma/prisma.service';
 import { RgBlockedError } from '../rg/rg.service';
 import { InsufficientFundsError } from '../wallet/wallet.service';
-import { TradeError, TradeService, type BuyInput, type SellInput } from './trade.service';
+import {
+  TradeError,
+  TradeService,
+  type BuyInput,
+  type FillReport,
+  type SellInput,
+} from './trade.service';
+import { OrderBookError } from '../orderbook/orderbook.service';
+import { StakeCapError } from './stake-guards';
 import { EngineError } from '@stakeam/engine';
 
 /**
@@ -26,6 +34,8 @@ const isRefusal = (error: unknown): error is Error =>
   error instanceof TradeError ||
   error instanceof InsufficientFundsError ||
   error instanceof RgBlockedError ||
+  error instanceof OrderBookError ||
+  error instanceof StakeCapError ||
   error instanceof EngineError;
 
 /** One market's stream. All of its trades land here, in submission order. */
@@ -53,7 +63,16 @@ export type QueuedRequest = (({ kind: 'buy' } & BuyInput) | ({ kind: 'sell' } & 
 export interface QueueOutcome {
   readonly status: 'filled' | 'queued' | 'rejected';
   readonly requestId: string;
-  readonly trade?: Trade;
+  /**
+   * The pot leg, kept as its own field because a great deal already reads it.
+   *
+   * Null on a request that was entirely matched or entirely rested — which is
+   * a real outcome now, not an error, so a caller that treats a missing trade
+   * as a failure has to be corrected rather than accommodated.
+   */
+  readonly trade?: Trade | null;
+  /** Every leg: matched, pot, and whatever is now resting on the book. */
+  readonly report?: FillReport;
   readonly reason?: string;
 }
 
@@ -244,11 +263,11 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
 
   private async runInline(request: QueuedRequest): Promise<QueueOutcome> {
     try {
-      const trade =
+      const report =
         request.kind === 'buy' ? await this.trades.buy(request) : await this.trades.sell(request);
       await this.postReason(request);
-      await this.confirm(trade);
-      return { status: 'filled', requestId: request.requestId, trade };
+      await this.confirm(request, report);
+      return { status: 'filled', requestId: request.requestId, trade: report.trade, report };
     } catch (error) {
       if (isRefusal(error)) {
         return { status: 'rejected', requestId: request.requestId, reason: error.message };
@@ -333,13 +352,13 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      const trade =
+      const report =
         request.kind === 'buy' ? await this.trades.buy(request) : await this.trades.sell(request);
       // Before the announcement, not after: the announcement is what releases
       // the waiting caller, and a caller released ahead of its own take reloads
       // the market to find the thread without it.
       await this.postReason(request);
-      await this.confirm(trade);
+      await this.confirm(request, report);
       // Announce the fill so waiters never have to poll the database for it.
       await redis.set(filledKey(request.requestId), '1', 'EX', 300).catch(() => undefined);
     } catch (error) {
@@ -405,29 +424,58 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
    * Best-effort for the same reason the take is: a notification that fails must
    * never unwind a trade that has already settled.
    */
-  private async confirm(trade: {
-    id: string;
-    userId: string;
-    marketId: string;
-    outcomeId: string;
-    side: string;
-    shares: unknown;
-    cost: unknown;
-  }): Promise<void> {
+  /**
+   * Tell the trader what actually happened, leg by leg.
+   *
+   * One notification, however many legs — a person who pressed one button
+   * expects one answer. But the legs are named separately inside it, because
+   * "matched" and "from the pot" are different promises: the first pays an
+   * exact ₦1 a share out of money already escrowed by a named counterparty,
+   * and the second pays a share of a pot that is still filling. Rolling them
+   * into one number would be the most expensive simplification on the platform.
+   */
+  private async confirm(request: QueuedRequest, report: FillReport): Promise<void> {
     try {
       const outcome = await this.prisma.outcome.findUnique({
-        where: { id: trade.outcomeId },
+        where: { id: request.outcomeId },
         select: { label: true, priceCurrent: true },
       });
       if (outcome === null) return;
-      const shares = Number(String(trade.shares)).toFixed(2);
-      const kobo = Math.round(Number(String(outcome.priceCurrent)) * 100);
-      const verb = trade.side === 'buy' ? 'Bought' : 'Sold';
+
+      const label = outcome.label.toUpperCase();
+      const parts: string[] = [];
+
+      if (report.matched !== null) {
+        const shares = Number(report.matched.shares).toFixed(2);
+        parts.push(
+          `matched ${shares} ${label} — pays ₦${Number(report.matched.shares).toFixed(2)} exactly`,
+        );
+      }
+      if (report.trade !== null) {
+        const shares = Number(String(report.trade.shares)).toFixed(2);
+        const kobo = Math.round(Number(String(outcome.priceCurrent)) * 100);
+        const verb = report.trade.side === 'buy' ? 'bought' : 'sold';
+        parts.push(`${verb} ${shares} ${label} from the pot @ ${kobo}k`);
+      }
+      if (report.resting !== null) {
+        const shares = Number(report.resting.shares).toFixed(2);
+        parts.push(`${shares} resting at ${report.resting.priceKobo}k`);
+      }
+      if (parts.length === 0) return;
+
+      // Sentence case with the first letter lifted, rather than a template per
+      // combination: there are seven combinations of three legs and six of them
+      // would never be read by anybody.
+      const body = `${parts.join(' · ')}.`;
       await this.notifications.notify({
-        userId: trade.userId,
+        userId: request.userId,
         type: 'trade_confirmed',
-        body: `${verb} ${shares} shares ${outcome.label.toUpperCase()} @ ${kobo}k.`,
-        data: { marketId: trade.marketId, tradeId: trade.id },
+        body: body.charAt(0).toUpperCase() + body.slice(1),
+        data: {
+          marketId: request.marketId,
+          ...(report.trade === null ? {} : { tradeId: report.trade.id }),
+          ...(report.resting === null ? {} : { orderId: report.resting.orderId }),
+        },
       });
     } catch {
       // See above.

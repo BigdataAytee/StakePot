@@ -14,6 +14,7 @@ import { PlatformConfigService } from '../platform-config/platform-config.servic
 import type { PrismaService } from '../prisma/prisma.service';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { RgService } from '../rg/rg.service';
+import { testOrderBook } from '../testing/order-book';
 import { resetDatabase } from '../testing/reset';
 import { ThreadService } from '../community-layer/thread.service';
 import { TradeQueueService } from '../trade/trade-queue.service';
@@ -72,12 +73,14 @@ describe.skipIf(!TEST_DATABASE_URL)('market freeze (integration)', () => {
       config,
       { publish: async () => undefined } as unknown as PriceCacheService,
       new RgService(prisma, config),
+      testOrderBook(prisma, ledger, wallet),
     );
     freezes = new MarketFreezeService(
       prisma,
       new AdminAuditService(prisma),
       silentNotifications,
       config,
+      testOrderBook(prisma, ledger, wallet),
     );
     queue = new TradeQueueService(
       trades,
@@ -191,7 +194,7 @@ describe.skipIf(!TEST_DATABASE_URL)('market freeze (integration)', () => {
       amount: '5000',
       requestId: 'pre-freeze-buy',
     });
-    expect(opened.id).toBeTruthy();
+    expect(opened.trade!.id).toBeTruthy();
 
     await freezes.freeze({ marketId: market.id, reason: 'the event started' });
 

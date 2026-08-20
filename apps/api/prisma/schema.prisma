@@ -60,6 +60,13 @@ enum LedgerType {
   /// workflow (§2.10). Typed distinctly so "money a human moved by hand" is one
   /// query, not an inference.
   adjustment
+  /// Money locked behind a resting limit order, or behind the collateral of a
+  /// matched position. Distinct from `trade_buy` because it is not a purchase:
+  /// nothing has been bought until the order fills, and a wallet history that
+  /// called it a trade would show a position the trader does not hold.
+  order_lock
+  /// That lock released — a cancelled order, or one swept at freeze time.
+  order_release
 }
 
 enum FundClass {
@@ -336,6 +343,8 @@ model User {
   consents             Consent[]
   sessions             UserSession[]
   freezes              AccountFreeze[]
+  orders               Order[]
+  matchedPositions     MatchedPosition[]
 
   @@map("users")
 }
@@ -430,25 +439,27 @@ model Market {
   featuredAt         DateTime?
   createdAt          DateTime       @default(now())
 
-  creator         User?              @relation("MarketCreator", fields: [creatorId], references: [id])
-  resolvedOutcome Outcome?           @relation("ResolvedOutcome", fields: [resolvedOutcomeId], references: [id])
-  outcomes        Outcome[]          @relation("MarketOutcomes")
-  trades          Trade[]
-  positions       Position[]
-  ledgerEntries   LedgerEntry[]
-  syndicates      Syndicate[]
-  bonds           Bond[]
-  resolutions     Resolution[]
-  disputes        Dispute[]
-  outcomeLog      MarketOutcomeLog?
-  supportTickets  SupportTicket[]
-  autopsy         MarketAutopsy?
-  comments        Comment[]
-  challenges      Challenge[]
-  topCalls        TopCall[]
-  priceHistory    PriceHistory[]
-  annotations     MarketAnnotation[]
-  healthFlags     MarketHealthFlag[]
+  creator          User?              @relation("MarketCreator", fields: [creatorId], references: [id])
+  resolvedOutcome  Outcome?           @relation("ResolvedOutcome", fields: [resolvedOutcomeId], references: [id])
+  outcomes         Outcome[]          @relation("MarketOutcomes")
+  trades           Trade[]
+  positions        Position[]
+  ledgerEntries    LedgerEntry[]
+  syndicates       Syndicate[]
+  bonds            Bond[]
+  resolutions      Resolution[]
+  disputes         Dispute[]
+  outcomeLog       MarketOutcomeLog?
+  supportTickets   SupportTicket[]
+  autopsy          MarketAutopsy?
+  comments         Comment[]
+  challenges       Challenge[]
+  topCalls         TopCall[]
+  priceHistory     PriceHistory[]
+  annotations      MarketAnnotation[]
+  healthFlags      MarketHealthFlag[]
+  orders           Order[]
+  matchedPositions MatchedPosition[]
 
   @@index([shelf, state])
   @@index([state, eventDate])
@@ -485,13 +496,15 @@ model Outcome {
   /// The catch-all bucket on a multi-outcome ticket.
   isOther           Boolean @default(false)
 
-  market              Market         @relation("MarketOutcomes", fields: [marketId], references: [id], onDelete: Cascade)
-  wonBy               Market[]       @relation("ResolvedOutcome")
+  market              Market            @relation("MarketOutcomes", fields: [marketId], references: [id], onDelete: Cascade)
+  wonBy               Market[]          @relation("ResolvedOutcome")
   trades              Trade[]
   positions           Position[]
-  resolutionsProposed Resolution[]   @relation("ProposedOutcome")
-  resolutionsFinal    Resolution[]   @relation("FinalOutcome")
+  resolutionsProposed Resolution[]      @relation("ProposedOutcome")
+  resolutionsFinal    Resolution[]      @relation("FinalOutcome")
   priceHistory        PriceHistory[]
+  orders              Order[]
+  matchedPositions    MatchedPosition[]
 
   @@unique([marketId, ordinal])
   @@index([marketId])
@@ -678,11 +691,11 @@ model MarketDraft {
 }
 
 model MarketOutcomeLog {
-  marketId     String  @id
-  initialSplit Decimal @db.Decimal(38, 18)
-  finalSplit   Decimal @db.Decimal(38, 18)
-  volume       Decimal @db.Decimal(38, 18)
-  disputeCount Int     @default(0)
+  marketId      String   @id
+  initialSplit  Decimal  @db.Decimal(38, 18)
+  finalSplit    Decimal  @db.Decimal(38, 18)
+  volume        Decimal  @db.Decimal(38, 18)
+  disputeCount  Int      @default(0)
   /// Checklist rule numbers whose Part 5 monitoring flag fired while the market
   /// was live, copied here at settlement. Rule 43 says the post-mortem is "the
   /// data that trains the AI question engine": a market that ran 82/18 for a
@@ -1681,7 +1694,7 @@ model Source {
 
   /// Which cadence tier this source polls on. `auto` follows the markets it is
   /// attached to; the others pin it. See `packages/rules/src/sources.ts`.
-  cadence      SourceCadence @default(auto)
+  cadence       SourceCadence @default(auto)
   /// For sources that publish on a calendar — NBS monthly CPI, CBN daily rates
   /// — the window to poll hard around, as a cron-ish hint rather than a
   /// schedule the code obeys blindly. Null means poll on the tier.
@@ -1708,7 +1721,7 @@ model SourceItem {
 
   headline String
   /// Unique so the same story fetched twice through two routes lands once.
-  url      String @unique
+  url      String  @unique
   /// The feed's own id for the entry, where it gives one.
   ///
   /// Deduped on separately from the URL, because the two catch different
@@ -1840,9 +1853,9 @@ model MarketHealthFlag {
   /// long it has been true.
   message  String
 
-  firstFiredAt DateTime @default(now())
-  lastFiredAt  DateTime @default(now())
-  firings      Int      @default(1)
+  firstFiredAt DateTime  @default(now())
+  lastFiredAt  DateTime  @default(now())
+  firings      Int       @default(1)
   /// Set by the first sweep that finds the condition gone. Kept rather than
   /// deleted: "was lopsided for three days and recovered" is a post-mortem, and
   /// deleting the row would make it look like nothing ever happened.
@@ -1869,10 +1882,10 @@ model MarketHealthFlag {
 /// way from the sentence behind it is worth a second look, and neither half
 /// says so on its own.
 model CopilotRun {
-  id        String @id @default(cuid())
-  creatorId String
+  id           String @id @default(cuid())
+  creatorId    String
   /// The creator's own words. Their submission, not somebody else's data.
-  inputText String
+  inputText    String
   /// The template the model returned, before any editing the creator did.
   proposalJson Json
 
@@ -1887,4 +1900,148 @@ model CopilotRun {
 
   @@index([creatorId, createdAt])
   @@map("copilot_runs")
+}
+
+// ------------------------------------------------------ the order book (§2.3, hybrid layer)
+
+/// Which side of an outcome an order takes.
+///
+/// `buy` is the long side: it pays ₦1 per share if the outcome happens.
+/// `sell` is the short side: it pays ₦1 per share if the outcome does *not*.
+/// The two are counterparties to each other — a buy at 62 and a sell at 62
+/// together escrow exactly ₦1 per share, and exactly one of them is paid it.
+///
+/// Note this is not the same `sell` as `TradeSide.sell`. A pot sell returns
+/// shares to the pot for whatever the curve says they are worth now; a book
+/// sell opens a short position at a price the trader chose. They are different
+/// instruments and the enums are deliberately separate so no query can treat
+/// one as the other.
+enum OrderSide {
+  buy
+  sell
+}
+
+enum OrderState {
+  open
+  filled
+  cancelled
+}
+
+/// Which way a matched position pays.
+enum MatchSide {
+  /// Paid ₦1 per share if this outcome wins.
+  long
+  /// Paid ₦1 per share if this outcome loses.
+  short
+}
+
+/// A resting limit order.
+///
+/// Money is locked in escrow the moment it rests and stays locked until it
+/// fills or is cancelled — there is no state in which an order sits on the
+/// book backed by a balance the trader could have spent elsewhere. That is the
+/// whole reason `locked` is a column rather than a derivation: the amount that
+/// must be released on cancellation is the amount that was taken, recorded,
+/// not recomputed from a price that may since have moved.
+model Order {
+  id        String    @id @default(cuid())
+  marketId  String
+  outcomeId String
+  userId    String
+  side      OrderSide
+
+  /// The long side's price in kobo, 1–99. A `sell` at 62 is a willingness to
+  /// take the short side while the long side trades at 62 or better — one
+  /// number for both sides of the book, because they are one price.
+  priceKobo Int
+
+  /// Shares requested, and how many of them have filled. A share pays ₦1.
+  shares Decimal @db.Decimal(60, 30)
+  filled Decimal @default(0) @db.Decimal(60, 30)
+
+  /// Escrow still held against the unfilled remainder.
+  locked Decimal @default(0) @db.Decimal(38, 18)
+
+  state       OrderState @default(open)
+  /// The taker request that created this order — idempotency, as trades have.
+  requestId   String     @unique
+  createdAt   DateTime   @default(now())
+  cancelledAt DateTime?
+
+  market  Market  @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  outcome Outcome @relation(fields: [outcomeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The book's read pattern: one side of one outcome, best price first, then
+  /// oldest first. Price-time priority is an index, not a sort in Node.
+  @@index([marketId, outcomeId, side, state, priceKobo, createdAt])
+  @@index([userId, state])
+  @@map("orders")
+}
+
+/// One match between a taker and a resting maker.
+///
+/// Kept as its own row rather than inferred from the order pair because a
+/// single incoming request can sweep several price levels, and "what did I
+/// actually pay" is then a list, not a number. It is also the audit trail: a
+/// matched fill moves money between two named users, and that has to be
+/// readable without replaying the book.
+model OrderFill {
+  id           String    @id @default(cuid())
+  marketId     String
+  outcomeId    String
+  /// The taker's idempotency key. Every fill from one request shares it.
+  requestId    String
+  makerOrderId String
+  takerUserId  String
+  makerUserId  String
+  /// Which side the taker took; the maker took the other.
+  takerSide    OrderSide
+  priceKobo    Int
+  shares       Decimal   @db.Decimal(60, 30)
+  createdAt    DateTime  @default(now())
+
+  @@index([marketId, createdAt])
+  @@index([requestId])
+  @@map("order_fills")
+}
+
+/// A position held against a matched counterparty rather than against the pot.
+///
+/// Deliberately not a column on `positions`. The pot's resolution reads
+/// `positions` to divide the pot among winning shares, and a matched share
+/// must never appear in that division — it is paid ₦1 from the collateral its
+/// own counterparty posted, and letting it into the pot's query would have the
+/// pot fund it. A separate table makes that mistake unrepresentable rather
+/// than merely discouraged.
+///
+/// The invariant, per (market, outcome):
+///
+///     Σ escrowed(long) + Σ escrowed(short) == ₦1 × Σ shares(long)
+///     Σ shares(long) == Σ shares(short)
+///
+/// Both hold by construction: every pair is minted together at a price that
+/// splits ₦1 between the two sides, and nothing else writes this table.
+model MatchedPosition {
+  id        String    @id @default(cuid())
+  userId    String
+  marketId  String
+  outcomeId String
+  side      MatchSide
+  shares    Decimal   @db.Decimal(60, 30)
+  /// This holder's contribution to the ₦1-per-share collateral behind those
+  /// shares. Their entry price, in other words — but stored as the total
+  /// rather than a rate, because the total is what has to leave escrow.
+  escrowed  Decimal   @db.Decimal(38, 18)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  market  Market  @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  outcome Outcome @relation(fields: [outcomeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, marketId, outcomeId, side])
+  @@index([marketId, outcomeId])
+  @@map("matched_positions")
 }

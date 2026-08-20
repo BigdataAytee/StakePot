@@ -9,6 +9,7 @@ import { PlatformConfigService } from '../platform-config/platform-config.servic
 import type { PrismaService } from '../prisma/prisma.service';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { RgService } from '../rg/rg.service';
+import { testOrderBook } from '../testing/order-book';
 import { resetDatabase } from '../testing/reset';
 import { TradeService } from '../trade/trade.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -60,6 +61,7 @@ describe.skipIf(!TEST_DATABASE_URL)('community layer (integration)', () => {
       config,
       { publish: async () => undefined } as unknown as PriceCacheService,
       new RgService(prisma, config),
+      testOrderBook(prisma, ledger, wallet),
     );
     threads = new ThreadService(prisma, config);
     challenges = new ChallengeService(prisma);
@@ -158,7 +160,7 @@ describe.skipIf(!TEST_DATABASE_URL)('community layer (integration)', () => {
       marketId: m.id,
       outcomeId: m.outcomes[0]!.id,
       userId,
-      shares: bought.shares.toString(),
+      shares: bought.trade!.shares.toString(),
       requestId: `sell-${userId}`,
     });
 

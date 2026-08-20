@@ -11,6 +11,7 @@ import type { PrismaService } from '../prisma/prisma.service';
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { WalletService } from '../wallet/wallet.service';
 import { RgService } from '../rg/rg.service';
+import { testOrderBook } from '../testing/order-book';
 import { resetDatabase } from '../testing/reset';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { ResolutionService } from './resolution.service';
@@ -66,6 +67,7 @@ describe.skipIf(!TEST_DATABASE_URL)('binary official market, end to end', () => 
       config,
       priceFeed,
       new RgService(prisma, config),
+      testOrderBook(prisma, ledger, wallet),
     );
     resolution = new ResolutionService(prisma, ledger, config);
     reconciliation = new ReconciliationService(prisma, config);
@@ -152,7 +154,7 @@ describe.skipIf(!TEST_DATABASE_URL)('binary official market, end to end', () => 
     const move = new Decimal(updated.outcomes[0]!.priceCurrent.toString()).minus('0.5');
     expect(move.gt('0.009') && move.lt('0.011')).toBe(true);
 
-    expect(new Decimal(trade.shares.toString()).gt(0)).toBe(true);
+    expect(new Decimal(trade.trade!.shares.toString()).gt(0)).toBe(true);
     const price = await prisma.priceHistory.count({ where: { marketId: market.id } });
     expect(price).toBe(2); // one snapshot per outcome
   });
@@ -177,7 +179,7 @@ describe.skipIf(!TEST_DATABASE_URL)('binary official market, end to end', () => 
       requestId: 'req-idem-1',
     });
 
-    expect(second.id).toBe(first.id);
+    expect(second.trade!.id).toBe(first.trade!.id);
     expect(await prisma.trade.count({ where: { marketId: market.id } })).toBe(1);
     const updated = await prisma.market.findUniqueOrThrow({ where: { id: market.id } });
     expect(new Decimal(updated.potTotal.toString()).eq(1000)).toBe(true);
@@ -223,12 +225,12 @@ describe.skipIf(!TEST_DATABASE_URL)('binary official market, end to end', () => 
       marketId: market.id,
       outcomeId: yes.id,
       userId,
-      shares: bought.shares.toString(),
+      shares: bought.trade!.shares.toString(),
       requestId: 'req-sell-exit',
     });
 
     // A lone round trip returns the stake exactly, so the fee is the whole cost.
-    expect(new Decimal(sold.fee.toString()).minus(20).abs().lt('1e-6')).toBe(true);
+    expect(new Decimal(sold.trade!.fee.toString()).minus(20).abs().lt('1e-6')).toBe(true);
 
     const afterExit = await wallet.balanceOf(userId);
     expect(afterExit.escrowed.abs().lt('1e-9')).toBe(true);
@@ -403,7 +405,7 @@ describe.skipIf(!TEST_DATABASE_URL)('binary official market, end to end', () => 
     expect(result.losingPool.eq(600)).toBe(true);
     const paid = result.payouts.reduce((acc, p) => acc.plus(p.payout), new Decimal(0));
     expect(paid.plus(result.fee).minus(1600).abs().lt('1e-9')).toBe(true);
-    expect(new Decimal(onYes.shares.toString()).gt(0)).toBe(true);
+    expect(new Decimal(onYes.trade!.shares.toString()).gt(0)).toBe(true);
 
     const after = await wallet.balanceOf(hedger);
     expect(after.escrowed.abs().lt('1e-9')).toBe(true);

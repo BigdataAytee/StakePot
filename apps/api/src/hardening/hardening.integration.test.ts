@@ -18,6 +18,7 @@ import type { PrismaService } from '../prisma/prisma.service';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { RgService } from '../rg/rg.service';
 import { StatusService } from '../status/status.service';
+import { testOrderBook } from '../testing/order-book';
 import { resetDatabase } from '../testing/reset';
 import { TradeQueueService } from '../trade/trade-queue.service';
 import { TradeService } from '../trade/trade.service';
@@ -72,6 +73,7 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
       config,
       { publish: async () => undefined } as unknown as PriceCacheService,
       new RgService(prisma, config),
+      testOrderBook(prisma, ledger, wallet),
     );
     queue = new TradeQueueService(
       trades,
@@ -365,7 +367,7 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
         marketId: m.id,
         outcomeId: m.outcomes[0]!.id,
         userId: washer,
-        shares: bought.shares.toString(),
+        shares: bought.trade!.shares.toString(),
         requestId: `wash-sell-${cycle}-${washer}`,
       });
     }
@@ -394,7 +396,7 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
         marketId: m.id,
         outcomeId: m.outcomes[0]!.id,
         userId: washer,
-        shares: bought.shares.toString(),
+        shares: bought.trade!.shares.toString(),
         requestId: `rewash-sell-${cycle}-${washer}`,
       });
     }
@@ -426,7 +428,7 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
         marketId: m.id,
         outcomeId: m.outcomes[0]!.id,
         userId: washer,
-        shares: bought.shares.toString(),
+        shares: bought.trade!.shares.toString(),
         requestId: `clr-sell-${cycle}-${washer}`,
       });
     }
@@ -532,7 +534,7 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
       marketId: m.id,
       outcomeId: m.outcomes[1]!.id,
       userId: bob,
-      shares: new Decimal(bought.shares.toString()).div(2).toString(),
+      shares: new Decimal(bought.trade!.shares.toString()).div(2).toString(),
       requestId: `aud-c-${bob}`,
     });
 

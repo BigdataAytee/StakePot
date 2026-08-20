@@ -23,6 +23,7 @@ import type { PrismaService } from '../prisma/prisma.service';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { StatusService } from '../status/status.service';
 import { SupportService } from '../support/support.service';
+import { testOrderBook } from '../testing/order-book';
 import { resetDatabase } from '../testing/reset';
 import { TradeService } from '../trade/trade.service';
 import { WalletService } from '../wallet/wallet.service';
@@ -130,6 +131,7 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
       config,
       { publish: async () => undefined } as unknown as PriceCacheService,
       rg,
+      testOrderBook(prisma, ledger, wallet),
     );
   });
 

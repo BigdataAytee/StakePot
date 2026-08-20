@@ -6,6 +6,7 @@ import { logger } from '../logger';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { OrderBookService } from '../orderbook/orderbook.service';
 
 export class FreezeError extends Error {
   constructor(message: string) {
@@ -45,6 +46,7 @@ export class MarketFreezeService {
     private readonly audit: AdminAuditService,
     private readonly notifications: NotificationsService,
     private readonly config: PlatformConfigService,
+    private readonly book: OrderBookService,
   ) {}
 
   /** The freeze time a market opening now should carry. */
@@ -105,7 +107,7 @@ export class MarketFreezeService {
     reason: string;
     actor?: { userId: string; ip: string };
     now?: Date;
-  }): Promise<{ froze: boolean; state: string }> {
+  }): Promise<{ froze: boolean; state: string; cancelledOrders?: number }> {
     const now = params.now ?? new Date();
     const reason = params.reason.trim();
     if (reason.length < 3) throw new FreezeError('a freeze needs a reason');
@@ -120,7 +122,7 @@ export class MarketFreezeService {
       if (market === null) throw new FreezeError('no such market');
 
       if (market.frozenAt !== null || !TRADABLE.includes(market.state as never)) {
-        return { froze: false, state: market.state };
+        return { froze: false, state: market.state, cancelledOrders: 0 };
       }
 
       await tx.market.update({
@@ -138,7 +140,20 @@ export class MarketFreezeService {
           ts: now,
         },
       });
-      return { froze: true, state: 'frozen' };
+
+      /*
+        Every resting order, cancelled and refunded, in the same transaction as
+        the freeze.
+
+        An order resting into a frozen market is money locked against a trade
+        that can never happen. Leaving it there until settlement would be the
+        platform holding somebody's balance for no reason at all, which is
+        precisely the behaviour §2.7 says this product does not have. Doing it
+        here rather than in a follow-up job is what makes it true at the instant
+        the market closes rather than whenever a sweep next runs.
+      */
+      const cancelled = await this.book.cancelAllFor(tx, market.id, `freeze:${market.id}`);
+      return { froze: true, state: 'frozen', cancelledOrders: cancelled };
     });
 
     if (!outcome.froze) return outcome;

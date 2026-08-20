@@ -14,6 +14,7 @@ import { PlatformConfigService } from '../platform-config/platform-config.servic
 import type { PrismaService } from '../prisma/prisma.service';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { RgService } from '../rg/rg.service';
+import { testOrderBook } from '../testing/order-book';
 import { resetDatabase } from '../testing/reset';
 import { ResolutionService } from '../trade/resolution.service';
 import { TradeService } from '../trade/trade.service';
@@ -104,6 +105,7 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
       config,
       { publish: async () => undefined } as unknown as PriceCacheService,
       new RgService(prisma, config),
+      testOrderBook(prisma, ledger, wallet),
     );
     resolution = new ResolutionService(prisma, ledger, config);
   });
