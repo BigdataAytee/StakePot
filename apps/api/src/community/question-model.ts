@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import type { SlotBriefing } from '../intel/briefing.service';
 import { CATALOGUE_SLOT_NAMES, type CatalogueSlot } from './draft-ranking';
 import type { MarketTemplate } from './market-template';
 
@@ -110,6 +111,17 @@ export interface GenerationRequest {
   readonly exemplars?: readonly { question: string; finalSplit: number; volume: string }[];
   /** Past markets that ran lopsided — retune the threshold, do not repeat it. */
   readonly retune?: readonly { question: string; finalSplit: number }[];
+  /**
+   * What the research pipeline has read about this slot lately: clustered
+   * stories, the figures pulled out of them, and any place two sources
+   * published different numbers for the same thing.
+   *
+   * Optional because a deployment with no sources configured still drafts —
+   * from the brief and the loop alone, exactly as before. An empty briefing is
+   * not an error and must not be presented to the model as evidence of
+   * quiet; `itemsRead: 0` is the honest thing to say.
+   */
+  readonly evidence?: SlotBriefing;
   readonly now: Date;
 }
 

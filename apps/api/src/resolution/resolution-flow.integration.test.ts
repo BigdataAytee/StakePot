@@ -13,6 +13,7 @@ import { generateSync } from 'otplib';
 import { CommunityService } from '../community/community.service';
 import { SeedService } from '../community/seed.service';
 import { MarketVoidService } from '../community/void.service';
+import { BriefingService } from '../intel/briefing.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { MarketHealthService } from '../market/health.service';
 import { EmailSender } from '../notifications/email.sender';
@@ -124,7 +125,13 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       notifications,
       // No API key in tests: the engine's model seam is null, and the parts that
       // matter here — §2.9's outcome log — do not need one.
-      new QuestionEngineService(prisma, config, new MarketHealthService(prisma), null),
+      new QuestionEngineService(
+        prisma,
+        config,
+        new MarketHealthService(prisma),
+        new BriefingService(prisma),
+        null,
+      ),
       autopsies,
       new ThreadService(prisma, config),
       analytics,

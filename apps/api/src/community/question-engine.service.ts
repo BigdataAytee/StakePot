@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { MarketDraft } from '@prisma/client';
 
 import { logger } from '../logger';
+import { BriefingService, type SlotBriefing } from '../intel/briefing.service';
 import { MarketHealthService } from '../market/health.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -82,6 +83,7 @@ export class QuestionEngineService {
     private readonly prisma: PrismaService,
     private readonly config: PlatformConfigService,
     private readonly health: MarketHealthService,
+    private readonly briefings: BriefingService,
     @Inject(QUESTION_MODEL) model: QuestionModel | null,
   ) {
     this.model = model;
@@ -189,6 +191,16 @@ export class QuestionEngineService {
     const [exemplars, retune] = await Promise.all([this.exemplars(), this.lopsided()]);
 
     for (const slot of slots) {
+      // What the pipeline has actually read about this slot in the last
+      // fortnight. The same object goes into the prompt and onto the draft, so
+      // the evidence panel a reviewer reads is the evidence the model saw —
+      // rebuilding it at review time would show today's news beside a question
+      // written from last week's, which reads as a citation and is not one.
+      const evidence = await this.briefings.forSlot({
+        brief: CATALOGUE_SLOTS[slot].brief,
+        now,
+      });
+
       let proposal: Proposal;
       try {
         proposal = await model.propose({
@@ -197,6 +209,7 @@ export class QuestionEngineService {
           avoid,
           exemplars,
           retune,
+          evidence,
           now,
         });
       } catch (error) {
@@ -207,7 +220,7 @@ export class QuestionEngineService {
         continue;
       }
 
-      results.push(await this.fileProposal({ proposal, slot, live, now }));
+      results.push(await this.fileProposal({ proposal, slot, live, now, evidence }));
       avoid.push(proposal.question);
     }
 
@@ -227,6 +240,7 @@ export class QuestionEngineService {
     slot: CatalogueSlot;
     live: readonly { id: string; question: string }[];
     now: Date;
+    evidence?: SlotBriefing;
   }): Promise<GeneratedDraft> {
     const { proposal, slot, live, now } = input;
     const template = templateOf(proposal);
@@ -297,6 +311,14 @@ export class QuestionEngineService {
           selfRejected: proposal.rejected,
           duplicateOf: duplicate?.id ?? null,
         } as Prisma.InputJsonValue,
+        // Written even on a refused draft. A draft the engine threw away is the
+        // cheapest signal there is about what the shelf is short of, and the
+        // reading behind it is what tells a reviewer whether the refusal was
+        // right — "nothing published about this in a fortnight" and "four
+        // sources disagree about the number" are very different refusals.
+        ...(input.evidence === undefined
+          ? {}
+          : { evidenceJson: JSON.parse(JSON.stringify(input.evidence)) as Prisma.InputJsonValue }),
         state,
       },
     });
@@ -534,6 +556,7 @@ export class QuestionEngineService {
       creatorId: flags.creatorId ?? null,
       firstMarket: flags.firstMarket ?? false,
       createdAt: draft.createdAt.toISOString(),
+      evidence: (draft.evidenceJson as SlotBriefing | null) ?? null,
       template,
     };
   }

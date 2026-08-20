@@ -641,6 +641,18 @@ model MarketDraft {
   balanceEstimate Decimal     @db.Decimal(38, 18)
   engagementScore Decimal     @db.Decimal(38, 18)
   blocklistFlags  Json
+  /// What the research pipeline had read about this slot when the draft was
+  /// made: the clustered stories, the figures pulled out of them, and any
+  /// place two sources published different numbers for the same thing.
+  ///
+  /// Stored on the draft rather than recomputed when the Studio opens it, and
+  /// the distinction is the point. A panel rebuilt at review time would show
+  /// today's news beside a question written from last week's — which reads as
+  /// a citation and is not one. This is the reading the engine actually did.
+  ///
+  /// Null on drafts made before the pipeline existed, and on community
+  /// submissions, which are somebody's own idea rather than a briefing.
+  evidenceJson    Json?
   state           DraftState  @default(suggested)
   reviewedBy      String?
   createdAt       DateTime    @default(now())

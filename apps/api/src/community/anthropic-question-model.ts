@@ -155,6 +155,7 @@ export class AnthropicQuestionModel implements QuestionModel {
                       })`,
                   )
                   .join('\n')}`,
+            briefing(request),
           ]
             .filter((line) => line.length > 0)
             .join('\n\n'),
@@ -189,6 +190,77 @@ export class AnthropicQuestionModel implements QuestionModel {
     }
     return response.parsed_output;
   }
+}
+
+/**
+ * What the research pipeline read about this slot, as the model sees it.
+ *
+ * Three sections, because they license three different things. The stories are
+ * what a question can be *about* — checklist rule 12 wants expected news flow,
+ * and a slot with nine outlets on one story has it. The figures are what a
+ * threshold can be set *against*, so the model can pitch at the number rather
+ * than guess at it. The disagreements are the warning: where two sources
+ * published different numbers, the settlement criteria have to name which one
+ * settles, and a question drafted without noticing is a dispute waiting.
+ *
+ * Silence is stated rather than omitted. A prompt that simply leaves the
+ * section out when nothing was read invites the model to fill the gap from
+ * memory — which is exactly the failure this whole layer exists to prevent.
+ */
+function briefing(request: GenerationRequest): string {
+  const evidence = request.evidence;
+  if (evidence === undefined) return '';
+
+  if (evidence.itemsRead === 0) {
+    return [
+      `RESEARCH: nothing relevant has been published about this slot in the last ${evidence.windowDays} days that our sources carry.`,
+      'Do not invent recent developments. Draft from a scheduled event with a known date, or state in `rejectionReason` that there is nothing to hang a question on.',
+    ].join(' ');
+  }
+
+  const lines = [
+    `RESEARCH — what our sources have actually published in the last ${evidence.windowDays} days (${evidence.itemsRead} items read).`,
+    'Ground the question in this. Do not cite anything that is not here.',
+  ];
+
+  if (evidence.stories.length > 0) {
+    lines.push(
+      `Stories:\n${evidence.stories
+        .map(
+          (story) =>
+            `- ${story.headline} (${story.sourceName}, ${story.publishedAt.slice(0, 10)}${
+              story.sourceCount > 1 ? `, carried by ${story.sourceCount} outlets` : ''
+            })`,
+        )
+        .join('\n')}`,
+    );
+  }
+
+  if (evidence.figures.length > 0) {
+    lines.push(
+      `Figures published:\n${evidence.figures
+        .map(
+          (figure) =>
+            `- ${figure.key}: ${figure.value} (${figure.sourceName}, ${figure.publishedAt.slice(0, 10)})`,
+        )
+        .join('\n')}`,
+    );
+  }
+
+  if (evidence.conflicts.length > 0) {
+    lines.push(
+      `Sources DISAGREE on these. If your question turns on one of them, the criteria must name which source settles it:\n${evidence.conflicts
+        .map(
+          (conflict) =>
+            `- ${conflict.factKey}: ${conflict.claims
+              .map((claim) => `${claim.sourceName} says ${String(claim.value)}`)
+              .join('; ')}`,
+        )
+        .join('\n')}`,
+    );
+  }
+
+  return lines.join('\n\n');
 }
 
 function describe(template: MarketTemplate): string {

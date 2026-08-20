@@ -165,6 +165,15 @@ export interface DraftRow {
   creatorId: string | null;
   firstMarket: boolean;
   createdAt: string;
+  /**
+   * What the research pipeline had read when the draft was made.
+   *
+   * Null on community submissions and on anything drafted before the pipeline
+   * existed — which the panel says out loud rather than rendering as an empty
+   * evidence list, because "nobody looked" and "nothing was published" are
+   * different things and only one of them is a reason to distrust the draft.
+   */
+  evidence: DraftEvidence | null;
   template: {
     question: string;
     outcomes: { label: string; criteria: string }[];
@@ -236,6 +245,35 @@ export interface StudioMarketRow {
  */
 export interface StandingFlag extends HealthFlag {
   since: string | null;
+}
+
+/** The reading behind an AI draft, as the Studio's evidence panel shows it. */
+export interface DraftEvidence {
+  brief: string;
+  windowDays: number;
+  itemsRead: number;
+  stories: {
+    headline: string;
+    url: string;
+    sourceName: string;
+    tier: 'resolution' | 'news';
+    publishedAt: string;
+    sourceCount: number;
+    relevance: number;
+  }[];
+  figures: {
+    key: string;
+    value: string;
+    sourceName: string;
+    tier: 'resolution' | 'news';
+    publishedAt: string;
+    url: string;
+  }[];
+  conflicts: {
+    factKey: string;
+    claims: { sourceName: string; tier: string; value: string | number }[];
+  }[];
+  builtAt: string;
 }
 
 /**

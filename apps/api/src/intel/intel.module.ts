@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { AuditModule } from '../audit/audit.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { AnthropicAnalyst } from './anthropic-analyst';
+import { BriefingService } from './briefing.service';
 import { DossierService } from './dossier.service';
 import { DisabledFetcher, SOURCE_FETCHER } from './fetcher';
 import { RESOLUTION_ANALYST } from './resolution-analyst';
@@ -24,12 +25,13 @@ import { SourceRegistryService } from './source-registry.service';
 @Module({
   imports: [PrismaModule, AuditModule],
   providers: [
+    BriefingService,
     SourceRegistryService,
     ResearchService,
     DossierService,
     { provide: SOURCE_FETCHER, useClass: DisabledFetcher },
     { provide: RESOLUTION_ANALYST, useFactory: () => AnthropicAnalyst.create() },
   ],
-  exports: [SourceRegistryService, ResearchService, DossierService],
+  exports: [BriefingService, SourceRegistryService, ResearchService, DossierService],
 })
 export class IntelModule {}

@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AdminAuditService } from '../audit/admin-audit.service';
+import { BriefingService } from '../intel/briefing.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { MarketHealthService } from '../market/health.service';
 import { OfficialMarketService } from '../market/official-market.service';
@@ -148,7 +149,13 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
   });
 
   const engineWith = (model: QuestionModel | null) =>
-    new QuestionEngineService(prisma, config, new MarketHealthService(prisma), model);
+    new QuestionEngineService(
+      prisma,
+      config,
+      new MarketHealthService(prisma),
+      new BriefingService(prisma),
+      model,
+    );
 
   it('files a good proposal as a scored suggestion', async () => {
     const engine = engineWith(new StubModel([goodProposal()]));
@@ -447,6 +454,66 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
 
       const retune = await engine.lopsided();
       expect(retune.map((row) => row.question)).toEqual(['Obvious question?']);
+    });
+
+    it('drafts from what was published, and files the same reading with the draft', async () => {
+      const cbn = await prisma.source.create({
+        data: {
+          tier: 'resolution',
+          kind: 'rss',
+          name: 'CBN',
+          homeUrl: 'https://www.cbn.gov.ng/',
+          trust: '1',
+        },
+      });
+      const desk = await prisma.source.create({
+        data: {
+          tier: 'signal',
+          kind: 'rss',
+          name: 'Internal desk',
+          homeUrl: 'https://desk.example',
+          trust: '0.4',
+        },
+      });
+      await prisma.sourceItem.create({
+        data: {
+          sourceId: cbn.id,
+          headline: 'CBN holds interest rates as inflation eases to 23.4%',
+          url: 'https://www.cbn.gov.ng/news/mpr-hold',
+          publishedAt: new Date(Date.now() - 2 * 86_400_000),
+          factsJson: { inflation_rate: '23.4%' },
+        },
+      });
+      await prisma.sourceItem.create({
+        data: {
+          sourceId: desk.id,
+          headline: 'CBN interest rates decision leaked to our desk',
+          url: 'https://desk.example/leak',
+          publishedAt: new Date(Date.now() - 1 * 86_400_000),
+          factsJson: {},
+        },
+      });
+
+      const model = new StubModel([goodProposal()]);
+      const drafted = await engineWith(model).generate({ slots: ['economic_banker'] });
+
+      // What the model was given...
+      const shown = model.requests[0]?.evidence;
+      expect(shown?.stories.map((story) => story.headline)).toEqual([
+        'CBN holds interest rates as inflation eases to 23.4%',
+      ]);
+      expect(shown?.figures.map((figure) => figure.key)).toEqual(['inflation_rate']);
+      // Tier 3 is staff-only, and this surface is staff-only — which is exactly
+      // the reasoning that leaks a source list, so the gate holds here too.
+      expect(JSON.stringify(shown)).not.toContain('Internal desk');
+
+      // ...is what the reviewer sees. Not a fresh briefing built at review
+      // time: that would put today's news beside a question written from last
+      // week's, which reads as a citation and is not one.
+      const row = await prisma.marketDraft.findUniqueOrThrow({
+        where: { id: drafted[0]?.draftId ?? '' },
+      });
+      expect(row.evidenceJson).toEqual(JSON.parse(JSON.stringify(shown)));
     });
 
     it('will not hold up a flagged market as an example to copy (rule 43)', async () => {
