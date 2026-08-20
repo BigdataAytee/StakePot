@@ -13,6 +13,7 @@ import { HardeningModule } from './hardening/hardening.module';
 import { HealthController, RootController } from './health/health.controller';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
 import { LedgerModule } from './ledger/ledger.module';
+import { IntelModule } from './intel/intel.module';
 import { MarketModule } from './market/market.module';
 import { MetricsController } from './observability/metrics.controller';
 import { PlatformConfigModule } from './platform-config/platform-config.module';
@@ -56,6 +57,7 @@ import { WalletModule } from './wallet/wallet.module';
     CommunityLayerModule,
     CreatorModule,
     HardeningModule,
+    IntelModule,
     MarketModule,
     RealtimeModule,
     HttpModule,
