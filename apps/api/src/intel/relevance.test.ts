@@ -46,6 +46,40 @@ describe('relevance', () => {
     expect(score).toBeLessThan(RELEVANCE_FLOOR);
   });
 
+  it('ranks a story sharing several terms above one sharing a single acronym', () => {
+    // The ordering an earlier scorer got backwards. Dividing by the item's own
+    // length rewards short headlines: "CBN announces new cash withdrawal
+    // limits" shares one term with this market and outscored a story that
+    // shared three, because one out of five beats three out of seven.
+    const direct = relevanceOf(
+      {
+        headline: 'Naira closes at ₦1,498/$ on the official window, traders say',
+        sourceName: 'A paper',
+      },
+      nairaMarket,
+    );
+    const glancing = relevanceOf(
+      { headline: 'CBN announces new cash withdrawal limits', sourceName: 'A paper' },
+      nairaMarket,
+    );
+    expect(direct).toBeGreaterThan(glancing);
+  });
+
+  it('finds an acronym in a sentence that starts with a determiner', () => {
+    // The entity regex is greedy, so a criteria line beginning "The CBN
+    // official window…" yields the phrase "The CBN" — which never matched a
+    // headline's bare "CBN". Every entity comparison against a sentence
+    // starting with a determiner scored zero, silently.
+    const score = relevanceOf(
+      {
+        headline: 'CBN resumes dollar sales to bureaux de change operators',
+        sourceName: 'A paper',
+      },
+      nairaMarket,
+    );
+    expect(score).toBeGreaterThan(RELEVANCE_FLOOR);
+  });
+
   it('ranks the market’s own named source above a newspaper saying the same thing', () => {
     const headline = 'Official window closes at ₦1,532/$';
     const fromCbn = relevanceOf({ headline, sourceName: 'CBN' }, nairaMarket);

@@ -72,10 +72,22 @@ export function terms(text: string): Set<string> {
 export function entitiesOf(text: string): Set<string> {
   const found = new Set<string>();
 
-  // Runs of capitalised words, and acronyms.
+  // Runs of capitalised words, and acronyms — plus each word on its own.
+  //
+  // The individual words are what makes this work at all. The regex is greedy,
+  // so a criteria line beginning "The CBN official window closing rate…"
+  // yields the phrase "The CBN", which never matches a headline's bare "CBN".
+  // Every entity comparison against a sentence starting with a determiner was
+  // silently scoring zero: a wire story about the CBN resuming dollar sales
+  // failed to reach the naira market it was plainly about.
   for (const match of text.matchAll(/\b([A-Z][A-Za-z]{1,}(?:\s+[A-Z][A-Za-z]+)*)\b/g)) {
     const phrase = (match[1] ?? '').trim();
-    if (phrase.length > 1 && !STOPWORDS.has(phrase.toLowerCase())) found.add(phrase.toLowerCase());
+    if (phrase.length < 2) continue;
+
+    if (!STOPWORDS.has(phrase.toLowerCase())) found.add(phrase.toLowerCase());
+    for (const word of phrase.split(/\s+/)) {
+      if (word.length > 1 && !STOPWORDS.has(word.toLowerCase())) found.add(word.toLowerCase());
+    }
   }
   // Figures with a unit or currency, which is what a threshold market turns on.
   for (const match of text.matchAll(/(₦|\$)?\s?\d[\d,]*\.?\d*\s?(%|bn|m|k)?/gi)) {
@@ -107,35 +119,42 @@ export function relevanceOf(
 ): number {
   const subject = `${market.question} ${market.criteria.join(' ')}`;
 
-  const sharedTerms = containment(terms(item.headline), terms(subject));
-  const sharedEntities = containment(entitiesOf(item.headline), entitiesOf(subject));
+  const sharedTerms = evidence(terms(item.headline), terms(subject), 4);
+  const sharedEntities = evidence(entitiesOf(item.headline), entitiesOf(subject), 2);
   const fromNamedSource =
     item.sourceName.trim().toLowerCase() === market.sourceName.trim().toLowerCase();
 
-  const score = 0.35 * sharedTerms + 0.5 * sharedEntities + (fromNamedSource ? 0.15 : 0);
+  const score = 0.55 * sharedTerms + 0.3 * sharedEntities + (fromNamedSource ? 0.15 : 0);
   return Math.min(1, Number(score.toFixed(4)));
 }
 
 /**
- * How much of the *item* the market accounts for, in [0, 1].
+ * How much evidence there is that the item is about the market, in [0, 1].
  *
- * Containment rather than Jaccard, and the difference is the whole scoring
- * function. Jaccard divides by the union, so a ten-word headline compared
- * against a market's question plus both settlement criteria — forty terms —
- * scores near zero however perfectly it matches, because the denominator is
- * dominated by text the headline was never going to contain. The first version
- * did that and scored "Naira closes at ₦1,532/$ on the CBN official window"
- * at 0.10 against the naira market, below its own relevance floor.
+ * Absolute count against a target, not a fraction — and the difference is the
+ * whole scoring function. Two earlier versions got this wrong in opposite
+ * directions and both were caught by printing scores across seven headlines
+ * rather than by reasoning about them:
  *
- * The question being asked is "is this item about this market", not "are these
- * two texts the same". So: what fraction of the item's terms the market
- * accounts for.
+ * Jaccard divides by the union, so a ten-word headline against a market's
+ * question plus both criteria scored near zero however well it matched. "Naira
+ * closes at ₦1,532/$ on the CBN official window" came out at 0.10, under its
+ * own relevance floor.
+ *
+ * Containment then divided by the item's own size, which rewards *short*
+ * headlines: "CBN announces new cash withdrawal limits" shares one term with a
+ * market about the closing rate and outscored a story that shared three,
+ * because one out of five beats three out of seven.
+ *
+ * A headline sharing three significant terms with a market is more likely
+ * about it than one sharing a single acronym, whatever the lengths. So: how
+ * many matched, against how many would be convincing.
  */
-function containment(item: Set<string>, subject: Set<string>): number {
+function evidence(item: Set<string>, subject: Set<string>, convincing: number): number {
   if (item.size === 0 || subject.size === 0) return 0;
   let shared = 0;
   for (const value of item) if (subject.has(value)) shared += 1;
-  return shared / item.size;
+  return Math.min(1, shared / convincing);
 }
 
 /** Symmetric overlap, for comparing two things of the same kind. */
@@ -151,17 +170,22 @@ function overlap(left: Set<string>, right: Set<string>): number {
  *
  * Deliberately generous. Measured against the naira market, this scorer gives:
  *
- *   0.47  CBN official window closing rate ₦1,532/$ for the last business day
- *   0.25  Naira closes at ₦1,532/$ on the CBN official window
- *   0.09  Naira weakens against the dollar
- *   0.07  CBN announces new cash withdrawal limits
+ *   0.85  CBN official window closing rate ₦1,532.41/$ for the last business day
+ *   0.55  Naira closes at ₦1,498/$ on the official window, traders say
+ *   0.29  CBN resumes dollar sales to bureaux de change operators
+ *   0.29  CBN announces new cash withdrawal limits
+ *   0.14  Naira weakens against the dollar
  *   0.00  Super Eagles name squad for the next qualifier
+ *   0.00  BBNaija eviction shocks viewers
  *
- * The floor was 0.12 first, which dropped "naira weakens against the dollar" —
- * a story that market's readers plainly want — because it shares few exact
- * words with the market's own careful wording. The floor's job is to keep the
- * football out, and football scores zero; what a reader actually sees is
- * decided by *ranking* on relevance, not by this cut.
+ * The floor's job is to keep the football out, and football scores zero. What
+ * a reader actually sees is decided by *ranking*, not by this cut — which is
+ * why it sits well below the weakest story anybody would want.
+ *
+ * The two 0.29s are honest rather than a defect: lexically those headlines are
+ * equivalent evidence, and separating "resumes dollar sales" from "cash
+ * withdrawal limits" needs the meaning of the words. That is the embedding
+ * pass's job, and it runs above this filter rather than instead of it.
  */
 export const RELEVANCE_FLOOR = 0.06;
 

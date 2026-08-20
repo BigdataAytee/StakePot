@@ -1,10 +1,15 @@
 'use client';
 
 import { ExternalLink } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { RulesCard } from '@/components/rules-card';
-import { api, type Annotation, type MarketContext, type MarketDetail } from '@/lib/api';
+import {
+  type Annotation,
+  type MarketContext,
+  type MarketDetail,
+  type NewsCluster,
+} from '@/lib/api';
 import { ago, dateTime, money, percent } from '@/lib/format';
 
 /**
@@ -25,32 +30,37 @@ type Tab = (typeof TABS)[number];
 
 export function ContextPanel({
   market,
-  refreshKey,
+  context,
 }: {
   market: MarketDetail;
-  /** Bumped after a fill, so the reader sees their own trade land in the feed. */
-  refreshKey: number;
+  /**
+   * Fetched by the ticket rather than here.
+   *
+   * The quote strip's threshold row reads the same response, and two
+   * components fetching it independently is two round trips that can disagree
+   * with each other for a second — on a screen where one of them is a number
+   * beside a price.
+   */
+  context: MarketContext | null;
 }) {
   const [tab, setTab] = useState<Tab>('Rules');
-  const [context, setContext] = useState<MarketContext | null>(null);
-  const [failed, setFailed] = useState(false);
 
-  useEffect(() => {
-    let live = true;
-    api
-      .context(market.id)
-      .then((data) => {
-        if (live) setContext(data);
-      })
-      .catch(() => {
-        if (live) setFailed(true);
-      });
-    return () => {
-      live = false;
-    };
-  }, [market.id, refreshKey]);
-
-  const news = market.annotations.filter((a) => a.type === 'news');
+  /*
+   * Only the ones a person pinned.
+   *
+   * The research pipeline writes a `news` annotation for every item it scores
+   * above the chart's mark threshold, so that a spike has a label on it. Those
+   * annotations are for the chart; the same items are already in the stream
+   * below, with their outlet and their source count. Listing every `news`
+   * annotation put the two most relevant stories on this tab twice — once
+   * bare, once with its byline — which is what the first version did.
+   *
+   * `pinnedBy` is exactly the distinction: null when the pipeline found it, a
+   * staff name when somebody put theirs to it.
+   */
+  const pinned = market.annotations.filter((a) => a.type === 'news' && a.pinnedBy !== null);
+  const streamed = context?.news ?? [];
+  const newsCount = pinned.length + streamed.length;
 
   return (
     <section className="mt-4 overflow-hidden rounded-xl border border-border bg-surface-raised">
@@ -71,9 +81,9 @@ export function ContextPanel({
             {name}
             {/* A chip, not a bare number: "News 2" beside three plain words
                 reads as a heading that lost its noun. */}
-            {name === 'News' && news.length > 0 && (
+            {name === 'News' && newsCount > 0 && (
               <span className="ml-1.5 rounded-full bg-chip px-1.5 py-0.5 font-mono text-[10px] font-bold text-text-muted">
-                {news.length}
+                {newsCount}
               </span>
             )}
           </button>
@@ -84,12 +94,14 @@ export function ContextPanel({
         {tab === 'Rules' && (
           <>
             <RulesCard market={market} bare />
-            <SourceWatch market={market} />
+            <SourceWatch market={market} watch={context?.sourceWatch} />
           </>
         )}
-        {tab === 'News' && <News items={news} sourceName={market.sourceName} />}
-        {tab === 'Stats' && <Stats context={context} failed={failed} />}
-        {tab === 'Activity' && <Activity context={context} failed={failed} />}
+        {tab === 'News' && (
+          <News pinned={pinned} stream={streamed} sourceName={market.sourceName} />
+        )}
+        {tab === 'Stats' && <Stats context={context} />}
+        {tab === 'Activity' && <Activity context={context} />}
       </div>
     </section>
   );
@@ -105,7 +117,15 @@ export function ContextPanel({
  * single most damaging sentence on the page, because it is the one a reader
  * would rely on. So the panel says exactly what happens instead.
  */
-function SourceWatch({ market }: { market: MarketDetail }) {
+function SourceWatch({
+  market,
+  watch,
+}: {
+  market: MarketDetail;
+  watch: MarketContext['sourceWatch'] | undefined;
+}) {
+  const reading = watch?.latest ?? null;
+
   return (
     <div className="mt-4 rounded-md border border-border bg-surface p-3 text-sm">
       <h3 className="text-[11px] font-semibold uppercase tracking-[.05em] text-text-muted">
@@ -122,33 +142,79 @@ function SourceWatch({ market }: { market: MarketDetail }) {
           <ExternalLink size={12} />
         </a>
       </p>
+
+      {/*
+        The two numbers side by side, when both exist.
+
+        Either half can be missing and often is: the source may not have
+        published yet, and the threshold is recovered from the market's own
+        wording, which does not always contain one. The strip is absent rather
+        than half-filled — a blank beside "threshold" reads as zero.
+      */}
+      {(reading !== null || watch?.threshold != null) && (
+        <dl className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+          {reading !== null && (
+            <span className="flex items-baseline gap-1.5">
+              <dt className="text-text-muted">Latest</dt>
+              <dd className="font-mono font-bold">{reading}</dd>
+            </span>
+          )}
+          {watch?.threshold != null && (
+            <span className="flex items-baseline gap-1.5">
+              <dt className="text-text-muted">Settles {watch.threshold.direction}</dt>
+              <dd className="font-mono font-bold">{watch.threshold.label}</dd>
+            </span>
+          )}
+          {watch?.checkedAt != null && (
+            <span className="flex items-baseline gap-1.5 text-xs text-text-muted">
+              <dt>read</dt>
+              <dd className="font-mono">{ago(watch.checkedAt)}</dd>
+            </span>
+          )}
+        </dl>
+      )}
+
       <p className="mt-1.5 text-text-muted">
-        Read once, at settlement — not continuously. The price above is what traders think this
-        source will say on {dateTime(market.eventDate)}, not a live reading of it.
+        {reading === null
+          ? `Read at settlement. The price above is what traders think ${market.sourceName} will say on ${dateTime(market.eventDate)}, not a live reading of it.`
+          : `The figure above is the latest ${market.sourceName} has published. What settles this market is what it publishes on ${dateTime(market.eventDate)}.`}
       </p>
     </div>
   );
 }
 
 /**
- * Pinned news, newest first.
+ * What has been published about this market.
  *
- * The same rows that drop marks on the chart, so a spike a reader can see has
- * an explanation they can read, in the one place they would look for it.
+ * Two streams, one list. Staff pin items they judge important; the research
+ * pipeline finds items and ranks them. A reader does not care which half a
+ * story came from — only whether there is anything to read — so pinned items
+ * lead and the rest follow by relevance.
+ *
+ * Each line carries how many outlets ran it. Forty papers on one wire story is
+ * one line saying "40 outlets", not forty lines burying everything else.
  */
-function News({ items, sourceName }: { items: Annotation[]; sourceName: string }) {
-  if (items.length === 0) {
+function News({
+  pinned,
+  stream,
+  sourceName,
+}: {
+  pinned: Annotation[];
+  stream: NewsCluster[];
+  sourceName: string;
+}) {
+  if (pinned.length === 0 && stream.length === 0) {
     return (
       <Empty>
-        Nothing pinned yet. When something moves this market, we pin it here with its source — and
-        it appears on the chart at the moment it happened.
+        Nothing yet. When something moves this market it appears here with its source, and on the
+        chart at the moment it happened.
       </Empty>
     );
   }
 
   return (
     <ol className="space-y-3">
-      {[...items]
+      {[...pinned]
         .sort((a, b) => b.ts.localeCompare(a.ts))
         .map((item) => (
           <li
@@ -158,32 +224,57 @@ function News({ items, sourceName }: { items: Annotation[]; sourceName: string }
             <p className="font-medium">{item.label}</p>
             <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
               <span className="font-mono">{dateTime(item.ts)}</span>
-              {item.url !== null && (
-                <a
-                  href={item.url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="inline-flex items-center gap-1 text-rise underline underline-offset-2"
-                >
-                  Source
-                  <ExternalLink size={11} />
-                </a>
-              )}
+              {item.url !== null && <SourceLink url={item.url} />}
               {/* Who pinned it. An unattributed news item on a money screen is
                   an anonymous claim, and this one moves a chart. */}
               {item.pinnedBy !== null && <span>Pinned by {item.pinnedBy}</span>}
             </p>
           </li>
         ))}
+
+      {stream.map((item) => (
+        <li key={item.id} className="border-b border-border pb-3 text-sm last:border-b-0 last:pb-0">
+          <p className="font-medium">{item.headline}</p>
+          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-text-muted">
+            <span className="font-semibold text-text">{item.outlet}</span>
+            {item.sourceCount > 1 && (
+              <span className="rounded-sm bg-chip px-1.5 py-0.5 font-mono">
+                +{item.sourceCount - 1} more
+              </span>
+            )}
+            {item.tier === 'resolution' && (
+              <span className="rounded-sm bg-rise/15 px-1.5 py-0.5 font-mono font-bold text-rise">
+                OFFICIAL
+              </span>
+            )}
+            <span className="font-mono">{ago(item.publishedAt)}</span>
+            <SourceLink url={item.url} />
+          </p>
+        </li>
+      ))}
+
       <li className="pt-1 text-xs text-text-muted">
-        Pinned items are context, not the ruling. This market settles against {sourceName}.
+        News is context, not the ruling. This market settles against {sourceName}.
       </li>
     </ol>
   );
 }
 
-function Stats({ context, failed }: { context: MarketContext | null; failed: boolean }) {
-  if (failed) return <Empty>Couldn&rsquo;t load the numbers. Reload the page to try again.</Empty>;
+function SourceLink({ url }: { url: string }) {
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noreferrer noopener"
+      className="inline-flex items-center gap-1 text-rise underline underline-offset-2"
+    >
+      Source
+      <ExternalLink size={11} />
+    </a>
+  );
+}
+
+function Stats({ context }: { context: MarketContext | null }) {
   if (context === null) return <Skeleton rows={3} />;
 
   const move = context.biggestMove;
@@ -243,9 +334,7 @@ function Stats({ context, failed }: { context: MarketContext | null; failed: boo
   );
 }
 
-function Activity({ context, failed }: { context: MarketContext | null; failed: boolean }) {
-  if (failed)
-    return <Empty>Couldn&rsquo;t load recent activity. Reload the page to try again.</Empty>;
+function Activity({ context }: { context: MarketContext | null }) {
   if (context === null) return <Skeleton rows={5} />;
   if (context.activity.length === 0) {
     return <Empty>No trades yet. The first one sets the price everybody else argues with.</Empty>;

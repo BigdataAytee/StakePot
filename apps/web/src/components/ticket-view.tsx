@@ -26,7 +26,13 @@ import { ShareSheet } from '@/components/share-sheet';
 import { TakeThread } from '@/components/take-thread';
 import { TradeSheet, type TradeIntent } from '@/components/trade-sheet';
 import { useMarketFeed } from '@/hooks/use-market-feed';
-import { api, type MarketDetail, type PricePoint, type SeedComposition } from '@/lib/api';
+import {
+  api,
+  type MarketContext,
+  type MarketDetail,
+  type PricePoint,
+  type SeedComposition,
+} from '@/lib/api';
 import { PAGE_WIDTH } from '@/lib/layout';
 import { recordView } from '@/lib/creator-api';
 import { STATE_LABEL, money, percent } from '@/lib/format';
@@ -81,6 +87,26 @@ export function TicketView({
   // Bumped after a fill so the position panel re-reads rather than showing the
   // holding the user had before the trade they just made.
   const [filled, setFilled] = useState(0);
+  /**
+   * The market's context, fetched once here rather than twice below.
+   *
+   * The quote strip's threshold row and the context panel's news stream come
+   * from the same response, and two components fetching it independently is two
+   * round trips that can disagree with each other for a second.
+   */
+  const [context, setContext] = useState<MarketContext | null>(null);
+  useEffect(() => {
+    let live = true;
+    api
+      .context(initial.id)
+      .then((data) => {
+        if (live) setContext(data);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, [initial.id, filled]);
 
   const headline = initial.outcomes[0];
   useMarketFeed(initial.id);
@@ -321,6 +347,7 @@ export function TicketView({
           eventDate={initial.eventDate}
           tradingOpen={tradingOpen}
           stateLabel={STATE_LABEL[initial.state] ?? initial.state}
+          target={targetOf(context)}
         />
 
         {/* Two columns down to 860px, one below it — the reference's own
@@ -401,7 +428,7 @@ export function TicketView({
               onSell={(outcome, held) => setIntent({ outcome, side: 'sell', held })}
             />
 
-            <ContextPanel market={initial} refreshKey={filled} />
+            <ContextPanel market={initial} context={context} />
 
             {/* §2.15a: the market page *is* the community space — no separate
                 forum, because the argument and the money belong on one screen. */}
@@ -454,4 +481,27 @@ export function TicketView({
       />
     </>
   );
+}
+
+/**
+ * The threshold row on the quote strip, from the source watch.
+ *
+ * Not a line on the chart, and that is a deliberate departure from the
+ * reference. This chart's axis is probability — 0 to 100% — and a naira level
+ * or a CPI print does not live on it. Drawing ₦1,500 across a percentage scale
+ * would put a number where a reader's eye expects a price, on the screen they
+ * trade from. The two figures belong side by side in the header instead, where
+ * "settles below ₦1,500 · latest ₦1,532" reads as the comparison it is.
+ */
+function targetOf(
+  context: MarketContext | null,
+): { label: string; value: string; latest?: string | undefined } | undefined {
+  const watch = context?.sourceWatch;
+  if (watch?.threshold == null) return undefined;
+
+  return {
+    label: `Settles ${watch.threshold.direction}`,
+    value: watch.threshold.label,
+    ...(watch.latest === null ? {} : { latest: watch.latest }),
+  };
 }

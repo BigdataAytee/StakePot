@@ -6,6 +6,7 @@ import { logger } from '../logger';
 import { PrismaService } from '../prisma/prisma.service';
 import { DisabledFetcher, SOURCE_FETCHER, type SourceFetcher } from './fetcher';
 import {
+  ANNOTATION_FLOOR,
   cluster,
   detectConflicts,
   relevanceOf,
@@ -227,9 +228,49 @@ export class ResearchService {
           update: { relevance: new Prisma.Decimal(entry.relevance) },
         });
         made += 1;
+
+        if (entry.relevance >= ANNOTATION_FLOOR) {
+          await this.markChart(market.id, entry.item);
+        }
       }
     }
     return made;
+  }
+
+  /**
+   * Mark a significant item on the chart, at the moment it was published.
+   *
+   * An annotation is an assertion that this is why the line moved, which is a
+   * strong claim to make automatically — so the bar is the annotation floor
+   * rather than the storage floor, and the item keeps its link so a reader can
+   * check the claim in one tap.
+   *
+   * Guarded on the URL rather than on an id: the same story arriving through a
+   * feed and a sitemap is two `source_items` rows with one URL, and two marks
+   * on the chart at the same minute reads as two events.
+   */
+  private async markChart(
+    marketId: string,
+    item: { headline: string; url: string; publishedAt: Date },
+  ): Promise<void> {
+    const existing = await this.prisma.marketAnnotation.findFirst({
+      where: { marketId, url: item.url },
+    });
+    if (existing !== null) return;
+
+    await this.prisma.marketAnnotation.create({
+      data: {
+        marketId,
+        type: 'news',
+        label: item.headline.slice(0, 140),
+        url: item.url,
+        // Null: nobody pinned this, the pipeline found it. The ticket shows
+        // "pinned by" only when a person put their name to it, and attributing
+        // an automatic mark to a staff member would be a lie on a money screen.
+        pinnedBy: null,
+        ts: item.publishedAt,
+      },
+    });
   }
 
   /**

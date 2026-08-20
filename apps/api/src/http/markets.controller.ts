@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { subHours } from 'date-fns';
 
+import { sourceWatchOf } from '../intel/source-watch';
 import { PriceCacheService } from '../realtime/price-cache.service';
 import { PriceWindowService } from '../market/price-window.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -341,6 +342,10 @@ export class MarketsController {
       select: {
         id: true,
         createdAt: true,
+        // The source watch needs both: the body that settles it, and the
+        // wording the threshold has to be recovered from.
+        question: true,
+        sourceName: true,
         outcomes: {
           orderBy: { ordinal: 'asc' },
           select: { id: true, label: true },
@@ -351,7 +356,7 @@ export class MarketsController {
 
     const labels = new Map(market.outcomes.map((o) => [o.id, o.label]));
 
-    const [windows, biggest, holders, activity] = await Promise.all([
+    const [windows, biggest, holders, activity, coverage] = await Promise.all([
       // Since it opened, not since yesterday: "high" on a quote page means the
       // highest it has ever been, and a 24h high labelled "High" would be a
       // different number every morning for a price that had not moved.
@@ -385,6 +390,15 @@ export class MarketsController {
           createdAt: true,
         },
       }),
+      // Everything the research pipeline has linked to this market. Pinned
+      // first, then relevance — a staff member who put their name to an item
+      // has said it matters more than a score can.
+      this.prisma.marketSourceItem.findMany({
+        where: { marketId: id },
+        orderBy: [{ pinnedAt: { sort: 'desc', nulls: 'last' } }, { relevance: 'desc' }],
+        take: 60,
+        include: { item: { include: { source: { select: { name: true, tier: true } } } } },
+      }),
     ]);
 
     const holdersBy = new Map(holders.map((row) => [row.outcomeId, row._count.userId]));
@@ -415,6 +429,28 @@ export class MarketsController {
               to: biggest.price,
               ts: biggest.ts.toISOString(),
             },
+      /**
+       * The clustered news stream.
+       *
+       * One line per story rather than one per outlet: forty papers running
+       * the same wire copy is one thing that happened, and listing it forty
+       * times buries everything else under the loudest story of the day. The
+       * source count is what a reader actually wants from the other
+       * thirty-nine.
+       */
+      news: clusterView(coverage),
+      /**
+       * The named source's latest figure against the market's own threshold.
+       *
+       * Absent — not zeroed — when either half is missing. The threshold is
+       * recovered from the question's wording, and a parse that failed should
+       * produce no strip rather than a wrong line on a price chart.
+       */
+      sourceWatch: sourceWatchOf({
+        sourceName: market.sourceName,
+        question: market.question,
+        latest: latestOfficialFigure(coverage),
+      }),
       activity: activity.map((trade) => ({
         id: trade.id,
         // Pseudonymous, and per-market. A trade is not a post: somebody who
@@ -544,4 +580,93 @@ function badgeFor(level: number): string | null {
  */
 function pseudonym(marketId: string, userId: string): string {
   return createHash('sha256').update(`${marketId}:${userId}`).digest('hex').slice(0, 6);
+}
+
+/** One row per cluster, carrying how many outlets ran it. */
+function clusterView(
+  coverage: readonly {
+    relevance: { toString(): string };
+    pinnedAt: Date | null;
+    pinnedBy: string | null;
+    item: {
+      id: string;
+      headline: string;
+      url: string;
+      publishedAt: Date;
+      clusterId: string | null;
+      source: { name: string; tier: string };
+    };
+  }[],
+) {
+  const seen = new Map<string, { row: (typeof coverage)[number]; outlets: Set<string> }>();
+
+  for (const row of coverage) {
+    // An item the pipeline has not clustered yet stands alone under its own id
+    // rather than being dropped — a reader should see a story the minute it
+    // lands, not once a later pass has grouped it.
+    const key = row.item.clusterId ?? row.item.id;
+    const existing = seen.get(key);
+    if (existing === undefined) {
+      seen.set(key, { row, outlets: new Set([row.item.source.name]) });
+      continue;
+    }
+
+    existing.outlets.add(row.item.source.name);
+
+    // Whose byline the line carries.
+    //
+    // The clusterer seeds each group with its earliest member, on the
+    // principle that the outlet which broke a story is the one worth citing —
+    // and the first version of this kept whichever row the *query* returned
+    // first instead, which for three papers of equal relevance is arbitrary.
+    // Three outlets running one wire story were credited to whichever one the
+    // database happened to hand back, and it was not the one that broke it.
+    const seedIsHere = row.item.id === row.item.clusterId;
+    const earlier = row.item.publishedAt < existing.row.item.publishedAt;
+    if (seedIsHere || (existing.row.item.id !== existing.row.item.clusterId && earlier)) {
+      existing.row = row;
+    }
+  }
+
+  return [...seen.values()].map(({ row, outlets }) => ({
+    id: row.item.id,
+    headline: row.item.headline,
+    url: row.item.url,
+    outlet: row.item.source.name,
+    tier: row.item.source.tier,
+    sourceCount: outlets.size,
+    publishedAt: row.item.publishedAt.toISOString(),
+    relevance: Number(row.relevance.toString()),
+    pinnedAt: row.pinnedAt?.toISOString() ?? null,
+    pinnedBy: row.pinnedBy,
+  }));
+}
+
+/**
+ * The most recent figure published by a source that could settle this market.
+ *
+ * Tier 1 only. A newspaper reporting what the CBN published is not the CBN
+ * publishing it, and a source-watch strip that quoted the newspaper would be
+ * putting a second-hand number where a reader expects the official one.
+ */
+function latestOfficialFigure(
+  coverage: readonly {
+    item: {
+      publishedAt: Date;
+      factsJson: unknown;
+      source: { tier: string };
+    };
+  }[],
+): { value: string | number; publishedAt: Date } | null {
+  const official = coverage
+    .filter((row) => row.item.source.tier === 'resolution')
+    .sort((a, b) => b.item.publishedAt.getTime() - a.item.publishedAt.getTime());
+
+  for (const row of official) {
+    const facts = row.item.factsJson;
+    if (facts === null || typeof facts !== 'object' || Array.isArray(facts)) continue;
+    const [value] = Object.values(facts as Record<string, string | number>);
+    if (value !== undefined) return { value, publishedAt: row.item.publishedAt };
+  }
+  return null;
 }

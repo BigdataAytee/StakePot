@@ -102,8 +102,37 @@ export interface ActivityEntry {
   ts: string;
 }
 
+/** One story, however many outlets ran it. */
+export interface NewsCluster {
+  id: string;
+  headline: string;
+  url: string;
+  /** The outlet whose copy this is — the first to carry it. */
+  outlet: string;
+  tier: 'resolution' | 'news';
+  /** How many outlets carried the same story. */
+  sourceCount: number;
+  publishedAt: string;
+  relevance: number;
+  pinnedAt: string | null;
+  pinnedBy: string | null;
+}
+
+/** The named source's latest figure against the market's own threshold. */
+export interface SourceWatch {
+  sourceName: string;
+  latest: string | null;
+  latestValue: number | null;
+  checkedAt: string | null;
+  threshold: { label: string; value: number; direction: 'below' | 'above' } | null;
+  /** Null whenever either half is missing, which is most of the time. */
+  meetsThreshold: boolean | null;
+}
+
 export interface MarketContext {
   openedAt: string;
+  news: NewsCluster[];
+  sourceWatch: SourceWatch;
   stats: OutcomeStats[];
   biggestMove: {
     outcomeId: string;
