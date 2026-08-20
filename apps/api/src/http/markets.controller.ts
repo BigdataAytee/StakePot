@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import { subHours } from 'date-fns';
 
 import { PriceCacheService } from '../realtime/price-cache.service';
+import { PriceWindowService } from '../market/price-window.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** Timeframes the §7.2 chart offers: 1H · 6H · 1D · 1W · ALL. */
@@ -21,11 +22,14 @@ const TIMEFRAME_HOURS: Record<string, number | null> = {
  * The read path (§11): served from Redis and replicas, never the primary's
  * write path. Nothing here takes a lock or opens a transaction.
  */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 @Controller('markets')
 export class MarketsController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly prices: PriceCacheService,
+    private readonly window: PriceWindowService,
   ) {}
 
   /** The two shelves on the markets home (§7.1). */
@@ -71,14 +75,34 @@ export class MarketsController {
     });
     const volume24h = new Map(traded.map((row) => [row.marketId, (row._sum.cost ?? 0).toString()]));
 
-    return Promise.all(
-      markets.map(async (market) => ({
+    /*
+     * A day of price for every card's headline outcome, in one query.
+     *
+     * This used to be `await this.sparklineFor(...)` inside a `Promise.all` over
+     * the markets — fifty cards, fifty round trips, each scanning the same
+     * index. One batched read replaces them, and it carries the 24h change the
+     * card now shows beside the dial as well, so the badge and the line are
+     * computed from the same points and cannot contradict each other.
+     */
+    const windows = await this.window.forOutcomes(
+      markets
+        .map((market) => market.outcomes[0]?.id)
+        .filter((id): id is string => id !== undefined),
+      DAY_MS,
+    );
+
+    return markets.map((market) => {
+      const headline = market.outcomes[0]?.id;
+      const window = headline === undefined ? undefined : windows.get(headline);
+      return {
         ...this.serialiseMarket(market),
         volume24h: volume24h.get(market.id) ?? '0',
         // The card's mini sparkline: last 24h of the headline outcome (§7.1).
-        sparkline: await this.sparklineFor(market.id, market.outcomes[0]?.id),
-      })),
-    );
+        sparkline: (window?.series ?? []).map((point) => String(point.p)),
+        /** The move over the same 24h, as a fraction. Null on a young market. */
+        change24h: window?.change ?? null,
+      };
+    });
   }
 
   @Get(':id')
@@ -286,17 +310,6 @@ export class MarketsController {
       pot: p.pot.toString(),
       ts: p.ts.toISOString(),
     }));
-  }
-
-  private async sparklineFor(marketId: string, outcomeId?: string): Promise<string[]> {
-    if (outcomeId === undefined) return [];
-    const points = await this.prisma.priceHistory.findMany({
-      where: { marketId, outcomeId, ts: { gte: subHours(new Date(), 24) } },
-      orderBy: { ts: 'asc' },
-      select: { price: true },
-      take: 60,
-    });
-    return points.map((p) => p.price.toString());
   }
 
   private serialiseMarket(market: {

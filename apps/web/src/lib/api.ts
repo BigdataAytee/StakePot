@@ -34,6 +34,11 @@ export interface MarketSummary {
   criteria: unknown;
   resolvedOutcomeId: string | null;
   outcomes: OutcomeView[];
+  /**
+   * The headline outcome's move over 24h, as a fraction of where it started.
+   * Null on a market younger than the window, which is not the same as flat.
+   */
+  change24h: number | null;
   /** Money traded in the last 24h, seeds excluded. What "Trending" sorts on. */
   volume24h: string;
   sparkline?: string[];

@@ -6,6 +6,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { AdminAuditService } from '../audit/admin-audit.service';
 import { ThreadService } from '../community-layer/thread.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { PushSender } from '../notifications/push.sender';
+import { EmailSender } from '../notifications/email.sender';
+import { SmsSender } from '../notifications/sms.sender';
 import { TokenRevocationService } from '../auth/token-revocation.service';
 import { AuthService } from '../auth/auth.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -69,7 +73,12 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
       { publish: async () => undefined } as unknown as PriceCacheService,
       new RgService(prisma, config),
     );
-    queue = new TradeQueueService(trades, prisma, new ThreadService(prisma, config));
+    queue = new TradeQueueService(
+      trades,
+      prisma,
+      new ThreadService(prisma, config),
+      new NotificationsService(prisma, new PushSender(prisma), new EmailSender(), new SmsSender()),
+    );
     await queue.onModuleInit();
     abuse = new AbuseService(
       prisma,

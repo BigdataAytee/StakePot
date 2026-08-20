@@ -93,14 +93,13 @@ export default async function WelcomePage() {
           <div className="grid items-center gap-8 lg:grid-cols-[1.1fr_1fr]">
             <div>
               <h1 className="text-[34px] font-bold leading-[1.1] sm:text-[44px]">
-                Nigeria argues about everything.
-                <span className="block text-brand">
-                  This is where arguments get settled — with receipts.
-                </span>
+                Trade your view on real-world events.
+                <span className="block text-brand">Right calls earn from the pot.</span>
               </h1>
               <p className="mt-4 max-w-xl text-lg text-text-muted">
-                Pick a question. Stake your side. When the result lands, winners share the pot — and
-                everybody can see the maths.
+                Live prices on Nigerian politics, football, the naira and the culture. Take a
+                position at the price you think is wrong. Right calls earn from the pot; wrong calls
+                lose their stake.
               </p>
 
               <div className="mt-6 flex flex-wrap gap-3">
@@ -151,18 +150,18 @@ export default async function WelcomePage() {
             <ol className="mt-6 grid gap-6 sm:grid-cols-3">
               <Step
                 n="1"
-                title="Pick a question"
-                body="Real questions with one named source that settles them. No vibes, no “the admin decides”."
+                title="Read the price"
+                body="Every market's price is what the crowd currently believes, moving live. One named source settles it — no vibes, no “the admin decides”."
               />
               <Step
                 n="2"
-                title="Stake your side"
-                body="The price is what the crowd currently believes. Back the side you think is wrong-priced."
+                title="Take a position"
+                body="Buy the side you think is mispriced. You hold shares at a price, and you can close the position before settlement at whatever it is worth then."
               />
               <Step
                 n="3"
-                title="Winners share the pot"
-                body="When the source publishes, the pot is split among the people who were right. The maths is on the receipt."
+                title="Settlement pays the pot out"
+                body="When the source publishes, the pot is split among the positions that were right. Positions on the other side lose their stake. The maths is on the receipt."
               />
             </ol>
           </div>
@@ -252,9 +251,9 @@ export default async function WelcomePage() {
         {/* ----------------------------------------------------- closing CTA */}
         <section className="border-t border-border bg-chip/40">
           <div className={`px-4 py-14 text-center sm:px-5 ${PAGE_WIDTH}`}>
-            <h2 className="text-2xl font-bold">Got an opinion? Put it on the record.</h2>
+            <h2 className="text-2xl font-bold">Got a view? Price it.</h2>
             <p className="mx-auto mt-2 max-w-lg text-base text-text-muted">
-              Email or phone, ten seconds, and a starter balance to argue with. No card, nothing to
+              Email or phone, ten seconds, and a starter balance to trade with. No card, nothing to
               deposit.
             </p>
             <Link

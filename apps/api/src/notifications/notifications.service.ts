@@ -16,12 +16,12 @@ import { SmsSender } from './sms.sender';
  * notification preferences."
  */
 export const NOTIFICATION_TYPES = {
-  trade_confirmed: { title: 'Stake placed', channels: ['in_app'] },
+  trade_confirmed: { title: 'Trade confirmed', channels: ['in_app'] },
   market_resolved: { title: 'Market settled', channels: ['in_app', 'push', 'email'] },
-  payout: { title: 'You were paid', channels: ['in_app', 'push', 'email'] },
+  payout: { title: 'Your position settled', channels: ['in_app', 'push', 'email'] },
   refund: { title: 'Refunded in full', channels: ['in_app', 'push', 'email'] },
   dispute_update: { title: 'Dispute update', channels: ['in_app', 'push'] },
-  market_activated: { title: 'Market is live', channels: ['in_app', 'push'] },
+  market_activated: { title: 'Market is open', channels: ['in_app', 'push'] },
   support_reply: { title: 'Support replied', channels: ['in_app', 'push', 'email'] },
   // §2.14's creator platform. Deliberately in-app and push only: a creator's
   // standing changing is worth an alert, not an email, and a nudge that arrives
@@ -29,7 +29,7 @@ export const NOTIFICATION_TYPES = {
   creator_nudge: { title: 'Your market needs something', channels: ['in_app', 'push'] },
   creator_new_market: { title: 'A creator you follow posted', channels: ['in_app', 'push'] },
   creator_level: { title: 'Your creator level changed', channels: ['in_app', 'push'] },
-  market_autopsy: { title: 'Your market closed', channels: ['in_app', 'push'] },
+  market_autopsy: { title: 'Your market settled', channels: ['in_app', 'push'] },
   // §2.8's weekly prize. Email as well: money arriving is worth a record
   // somewhere the recipient can find again.
   prize: { title: 'You won a prize', channels: ['in_app', 'push', 'email'] },

@@ -581,7 +581,7 @@ function ConflictAttestation({
  * Presented as a real trade-off rather than a default and an advanced option:
  * Path A costs nothing but has to fill on its own; Path B opens now because the
  * creator (or a syndicate) put money on every outcome at once. The one thing a
- * creator must not misread is that seeding is not betting — the seed is
+ * creator must not misread is that seeding is not taking a side — the seed is
  * symmetric, so it cannot pay off for the person who also settles the market.
  */
 function ActivationPathChooser({

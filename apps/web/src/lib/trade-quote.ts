@@ -101,8 +101,10 @@ export function quote({
   const shares = liquidity * Math.log((Math.exp(entered / liquidity) - 1 + price) / price);
 
   // Price after this fill, from the same shifted exponentials.
-  const odds = (1 - price) / price;
-  const priceAfter = 1 / (1 + odds * Math.exp(-shares / liquidity));
+  // The price expressed as a ratio of the two sides, which is what the LMSR
+  // shifts. Named for the arithmetic rather than for a bookmaker's word.
+  const ratio = (1 - price) / price;
+  const priceAfter = 1 / (1 + ratio * Math.exp(-shares / liquidity));
 
   // §2.3's pre-resolution estimate is pot / q[w] per share. An estimate
   // because it moves with every trade until the market freezes.

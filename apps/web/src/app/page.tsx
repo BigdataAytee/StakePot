@@ -32,7 +32,7 @@ export const dynamic = 'force-dynamic';
 export const metadata = {
   title: 'StakeAm · Nigeria’s prediction market',
   description:
-    'Live odds on Nigerian politics, football, the naira, music and more. Pick a side, winners split the pot, and every market settles against one named source.',
+    'Trade your view on Nigerian politics, football, the naira, music and more. Live prices, one named source per market, and winners paid from the pot.',
 };
 
 export default async function MarketsHome({

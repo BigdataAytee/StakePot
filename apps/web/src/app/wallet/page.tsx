@@ -35,7 +35,7 @@ const LABELS: Record<string, string> = {
   trade_sell: 'Early exit',
   stake: 'Stake',
   seed: 'Seed',
-  payout: 'Winnings',
+  payout: 'Returns on settlement',
   refund: 'Refund',
   fee_platform: 'Platform fee',
   fee_creator: 'Creator fee',

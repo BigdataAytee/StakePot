@@ -166,7 +166,7 @@ export function TradeSheet({
    * Leave for the sign-in screen, and leave a note.
    *
    * Both the sentence above the button and the button itself come here when
-   * there is no session, because a signed-out person pressing "Stake am" has
+   * there is no session, because a signed-out person pressing "Place trade" has
    * said exactly what they want and deserves the flow rather than a refusal.
    */
   function signIn(route: '/login' | '/signup'): void {
@@ -494,6 +494,19 @@ export function TradeSheet({
               </p>
             )}
 
+            {/*
+              Said where the money is committed, not in a policy page.
+              §2.16's honesty rule, and the one line that has to survive every
+              future round of copy polish: a market position is not a deposit,
+              and the sentence that says so belongs directly above the button
+              that takes it.
+            */}
+            {!closed && (
+              <p className="mt-3 text-xs leading-snug text-text-muted">
+                Positions can lose their full value. Winners are paid from the pot.
+              </p>
+            )}
+
             <button
               type="button"
               onClick={() => void submit()}
@@ -517,7 +530,7 @@ export function TradeSheet({
                     : submitting
                       ? 'Placing…'
                       : side === 'buy'
-                        ? 'Stake am'
+                        ? 'Place trade'
                         : 'Sell shares'}
             </button>
           </motion.div>

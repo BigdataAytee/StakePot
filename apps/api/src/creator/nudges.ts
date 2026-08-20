@@ -165,7 +165,7 @@ export function nudgesFor(snapshot: MarketSnapshot, rules: NudgeRules): readonly
       found.push({
         kind: 'views_no_stakes',
         urgency: 'soon',
-        body: `${snapshot.views} people have looked and none have staked. Usually that means the settlement criteria are not clear enough to bet on.`,
+        body: `${snapshot.views} people have looked and none have staked. Usually that means the settlement criteria are not clear enough to take a position on.`,
         action: 'review_criteria',
       });
     }

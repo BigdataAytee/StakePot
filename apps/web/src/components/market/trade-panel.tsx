@@ -274,6 +274,11 @@ export function TradePanel({
             </p>
           )}
 
+          {/* Same sentence, same place, on the surface a laptop uses. */}
+          <p className="mt-2 text-xs leading-snug text-text-muted">
+            Positions can lose their full value. Winners are paid from the pot.
+          </p>
+
           <button
             type="button"
             onClick={() => void submit()}

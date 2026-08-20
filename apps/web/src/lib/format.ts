@@ -80,6 +80,40 @@ export function dateTime(iso: string): string {
   });
 }
 
+/**
+ * "Settles 30 Aug" — the date a market pays out, in the shortest form that is
+ * still unambiguous.
+ *
+ * The year appears only when it is not this one. A card is a dense object and
+ * "2026" on every one of fifty of them is fifty repetitions of a fact the
+ * reader already has; a market settling in 2027 is the case where it matters,
+ * and that is exactly when it is shown.
+ */
+export function settlesOn(iso: string, now = Date.now()): string {
+  const date = new Date(iso);
+  const sameYear = date.getFullYear() === new Date(now).getFullYear();
+  return date.toLocaleDateString('en-NG', {
+    day: 'numeric',
+    month: 'short',
+    ...(sameYear ? {} : { year: 'numeric' }),
+  });
+}
+
+/**
+ * "4:35" when settlement is inside a day, otherwise null.
+ *
+ * A countdown is information while it is urgent and noise while it is not: a
+ * market settling in three weeks does not need a ticking clock, and giving it
+ * one trains people to ignore the clock on the market settling in three hours.
+ */
+export function countdown(iso: string, now = Date.now()): string | null {
+  const ms = new Date(iso).getTime() - now;
+  if (ms <= 0 || ms > 86_400_000) return null;
+  const hours = Math.floor(ms / 3_600_000);
+  const minutes = Math.floor((ms % 3_600_000) / 60_000);
+  return `${hours}:${String(minutes).padStart(2, '0')}`;
+}
+
 export const STATE_LABEL: Record<string, string> = {
   draft: 'AWAITING SEED',
   seeding: 'SEEDING',

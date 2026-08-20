@@ -1,9 +1,10 @@
 import Link from 'next/link';
 
 import type { MarketSummary } from '@/lib/api';
-import { STATE_LABEL, money } from '@/lib/format';
+import { STATE_LABEL, money, settlesOn } from '@/lib/format';
 import { binaryPair } from '@/lib/home';
 import { LiveChanceGauge, LivePercent } from './live-percent';
+import { PriceChange } from './price-change';
 import { MarketIcon } from './market-icon';
 import { SideButton } from './side-button';
 import { WatchStar } from './watch-star';
@@ -47,13 +48,15 @@ export function MarketCard({ market }: { market: MarketSummary }) {
         </h3>
 
         {binary !== null && (
-          <LiveChanceGauge
-            marketId={market.id}
-            outcomeId={binary[0].id}
-            fallback={binary[0].price}
-            size={62}
-            className="ml-auto"
-          />
+          <div className="ml-auto flex shrink-0 flex-col items-center">
+            <LiveChanceGauge
+              marketId={market.id}
+              outcomeId={binary[0].id}
+              fallback={binary[0].price}
+              size={62}
+            />
+            <PriceChange change={market.change24h} className="-mt-0.5" />
+          </div>
         )}
       </div>
 
@@ -90,6 +93,11 @@ export function MarketCard({ market }: { market: MarketSummary }) {
 
       <div className="mt-0.5 flex items-center gap-2 text-xs text-text-muted">
         {money(market.volume24h)} Vol.
+        {/* When it pays out. The one fact a reader needs to know whether this
+            question is worth a view today or in six weeks, and it was not on
+            the card at all. */}
+        <span aria-hidden>·</span>
+        <span className="whitespace-nowrap">Settles {settlesOn(market.eventDate)}</span>
         <WatchStar marketId={market.id} question={market.question} />
       </div>
     </article>

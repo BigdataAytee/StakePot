@@ -10,7 +10,7 @@ import { dateTime, exactMoney, money, untilFreeze } from '@/lib/format';
  * Path B, made legible (§2.4, §2.14a, Rulebook Part 3 §2–§3).
  *
  * Two facts have to survive contact with a real reader. First: a seed is not a
- * bet. The creator or the syndicate holds every outcome equally, so nobody
+ * position. The creator or the syndicate holds every outcome equally, so nobody
  * reading this ticket should wonder whether the person settling it is on a side.
  * Second: a seeded market is not yet a safe market — it still has to find [10]
  * backers by the deadline or everything, seed included, goes back.

@@ -113,7 +113,7 @@ export const CONFIG_KEY_NOTES: Record<string, ConfigNote> = {
   symmetric_seed_per_outcome_spc: {
     blast: 'market',
     what: 'The equal seed a Path B creator puts on every outcome.',
-    risk: 'This is what stops a seed being a directional bet. It must stay symmetric.',
+    risk: 'This is what stops a seed being a directional position. It must stay symmetric.',
   },
 
   // ------------------------------------------------------------------ guard

@@ -35,7 +35,7 @@ export default function RulesPage() {
         criteria are fixed when the market opens and cannot be edited afterwards.
       </Rule>
 
-      <Rule title="Prices are what the crowd thinks, not odds we set">
+      <Rule title="Prices are what the crowd thinks, not a number we set">
         The price of an outcome is the share of the pot backing it. It moves as people stake. There
         is no house on the other side of your trade and no house edge built into the price.
       </Rule>

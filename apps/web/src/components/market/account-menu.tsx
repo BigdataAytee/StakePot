@@ -40,7 +40,7 @@ interface Item {
 }
 
 const PERSONAL: readonly Item[] = [
-  { href: '/positions', label: 'Positions', hint: 'What you are holding' },
+  { href: '/positions', label: 'Portfolio', hint: 'What you are holding, and what it is worth' },
   { href: '/wallet', label: 'Wallet', hint: 'Balance and history' },
   { href: '/account', label: 'Account', hint: 'Sessions, consents, referrals' },
   { href: '/account/limits', label: 'Limits', hint: 'Stake caps and cool-off' },

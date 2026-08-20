@@ -9,6 +9,7 @@ import { ArgumentBar } from '@/components/argument-bar';
 import { LivingNumber } from '@/components/living-number';
 import { LiveChanceGauge, LivePercent } from '@/components/market/live-percent';
 import { binaryPair } from '@/lib/home';
+import { authed } from '@/lib/session';
 import { takeTrade } from '@/lib/pending-trade';
 import { MarketIcon } from '@/components/market/market-icon';
 import { SiteHeader } from '@/components/market/site-header';
@@ -83,6 +84,33 @@ export function TicketView({
    * through the same sheet on the way out.
    */
   useEffect(() => {
+    /*
+     * `?sell=` is the portfolio's way in: a holding somebody wants out of opens
+     * the sheet already on the sell side with the position loaded, because
+     * looking at a losing position and deciding to close it is one decision,
+     * and making it two clicks is how somebody ends up still holding it.
+     */
+    const exiting = params.get('sell');
+    if (exiting !== null) {
+      const outcome = initial.outcomes.find((row) => row.id === exiting);
+      if (outcome !== undefined && initial.state === 'active') {
+        // The sell slider is bounded by what is actually held, and the
+        // portfolio link carries only which outcome. Asking the API rather than
+        // trusting a number from the query string: a bound supplied by the URL
+        // is a bound anybody can edit.
+        void authed<{ outcomeId: string; shares: string }[]>('/me/positions')
+          .then((rows) => {
+            const held = rows.find((row) => row.outcomeId === exiting)?.shares;
+            if (held === undefined || Number.parseFloat(held) <= 0) return;
+            setIntent({ outcome, side: 'sell', held });
+            setPicked(outcome.id);
+          })
+          .catch(() => undefined);
+      }
+      router.replace(pathname, { scroll: false });
+      return;
+    }
+
     const requested = params.get('side');
     if (requested === null) return;
 

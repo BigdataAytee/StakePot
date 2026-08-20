@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { CommunityModule } from '../community/community.module';
 import { MarketService } from './market.service';
 import { OfficialMarketService } from './official-market.service';
+import { PriceWindowService } from './price-window.service';
 
 /**
  * Official markets: the shelf the platform runs itself.
@@ -13,7 +14,7 @@ import { OfficialMarketService } from './official-market.service';
  */
 @Module({
   imports: [CommunityModule],
-  providers: [MarketService, OfficialMarketService],
-  exports: [OfficialMarketService],
+  providers: [MarketService, OfficialMarketService, PriceWindowService],
+  exports: [OfficialMarketService, PriceWindowService],
 })
 export class MarketModule {}

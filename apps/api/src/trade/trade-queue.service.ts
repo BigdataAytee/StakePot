@@ -3,6 +3,7 @@ import type { Trade } from '@prisma/client';
 import Redis from 'ioredis';
 
 import { ThreadService } from '../community-layer/thread.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { env } from '../config/env';
 import { logger } from '../logger';
 import { PrismaService } from '../prisma/prisma.service';
@@ -95,6 +96,7 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
     private readonly trades: TradeService,
     private readonly prisma: PrismaService,
     private readonly threads: ThreadService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -245,6 +247,7 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
       const trade =
         request.kind === 'buy' ? await this.trades.buy(request) : await this.trades.sell(request);
       await this.postReason(request);
+      await this.confirm(trade);
       return { status: 'filled', requestId: request.requestId, trade };
     } catch (error) {
       if (isRefusal(error)) {
@@ -330,12 +333,13 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      if (request.kind === 'buy') await this.trades.buy(request);
-      else await this.trades.sell(request);
+      const trade =
+        request.kind === 'buy' ? await this.trades.buy(request) : await this.trades.sell(request);
       // Before the announcement, not after: the announcement is what releases
       // the waiting caller, and a caller released ahead of its own take reloads
       // the market to find the thread without it.
       await this.postReason(request);
+      await this.confirm(trade);
       // Announce the fill so waiters never have to poll the database for it.
       await redis.set(filledKey(request.requestId), '1', 'EX', 300).catch(() => undefined);
     } catch (error) {
@@ -388,6 +392,46 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
         fromTrade: true,
       })
       .catch(() => undefined);
+  }
+
+  /**
+   * The receipt for a fill.
+   *
+   * `trade_confirmed` has been in the notification taxonomy since the service
+   * was written and nothing ever sent one — the type existed, the inbox never
+   * showed a trade. It reads as a broker's confirmation because that is what it
+   * is: side, size, instrument, price.
+   *
+   * Best-effort for the same reason the take is: a notification that fails must
+   * never unwind a trade that has already settled.
+   */
+  private async confirm(trade: {
+    id: string;
+    userId: string;
+    marketId: string;
+    outcomeId: string;
+    side: string;
+    shares: unknown;
+    cost: unknown;
+  }): Promise<void> {
+    try {
+      const outcome = await this.prisma.outcome.findUnique({
+        where: { id: trade.outcomeId },
+        select: { label: true, priceCurrent: true },
+      });
+      if (outcome === null) return;
+      const shares = Number(String(trade.shares)).toFixed(2);
+      const kobo = Math.round(Number(String(outcome.priceCurrent)) * 100);
+      const verb = trade.side === 'buy' ? 'Bought' : 'Sold';
+      await this.notifications.notify({
+        userId: trade.userId,
+        type: 'trade_confirmed',
+        body: `${verb} ${shares} shares ${outcome.label.toUpperCase()} @ ${kobo}k.`,
+        data: { marketId: trade.marketId, tradeId: trade.id },
+      });
+    } catch {
+      // See above.
+    }
   }
 
   private async ensureGroup(marketId: string): Promise<void> {

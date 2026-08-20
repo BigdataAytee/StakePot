@@ -15,9 +15,13 @@ import { IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength } from 'clas
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PriceWindowService } from '../market/price-window.service';
 import { TradeQueueService } from '../trade/trade-queue.service';
 import { WalletService } from '../wallet/wallet.service';
 import { RateLimit, RateLimitGuard } from '../hardening/rate-limit.guard';
+
+/** The portfolio's "today", and every card's 24h change. */
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** A positive decimal amount as a string — money never crosses the wire as a float. */
 const DECIMAL = /^\d+(\.\d{1,18})?$/;
@@ -44,6 +48,7 @@ export class TradesController {
     private readonly wallet: WalletService,
     private readonly prisma: PrismaService,
     private readonly analytics: AnalyticsService,
+    private readonly prices: PriceWindowService,
   ) {}
 
   @Post('trades')
@@ -301,6 +306,7 @@ export class TradesController {
             state: true,
             resolvedOutcomeId: true,
             shelf: true,
+            eventDate: true,
             resolutions: { select: { finalizedAt: true }, take: 1 },
           },
         },
@@ -308,9 +314,33 @@ export class TradesController {
       },
     });
 
+    /*
+     * A day of price for every open holding, in one query.
+     *
+     * The portfolio header claims a figure for today — "up ₦412" — and a row
+     * cannot substantiate that from its current price alone; it needs where the
+     * price stood when the day began. The same fetch supplies each row's
+     * sparkline, so the line and the number can never disagree with each other.
+     *
+     * Open positions only: a settled one's price is pinned at 0 or 1 and its
+     * result already lives in `realizedPnl`, so a day of history for it would
+     * be work done to draw a line that says nothing.
+     */
+    const windows = await this.prices.forOutcomes(
+      positions.filter((p) => p.market.resolvedOutcomeId === null).map((p) => p.outcomeId),
+      DAY_MS,
+    );
+
     return positions.map((p) => {
       const resolved = p.market.resolvedOutcomeId;
+      const window = windows.get(p.outcomeId);
       return {
+        /** Where the price stood 24h ago, and the move since. Null if younger. */
+        price24hAgo: window?.opened?.toString() ?? null,
+        change24h: window?.change ?? null,
+        /** Points for the row's sparkline, already thinned for drawing. */
+        series: window?.series ?? [],
+        settlesAt: p.market.eventDate.toISOString(),
         marketId: p.marketId,
         marketQuestion: p.market.question,
         marketState: p.market.state,
