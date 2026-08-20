@@ -3,6 +3,7 @@
 import {
   AreaSeries,
   CandlestickSeries,
+  HistogramSeries,
   LineSeries,
   createChart,
   createSeriesMarkers,
@@ -15,13 +16,22 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { outcomeColour, palette, semantic, type SemanticRole } from '@stakeam/tokens';
 
-import type { Annotation, OutcomeView, PricePoint } from '@/lib/api';
-import { countdown, dateTime, money, percent, settlesOn } from '@/lib/format';
+import type { Annotation, FlowBucket, OutcomeView, PricePoint } from '@/lib/api';
+import { ago, countdown, dateTime, money, percent, settlesOn } from '@/lib/format';
 import { bucketFor, toCandles, type Candle } from '@/lib/candles';
 import { EDGE_STEP_MS, carryCandles, carryForward, edgeAt, elapsed } from '@/lib/liveness';
 
 export const TIMEFRAMES = ['1H', '6H', '1D', '1W', 'ALL'] as const;
 export type Timeframe = (typeof TIMEFRAMES)[number];
+
+/** The button's label as a span of time, for the sentence that names it. */
+const WINDOW_NAME: Record<string, string> = {
+  '1H': 'hour',
+  '6H': 'six hours',
+  '1D': 'day',
+  '1W': 'week',
+  ALL: 'market',
+};
 
 /** The marks §7.2a pins on the chart, so the line doubles as the market's timeline. */
 const ANNOTATION_MARK: Record<Annotation['type'], string> = {
@@ -56,6 +66,7 @@ export function PriceChart({
   settlesAt,
   targetLine,
   lastTradeAt,
+  flow = [],
 }: {
   points: PricePoint[];
   outcomes: OutcomeView[];
@@ -86,6 +97,13 @@ export function PriceChart({
    * view and the honest label there is "last trade 1h ago", not silence.
    */
   lastTradeAt?: string | null;
+  /**
+   * Trading activity, bucketed to the chart's grid — the bars under the line.
+   *
+   * Empty is a legitimate answer and draws no band: a market that has never
+   * traded should not be given a row of zeroes to sit on.
+   */
+  flow?: FlowBucket[];
 }) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
@@ -93,6 +111,7 @@ export function PriceChart({
     new Map<string, ISeriesApi<'Area'> | ISeriesApi<'Line'> | ISeriesApi<'Candlestick'>>(),
   );
   const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+  const bars = useRef<ISeriesApi<'Histogram'> | null>(null);
   const [isolated, setIsolated] = useState<string | null>(null);
 
   const binary = outcomes.length === 2;
@@ -218,6 +237,31 @@ export function PriceChart({
             }),
       );
     }
+
+    /*
+     * The activity band.
+     *
+     * On its own price scale, pinned to the bottom fifth, with no axis of its
+     * own — the numbers on the right of this chart are probabilities, and a
+     * second column of naira beside them would be two units sharing one edge.
+     * The bars are read by height against each other, which is all a volume
+     * row is ever read by.
+     *
+     * Its scale autoscales to its own maximum, which is the property that
+     * makes it worth having: on a market where one person has traded once,
+     * that single bar fills the band. A row of activity you can see is the
+     * difference between "nobody is here" and "the price is agreed".
+     */
+    bars.current = created.addSeries(HistogramSeries, {
+      priceScaleId: 'flow',
+      priceFormat: { type: 'volume' },
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+    created.priceScale('flow').applyOptions({
+      scaleMargins: { top: 0.84, bottom: 0 },
+      visible: false,
+    });
 
     chart.current = created;
     seriesByOutcome.current = map;
@@ -512,6 +556,49 @@ export function PriceChart({
   }, [points, annotations, plotted, isolated, candles, timeframe]);
 
   /**
+   * The activity bars.
+   *
+   * Coloured by which side won the bucket, not by whether the price rose:
+   * these are trades, and a bucket in which four people bought and one sold is
+   * green whatever the price did afterwards. A bucket that splits evenly is
+   * neither, and is drawn muted rather than being forced onto a side.
+   */
+  useEffect(() => {
+    const series = bars.current;
+    if (series === null) return;
+
+    const dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const theme = dark ? semantic.dark : semantic.light;
+
+    /*
+     * Make room, but only when there is something to put in it.
+     *
+     * The price line and the bars share one canvas, so without this the area
+     * fill under the line runs straight through the bars and neither is
+     * readable. The margin is applied here rather than at creation because a
+     * market with no trades should not be given an empty sixth of its chart to
+     * sit above — the line takes the whole height back the moment the band has
+     * nothing in it.
+     */
+    chart.current?.priceScale('right').applyOptions({
+      scaleMargins: { top: 0.12, bottom: flow.length === 0 ? 0.08 : 0.26 },
+    });
+
+    series.setData(
+      flow.map((bucket) => ({
+        time: bucket.ts as Time,
+        value: Number.parseFloat(bucket.volume),
+        color:
+          bucket.buys === bucket.sells
+            ? `${theme.textMuted}55`
+            : bucket.buys > bucket.sells
+              ? `${palette.green}66`
+              : `${palette.red}66`,
+      })),
+    );
+  }, [flow]);
+
+  /**
    * The moment a trade lands, as a ring off the end dot.
    *
    * Keyed on the newest real point rather than on a render, so it fires when
@@ -612,9 +699,30 @@ export function PriceChart({
           </span>
         )}
       </div>
+      {/*
+        Two different silences, and they were being told the same way.
+
+        A market nobody has ever traded and a market that traded busily this
+        morning both drew an empty box reading "No trades yet" — because the
+        box was keyed on whether *this window* had points, and a 1H view of a
+        market whose last trade was ninety minutes ago has none. Somebody
+        looking at a market with a hundred trades in it was told it had never
+        been traded, which is the single most discouraging thing this screen
+        could say and it was not true.
+
+        `lastTradeAt` is what separates them, so the second case now says which
+        window is empty and what to do about it.
+      */}
       {points.length === 0 && (
         <p className="rounded-md border border-dashed border-border px-3 py-6 text-center text-sm text-text-muted">
-          No trades yet. The first one draws the line.
+          {lastTradeAt == null ? (
+            'No trades yet. The first one draws the line.'
+          ) : (
+            <>
+              Nothing traded in this {WINDOW_NAME[timeframe] ?? 'window'} — the last trade was{' '}
+              <b className="font-mono">{ago(lastTradeAt)}</b>. Widen the window to see it.
+            </>
+          )}
         </p>
       )}
 

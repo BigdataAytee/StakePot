@@ -22,6 +22,23 @@ const TIMEFRAME_HOURS: Record<string, number | null> = {
 };
 
 /**
+ * How wide an activity bar is, per timeframe.
+ *
+ * The same grid the chart's candles use, so the bars underneath the line queue
+ * up with it rather than sitting at their own offsets. Kept here rather than
+ * imported from the web app because the bucketing is done in SQL: a market
+ * with fifty thousand trades in a week must not send fifty thousand rows to a
+ * browser so the browser can count them.
+ */
+const FLOW_BUCKET_SECONDS: Record<string, number> = {
+  '1H': 60,
+  '6H': 5 * 60,
+  '1D': 15 * 60,
+  '1W': 2 * 60 * 60,
+  ALL: 12 * 60 * 60,
+};
+
+/**
  * The read path (§11): served from Redis and replicas, never the primary's
  * write path. Nothing here takes a lock or opens a transaction.
  */
@@ -325,6 +342,61 @@ export class MarketsController {
       pot: p.pot.toString(),
       ts: p.ts.toISOString(),
     }));
+  }
+
+  /**
+   * Trading activity over the chart's window, bucketed to its grid.
+   *
+   * The bars under the price line. They exist because of a specific failure:
+   * a market sized for ₦2,000 stakes (rule 24 — L is about 25× a typical
+   * stake) moves about half a point on a ₦500 trade, and half a point is
+   * invisible on a button that has to round to whole kobo so the two sides
+   * still read 100. Somebody trades, the price genuinely moves, and every
+   * number they can see says nothing happened.
+   *
+   * Volume is the honest answer to that. It does not touch the price, it does
+   * not stand in for one, and it does not need a whole point of movement to
+   * have something to say — a bar is a bar. A flat line above a row of bars is
+   * a market being argued over at a stable price, which is a completely
+   * different thing from a market nobody is trading, and until now the screen
+   * drew them identically.
+   *
+   * Aggregated in SQL rather than in Node. The alternative is shipping every
+   * trade in the window to a phone so the phone can add them up.
+   */
+  @Get(':id/flow')
+  async flow(@Param('id') id: string, @Query('tf') timeframe = '1D') {
+    const hours = TIMEFRAME_HOURS[timeframe] ?? null;
+    const bucket = FLOW_BUCKET_SECONDS[timeframe] ?? FLOW_BUCKET_SECONDS['1D'] ?? 900;
+    const since = hours === null ? new Date(0) : subHours(new Date(), hours);
+
+    const rows = await this.prisma.$queryRaw<
+      { ts: bigint; buys: bigint; sells: bigint; volume: Prisma.Decimal | null }[]
+    >`
+      SELECT (floor(extract(epoch FROM "createdAt") / ${bucket}) * ${bucket})::bigint AS ts,
+             count(*) FILTER (WHERE side = 'buy')::bigint  AS buys,
+             count(*) FILTER (WHERE side = 'sell')::bigint AS sells,
+             sum(cost) AS volume
+      FROM trades
+      WHERE "marketId" = ${id}
+        -- §2.4: a seed takes no side and moves no price. A bar for it would
+        -- draw the market's opening liquidity as if somebody had taken a view.
+        AND side <> 'seed'
+        AND "createdAt" >= ${since}
+      GROUP BY 1
+      ORDER BY 1
+      LIMIT 500
+    `;
+
+    return {
+      bucketSeconds: bucket,
+      buckets: rows.map((row) => ({
+        ts: Number(row.ts),
+        buys: Number(row.buys),
+        sells: Number(row.sells),
+        volume: (row.volume ?? 0).toString(),
+      })),
+    };
   }
 
   /**

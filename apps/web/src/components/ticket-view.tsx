@@ -29,6 +29,7 @@ import { TradeSheet, type TradeIntent } from '@/components/trade-sheet';
 import { useMarketFeed } from '@/hooks/use-market-feed';
 import {
   api,
+  type FlowBucket,
   type MarketContext,
   type MarketDetail,
   type PricePoint,
@@ -226,6 +227,28 @@ export function TicketView({
       cancelled = true;
     };
   }, [initial.id, seeded]);
+
+  /**
+   * The activity bars under the chart, on the same trigger as the line.
+   *
+   * Same timeframe, same refetch: they are two readings of the same window and
+   * a pair that could disagree would be worse than either alone. Failure is
+   * silent and leaves the band empty — the price line is the point of the
+   * chart, and losing the bars must not cost it.
+   */
+  const [flow, setFlow] = useState<FlowBucket[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    void api
+      .flow(initial.id, timeframe)
+      .then((data) => {
+        if (!cancelled) setFlow(data.buckets);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [initial.id, timeframe, live?.at]);
 
   useEffect(() => {
     if (headline === undefined) return;
@@ -425,6 +448,7 @@ export function TicketView({
                   volume={initial.volume24h}
                   settlesAt={initial.eventDate}
                   lastTradeAt={lastTradeAt}
+                  flow={flow}
                 />
 
                 {/* The argument bar: who is winning, as one shape. */}

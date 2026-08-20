@@ -223,6 +223,27 @@ export interface CreatorByline {
   cleanResolutions: number;
 }
 
+/**
+ * One bar of trading activity: how many trades landed in this bucket, which
+ * way they went, and how much money moved.
+ *
+ * Volume, never price. It sits under the price line to answer the question a
+ * flat line cannot — whether the market is being argued over at a stable price
+ * or simply not being traded.
+ */
+export interface FlowBucket {
+  /** Bucket start, epoch seconds, aligned to the timeframe's grid. */
+  ts: number;
+  buys: number;
+  sells: number;
+  volume: string;
+}
+
+export interface MarketFlow {
+  bucketSeconds: number;
+  buckets: FlowBucket[];
+}
+
 export interface PricePoint {
   outcomeId: string;
   price: string;
@@ -253,6 +274,8 @@ export const api = {
   context: (id: string) => get<MarketContext>(`/markets/${id}/context`),
   /** How busy the market is right now — trade counts, never a price. */
   pulse: (id: string) => get<MarketPulse>(`/markets/${id}/pulse`),
+  /** Bucketed trading activity for the chart's volume bars. */
+  flow: (id: string, tf: string) => get<MarketFlow>(`/markets/${id}/flow?tf=${tf}`),
   /** Omit `outcomeId` to get every outcome's series — the multi-line overlay. */
   history: (id: string, outcomeId: string | undefined, tf: string) =>
     get<PricePoint[]>(

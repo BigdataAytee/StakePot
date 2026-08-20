@@ -168,6 +168,45 @@ describe.skipIf(!TEST_DATABASE_URL)('market pulse (integration)', () => {
     expect(JSON.stringify(pulse.ticker)).not.toContain(user.id);
   });
 
+  it('buckets executed trades to the chart grid, with sides and money', async () => {
+    const user = await trader('flow');
+    // Two trades inside one 15-minute bucket, one in another.
+    await trade(user.id, 'buy', 2, 'f1');
+    await trade(user.id, 'sell', 3, 'f2');
+    await trade(user.id, 'buy', 40, 'f3');
+
+    const flow = await controller.flow('pulse', '1D');
+
+    expect(flow.bucketSeconds).toBe(900);
+    expect(flow.buckets).toHaveLength(2);
+
+    const total = flow.buckets.reduce((sum, b) => sum + b.buys + b.sells, 0);
+    expect(total).toBe(3);
+    // Money, not shares: the bar's height is what changed hands.
+    expect(flow.buckets.reduce((sum, b) => sum + Number(b.volume), 0)).toBe(15);
+  });
+
+  it('keeps seeds out of the bars', async () => {
+    const user = await trader('flowseed');
+    await trade(user.id, 'seed', 2, 'fs');
+
+    // §2.4 again, and it matters more here than in a list: a bar for the
+    // opening liquidity would draw the market as busy on the day it opened,
+    // when nobody had yet taken a view on anything.
+    expect((await controller.flow('pulse', '1D')).buckets).toHaveLength(0);
+  });
+
+  it('honours the timeframe, and widens with it', async () => {
+    const user = await trader('flowtf');
+    await trade(user.id, 'buy', 5, 'w1');
+    await trade(user.id, 'buy', 300, 'w2');
+
+    // The five-hour-old trade is outside an hour and inside a day.
+    expect((await controller.flow('pulse', '1H')).buckets).toHaveLength(1);
+    expect((await controller.flow('pulse', '1D')).buckets).toHaveLength(2);
+    expect((await controller.flow('pulse', '1H')).bucketSeconds).toBe(60);
+  });
+
   it('carries no price of its own — every figure is a count of trades', async () => {
     const user = await trader('shape');
     await trade(user.id, 'buy', 1, 'p1');
