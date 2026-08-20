@@ -294,6 +294,8 @@ export interface CrawlHealth {
     uncoveredMarkets: number;
   };
   budgets: { sourcesPerPass: number; itemsPerMarket: number };
+  /** Whether anything is actually reading, and when it last did. */
+  pipeline: { fetcher: string; fetching: boolean; lastFetchAt: string | null };
   coverage: {
     marketId: string;
     question: string;
@@ -432,6 +434,14 @@ export const admin = {
     ),
   /** Is the research pipeline actually finding anything? */
   crawlHealth: () => request<CrawlHealth>('/admin/studio/crawl'),
+  /** Run a research pass now instead of waiting for the five-minute sweep. */
+  runCrawlPass: () =>
+    request<{
+      sourcesRead: number;
+      itemsStored: number;
+      linksMade: number;
+      conflictsFound: number;
+    }>('/admin/studio/crawl/pass', { method: 'POST' }),
   /** The kill switch: one source, a whole tier, or everything. */
   setSourcesEnabled: (body: {
     scope: 'source' | 'tier' | 'all';

@@ -39,6 +39,20 @@ export class ResearchService {
   ) {}
 
   /**
+   * Which fetcher is bound, by name.
+   *
+   * The crawl-health screen needs it to tell three states apart that otherwise
+   * look identical — nothing has been read because no fetcher is configured,
+   * because the sweep has never run, or because the sources genuinely had
+   * nothing new. Only the first is a deployment that will never read anything,
+   * and it is the easiest of the three to mistake for the third.
+   */
+  describeFetcher(): { name: string; enabled: boolean } {
+    const name = this.fetcher.constructor.name;
+    return { name, enabled: !(this.fetcher instanceof DisabledFetcher) };
+  }
+
+  /**
    * One pass: read the sources that are due, store what is new, and link it to
    * the markets it is about.
    *

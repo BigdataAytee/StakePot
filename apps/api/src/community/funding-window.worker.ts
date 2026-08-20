@@ -8,6 +8,7 @@ import { OpportunityService } from '../creator/opportunity.service';
 import { AbuseService } from '../hardening/abuse.service';
 import { LedgerAuditService } from '../hardening/ledger-audit.service';
 import { LeaderboardService } from '../leaderboard/leaderboard.service';
+import { ResearchService } from '../intel/research.service';
 import { MarketHealthService } from '../market/health.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResolutionFlowService } from '../resolution/resolution-flow.service';
@@ -29,6 +30,11 @@ const QUEUE = 'funding-window';
  * prepared — and records what fires, so rule 43's post-mortem can say what went
  * wrong during the market rather than only how it ended.
  *
+ * `research-sweep` is the intelligence layer's heartbeat. Without it nothing
+ * reads a source, so every context panel, evidence panel and dossier is
+ * permanently empty — and empty is exactly what "quiet news week" looks like,
+ * which is why it went unnoticed until somebody went looking for the caller.
+ *
  * `freeze-sweep` is the odd one out: a repeatable job rather than a deadline,
  * flipping markets whose event has started into `pending_resolution` so the
  * shelf stops saying LIVE during the match. `nudge-sweep` and
@@ -46,6 +52,7 @@ type CloseKind =
   | 'leaderboard-sweep'
   | 'abuse-sweep'
   | 'health-sweep'
+  | 'research-sweep'
   | 'ledger-audit';
 
 interface CloseJob {
@@ -79,6 +86,7 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
     private readonly leaderboards: LeaderboardService,
     private readonly abuse: AbuseService,
     private readonly health: MarketHealthService,
+    private readonly research: ResearchService,
     private readonly ledgerAudit: LedgerAuditService,
     private readonly prisma: PrismaService,
   ) {}
@@ -146,6 +154,11 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       case 'abuse-sweep':
         // §6.5's queue. Detection only — every freeze is a person's decision.
         return this.abuse.sweep();
+      case 'research-sweep':
+        // The pipeline decides which sources are actually due from their own
+        // cadence, so this can run often and mostly do nothing. Detection and
+        // collection only — a pass cannot settle, publish or move money.
+        return this.research.pass();
       case 'health-sweep':
         // Part 5 of docs/ticket-creation-checklist.md. Detection only as well:
         // a flag is something for an operator to read on the Manage tab and for
@@ -287,6 +300,16 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       'health-sweep',
       { every: 900_000 },
       { name: 'close', data: { marketId: '', kind: 'health-sweep' } },
+    );
+    // Every five minutes. `pass()` reads each source's own crawl interval and
+    // skips the ones that are not due, so the frequency here is the *floor* on
+    // responsiveness rather than the crawl rate: a market settling in an hour
+    // wants its source read every two minutes, and it cannot be if nothing asks
+    // more often than that.
+    await this.queue?.upsertJobScheduler(
+      'research-sweep',
+      { every: 300_000 },
+      { name: 'close', data: { marketId: '', kind: 'research-sweep' } },
     );
     // §2.7 says nightly. Six-hourly instead: the check is cheap, and the gap
     // between a broken invariant and somebody knowing about it is the window in

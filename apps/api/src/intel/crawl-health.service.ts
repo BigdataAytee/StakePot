@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 
 import { PrismaService } from '../prisma/prisma.service';
-import { ITEMS_PER_MARKET, SOURCES_PER_PASS } from './research.service';
+import { ITEMS_PER_MARKET, ResearchService, SOURCES_PER_PASS } from './research.service';
 
 const DAY = 86_400_000;
 
@@ -58,6 +58,21 @@ export interface CrawlHealth {
   };
   /** The per-pass ceilings, printed rather than assumed. */
   readonly budgets: { readonly sourcesPerPass: number; readonly itemsPerMarket: number };
+  /**
+   * Whether anything is actually reading, and when it last did.
+   *
+   * Three states look identical from the source rows alone — no fetcher is
+   * configured, the sweep has never run, or the sources genuinely had nothing
+   * new — and only the first is a deployment that will never read anything.
+   * Distinguishing them is the whole reason this field exists: the pipeline
+   * once had no scheduled caller at all, and every screen downstream rendered
+   * an empty list that looked exactly like a quiet news week.
+   */
+  readonly pipeline: {
+    readonly fetcher: string;
+    readonly fetching: boolean;
+    readonly lastFetchAt: string | null;
+  };
   readonly coverage: readonly MarketCoverage[];
   readonly conflicts: readonly {
     readonly id: string;
@@ -88,7 +103,10 @@ export interface CrawlHealth {
  */
 @Injectable()
 export class CrawlHealthService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly research: ResearchService,
+  ) {}
 
   async report(now = new Date()): Promise<CrawlHealth> {
     const since = new Date(now.getTime() - DAY);
@@ -146,6 +164,14 @@ export class CrawlHealthService {
     });
 
     const coverage = await this.coverageFor(markets, now);
+    const fetcher = this.research.describeFetcher();
+    const lastFetch = sources.reduce<Date | null>(
+      (latest, source) =>
+        source.lastFetchAt !== null && (latest === null || source.lastFetchAt > latest)
+          ? source.lastFetchAt
+          : latest,
+      null,
+    );
 
     const itemsLast24h = [...itemsBy.values()].reduce((a, b) => a + b, 0);
 
@@ -162,6 +188,11 @@ export class CrawlHealthService {
         uncoveredMarkets: coverage.filter((market) => market.items === 0).length,
       },
       budgets: { sourcesPerPass: SOURCES_PER_PASS, itemsPerMarket: ITEMS_PER_MARKET },
+      pipeline: {
+        fetcher: fetcher.name,
+        fetching: fetcher.enabled,
+        lastFetchAt: lastFetch === null ? null : lastFetch.toISOString(),
+      },
       coverage,
       conflicts: openConflicts.map((conflict) => ({
         id: conflict.id,

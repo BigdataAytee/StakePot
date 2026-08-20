@@ -26,6 +26,7 @@ import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { PrismaService } from '../prisma/prisma.service';
 import { CrawlHealthService } from '../intel/crawl-health.service';
+import { ResearchService } from '../intel/research.service';
 import { SourceRegistryError, SourceRegistryService } from '../intel/source-registry.service';
 import { MarketHealthService } from '../market/health.service';
 import { StudioError, StudioService } from '../market/studio.service';
@@ -110,6 +111,7 @@ export class StudioController {
     private readonly studio: StudioService,
     private readonly health: MarketHealthService,
     private readonly crawl: CrawlHealthService,
+    private readonly research: ResearchService,
     private readonly sources: SourceRegistryService,
   ) {}
 
@@ -168,6 +170,24 @@ export class StudioController {
   @Roles('resolver', 'admin')
   async crawlHealth() {
     return this.crawl.report();
+  }
+
+  /**
+   * Run a research pass now, rather than waiting for the sweep.
+   *
+   * The sweep runs every five minutes and each source decides for itself
+   * whether it is due, which is right for steady state and useless when
+   * somebody has just added a source and wants to know whether it works. This
+   * makes the pipeline observable on demand: press it, read the counts.
+   *
+   * Collection only. A pass reads sources, stores items and links them; it
+   * cannot publish, settle or move money.
+   */
+  @Post('crawl/pass')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async runPass() {
+    return this.research.pass();
   }
 
   /**

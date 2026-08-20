@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { PrismaService } from '../prisma/prisma.service';
 import { resetDatabase } from '../testing/reset';
 import { CrawlHealthService } from './crawl-health.service';
+import { ResearchService } from './research.service';
 
 /**
  * The crawl health report.
@@ -27,7 +28,9 @@ describe.skipIf(!TEST_DATABASE_URL)('crawl health (integration)', () => {
       datasources: { db: { url: TEST_DATABASE_URL as string } },
     }) as unknown as PrismaService;
     await prisma.$connect();
-    crawl = new CrawlHealthService(prisma);
+    // The real service with its default (disabled) fetcher: the report has to
+    // say "nothing is configured to read" rather than leaving it ambiguous.
+    crawl = new CrawlHealthService(prisma, new ResearchService(prisma));
   });
 
   afterAll(async () => {
@@ -185,4 +188,16 @@ describe.skipIf(!TEST_DATABASE_URL)('crawl health (integration)', () => {
     });
     return market.id;
   }
+  it('says when nothing is configured to read, rather than just showing zero', async () => {
+    await source({ name: 'Never read' });
+
+    const report = await crawl.report(NOW);
+
+    // The failure this distinguishes: for a while the pipeline had no scheduled
+    // caller at all, so every screen downstream rendered an empty list — which
+    // is indistinguishable from a quiet news week unless something says which.
+    expect(report.pipeline.fetching).toBe(false);
+    expect(report.pipeline.fetcher).toBe('DisabledFetcher');
+    expect(report.pipeline.lastFetchAt).toBeNull();
+  });
 });

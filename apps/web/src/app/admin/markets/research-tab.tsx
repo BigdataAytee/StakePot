@@ -23,6 +23,13 @@ export function ResearchTab() {
   const [health, setHealth] = useState<CrawlHealth | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  /** What the last on-demand pass did, so pressing the button says something. */
+  const [pass, setPass] = useState<{
+    sourcesRead: number;
+    itemsStored: number;
+    linksMade: number;
+    conflictsFound: number;
+  } | null>(null);
 
   const load = useCallback(() => {
     void admin
@@ -91,16 +98,56 @@ export function ResearchTab() {
         />
       </div>
 
+      {/*
+        The state that is invisible from the counts alone, and the one that
+        actually bit: for a while nothing was scheduled to run a pass, so every
+        screen downstream rendered an empty list — which reads exactly like a
+        quiet news week. "Zero items" and "nothing is reading" have to be
+        different sentences.
+      */}
+      {!health.pipeline.fetching && (
+        <p className="rounded-md bg-caution-bg px-2.5 py-2 text-sm text-caution">
+          No fetcher is configured ({health.pipeline.fetcher}), so nothing is being read and nothing
+          ever will be. Everything below is history, not a live picture.
+        </p>
+      )}
+
       <p className="text-xs text-text-muted">
         {totals.enabled} of {totals.sources} sources on · {totals.itemsLast24h} items in 24h ·{' '}
         {totals.openConflicts} unresolved disagreement{totals.openConflicts === 1 ? '' : 's'}.{' '}
         {/* The caps, printed rather than assumed: a ceiling nobody can see is
             indistinguishable from having found everything there was. */}
         Each pass reads at most {budgets.sourcesPerPass} sources and keeps {budgets.itemsPerMarket}{' '}
-        items per market.
+        items per market. A pass runs every five minutes;{' '}
+        {health.pipeline.lastFetchAt === null
+          ? 'no source has been read yet'
+          : `last read ${new Date(health.pipeline.lastFetchAt).toLocaleString('en-NG')}`}
+        .
       </p>
 
       <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() =>
+            void (async () => {
+              setBusy(true);
+              setError(null);
+              try {
+                const result = await admin.runCrawlPass();
+                setPass(result);
+                load();
+              } catch (caught) {
+                setError((caught as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            })()
+          }
+          className="rounded-sm bg-rise px-3 py-1.5 text-sm font-bold text-paper disabled:opacity-40"
+        >
+          {busy ? 'Reading…' : 'Run a pass now'}
+        </button>
         <button
           type="button"
           disabled={busy}
@@ -124,6 +171,14 @@ export function ResearchTab() {
           Resume all
         </button>
       </div>
+
+      {pass !== null && (
+        <p className="font-mono text-xs text-text-muted">
+          Last pass: read {pass.sourcesRead} sources, stored {pass.itemsStored} items, linked{' '}
+          {pass.linksMade}, flagged {pass.conflictsFound} disagreement
+          {pass.conflictsFound === 1 ? '' : 's'}.
+        </p>
+      )}
 
       {health.conflicts.length > 0 && (
         <section>
