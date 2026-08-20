@@ -3,7 +3,7 @@
 import { ExternalLink, Sparkles } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
-import { admin, type DraftRow } from '@/lib/admin-api';
+import { admin, type DraftRow, type StudioAnswers } from '@/lib/admin-api';
 
 /**
  * §6.2's drafts queue.
@@ -21,6 +21,11 @@ export default function DraftsQueue() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
+  // The checklist questions only a person can answer, per draft. Held here
+  // rather than sent blank: `openFromDraft` re-runs the whole checklist and
+  // refuses while any of them is unanswered, so a queue that posted an empty
+  // object would show the operator a refusal instead of a market.
+  const [answers, setAnswers] = useState<Record<string, StudioAnswers>>({});
 
   const load = (includeRejected = showRefused): void => {
     void admin
@@ -164,11 +169,20 @@ export default function DraftsQueue() {
               )}
 
               {draft.state === 'suggested' && (
+                <SignOff
+                  answers={answers[draft.id]}
+                  onChange={(next) => setAnswers((current) => ({ ...current, [draft.id]: next }))}
+                />
+              )}
+
+              {draft.state === 'suggested' && (
                 <div className="mt-3 flex items-center gap-2">
                   <button
                     type="button"
-                    disabled={busy === draft.id}
-                    onClick={() => void act(draft.id, () => admin.openDraft(draft.id))}
+                    disabled={busy === draft.id || !signedOff(answers[draft.id])}
+                    onClick={() =>
+                      void act(draft.id, () => admin.openDraft(draft.id, answers[draft.id] ?? {}))
+                    }
                     className="rounded-sm bg-rise px-3 py-1.5 text-sm font-bold text-paper disabled:opacity-40"
                   >
                     Open it
@@ -200,6 +214,138 @@ export default function DraftsQueue() {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+/**
+ * Whether this draft has been signed off well enough to publish.
+ *
+ * The conflict check is the one whose "yes" is the bad answer: wanting a side
+ * to win is the conflict, and the checklist's remedy is to hand the market to
+ * somebody else rather than to note it and carry on.
+ */
+function signedOff(answers: StudioAnswers | undefined): boolean {
+  if (answers?.attestedNoInfluence !== true) return false;
+  const given = answers.confirmations ?? {};
+  return given['18'] === true && given['25'] === true && given['R3'] === false;
+}
+
+/**
+ * The four things a person has to answer before a draft becomes a market.
+ *
+ * Rendered here, on the queue, rather than behind an "are you sure" — the
+ * questions are the review. A confirmation dialogue that says "publish this
+ * market?" asks nothing; these ask four specific things the checklist says
+ * software cannot decide.
+ */
+function SignOff({
+  answers,
+  onChange,
+}: {
+  answers: StudioAnswers | undefined;
+  onChange: (next: StudioAnswers) => void;
+}) {
+  const given = answers?.confirmations ?? {};
+  const set = (rule: string, value: boolean): void =>
+    onChange({
+      attestedNoInfluence: answers?.attestedNoInfluence ?? false,
+      confirmations: { ...given, [rule]: value },
+    });
+
+  return (
+    <div className="mt-3 space-y-2 rounded-md border border-border bg-surface p-3 text-sm">
+      <p className="text-[11px] font-semibold uppercase tracking-[.05em] text-text-muted">
+        Before it opens
+      </p>
+
+      <label className="flex items-start gap-2">
+        <input
+          type="checkbox"
+          checked={answers?.attestedNoInfluence === true}
+          onChange={(event) =>
+            onChange({ attestedNoInfluence: event.target.checked, confirmations: given })
+          }
+        />
+        <span>
+          <b>Rules 5 &amp; 16.</b> Nobody trading this — including me — can affect the outcome or
+          holds inside knowledge of it.
+        </span>
+      </label>
+
+      {/*
+        Each question maps its own press to its own stored answer, spelled out
+        rather than routed through a shared "is this the good answer" helper.
+        The first version had one: it took a `want` prop, computed
+        `pressed === want`, and the caller then negated it again — so pressing
+        the *right* answer to the front-page test stored the wrong one and the
+        publish button stayed dark with no explanation. Three questions do not
+        need an abstraction, and this one was inverting itself.
+      */}
+      <Question
+        rule="18"
+        text="Would this embarrass us if it were screenshotted onto the front page?"
+        // Confirmed means "no, it would not" — so a "No" press stores true.
+        pressed={given['18'] === undefined ? undefined : !given['18']}
+        onPress={(yes) => set('18', !yes)}
+      />
+      <Question
+        rule="25"
+        text="Could somebody with no context resolve this using only the page and the named source?"
+        pressed={given['25']}
+        onPress={(yes) => set('25', yes)}
+      />
+      <Question
+        rule="R3"
+        text="Do you want a particular side to win?"
+        // The one where "yes" is the bad answer: the checklist's remedy is to
+        // hand the market to somebody else, and the validator refuses on it.
+        pressed={given['R3']}
+        onPress={(yes) => set('R3', yes)}
+      />
+    </div>
+  );
+}
+
+/**
+ * One yes/no question, storing exactly what was pressed.
+ *
+ * No notion of a "correct" answer lives here. Two of the three questions want
+ * a "no" — the front-page test and the conflict check — and a component that
+ * knew which was which would render them all as "tick to confirm", which has a
+ * reviewer ticking a box beside "would this embarrass us?" instead of reading
+ * it.
+ */
+function Question({
+  rule,
+  text,
+  pressed,
+  onPress,
+}: {
+  rule: string;
+  text: string;
+  pressed: boolean | undefined;
+  onPress: (yes: boolean) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="font-mono text-xs text-text-muted">Rule {rule}</span>
+      <span className="flex-1">{text}</span>
+      <span className="flex gap-1">
+        {[true, false].map((value) => (
+          <button
+            key={String(value)}
+            type="button"
+            aria-pressed={pressed === value}
+            onClick={() => onPress(value)}
+            className={`rounded-sm border px-2.5 py-1 text-xs font-bold ${
+              pressed === value ? 'border-brand bg-brand text-paper' : 'border-border hover:bg-chip'
+            }`}
+          >
+            {value ? 'Yes' : 'No'}
+          </button>
+        ))}
+      </span>
     </div>
   );
 }

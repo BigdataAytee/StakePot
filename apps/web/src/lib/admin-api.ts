@@ -1,3 +1,5 @@
+import type { HealthFlag, RuleReport } from '@stakeam/rules';
+
 import { API_URL } from '@/lib/api';
 
 /**
@@ -208,6 +210,52 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+/** A market as the Studio's Manage tab sees it, flags and all. */
+export interface StudioMarketRow {
+  id: string;
+  question: string;
+  shelf: 'official' | 'community';
+  state: string;
+  sourceName: string;
+  eventDate: string;
+  voidDate: string;
+  createdAt: string;
+  pot: string;
+  holders: number;
+  outcomes: { id: string; label: string; price: string; staked: string }[];
+  flags: HealthFlag[];
+}
+
+/**
+ * A market as the wizard has it so far.
+ *
+ * Optional everywhere the checklist allows, because the wizard reviews on every
+ * step and posts half a market for most of a session.
+ */
+export interface StudioDraft {
+  question: string;
+  outcomes: { label: string; criteria: string }[];
+  otherLabel?: string | undefined;
+  sourceName: string;
+  sourceUrl: string;
+  eventDate: string;
+  voidDate: string;
+  edgeCases: Record<string, string>;
+  balanceEstimates?: number[] | undefined;
+  liquidityParam?: string | undefined;
+  expectedStake?: string | undefined;
+  category?: string | undefined;
+  tags?: string[] | undefined;
+  icon?: string | undefined;
+  blockbuster?: boolean | undefined;
+}
+
+/** What the reviewer answers: the attestation and the judgement questions. */
+export interface StudioAnswers {
+  attestedNoInfluence?: boolean;
+  confirmations?: Record<string, boolean>;
+}
+
 export const admin = {
   dashboard: () => request<DashboardView>('/admin/dashboard'),
   resolutionQueue: () => request<QueueMarket[]>('/admin/resolution-queue'),
@@ -248,8 +296,30 @@ export const admin = {
       '/admin/drafts/generate',
       { method: 'POST' },
     ),
-  openDraft: (id: string) =>
-    request<{ marketId: string; seeded: string }>(`/admin/drafts/${id}/open`, { method: 'POST' }),
+  openDraft: (id: string, answers: StudioAnswers) =>
+    request<{ marketId: string; seeded: string }>(`/admin/drafts/${id}/open`, {
+      method: 'POST',
+      body: JSON.stringify(answers),
+    }),
+  /** The Studio's Manage tab: live markets with their Part 5 health flags. */
+  studioMarkets: (state?: string) =>
+    request<StudioMarketRow[]>(
+      `/admin/studio/markets${state === undefined || state === '' ? '' : `?state=${state}`}`,
+    ),
+  /** The checklist over whatever the wizard currently has. */
+  studioReview: (draft: StudioDraft, answers: StudioAnswers) =>
+    request<RuleReport>('/admin/studio/review', {
+      method: 'POST',
+      body: JSON.stringify({ draft, ...answers }),
+    }),
+  studioPublish: (
+    draft: StudioDraft,
+    answers: StudioAnswers & { seedPerOutcome?: string; warningReason?: string },
+  ) =>
+    request<{ marketId: string; seeded: string; report: RuleReport }>('/admin/studio/publish', {
+      method: 'POST',
+      body: JSON.stringify({ draft, ...answers }),
+    }),
   rejectDraft: (id: string, reason: string) =>
     request<{ state: string }>(`/admin/drafts/${id}/reject`, {
       method: 'POST',

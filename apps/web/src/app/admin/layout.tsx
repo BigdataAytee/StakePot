@@ -9,7 +9,10 @@ import {
   LifeBuoy,
   ShieldAlert,
   ShieldCheck,
+  Menu,
   Sliders,
+  Store,
+  X,
   Sparkles,
   Server,
   Timer,
@@ -52,6 +55,7 @@ import { admin, type DashboardView } from '@/lib/admin-api';
  */
 const SCREENS = [
   { href: '/admin', label: 'Dashboard', icon: LayoutDashboard },
+  { href: '/admin/markets', label: 'Market Studio', icon: Store },
   { href: '/admin/drafts', label: 'Drafts', icon: Sparkles },
   { href: '/admin/moderation', label: 'Moderation', icon: ShieldAlert },
   { href: '/admin/prizes', label: 'Prizes', icon: Trophy },
@@ -71,6 +75,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   const pathname = usePathname();
   const [status, setStatus] = useState<DashboardView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -104,7 +109,24 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       {/* §6.10: ⌘K from anywhere. The console is fourteen screens deep. */}
       <CommandPalette />
       <div className="flex min-h-screen">
-        <nav className="w-56 shrink-0 border-r border-border px-3 py-4">
+        {/*
+          A drawer below 900px, a rail above it.
+          
+          It used to be a fixed 224px column at every width, which on a 393px
+          phone left 170 pixels for the console itself — every market question
+          wrapping to three words a line, and a health flag rendering as a
+          vertical ribbon of single words. The whole admin surface is meant to
+          be run from a phone; it was legible on exactly one of the two devices
+          it is used from.
+        */}
+        <nav
+          id="admin-nav"
+          className={`${
+            open
+              ? 'fixed inset-y-0 left-0 z-40 w-64 overflow-y-auto bg-surface shadow-lifted'
+              : 'hidden'
+          } shrink-0 border-r border-border px-3 py-4 min-[900px]:static min-[900px]:block min-[900px]:w-56 min-[900px]:shadow-none`}
+        >
           <p className="px-2 pb-4 font-mono text-xs uppercase tracking-widest text-text-muted">
             StakeAm ops
           </p>
@@ -125,6 +147,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
                 <li key={screen.href}>
                   <Link
                     href={screen.href}
+                    onClick={() => setOpen(false)}
                     className={`flex items-center gap-2 rounded-sm px-2 py-1.5 text-sm transition-colors ${
                       active ? 'bg-surface-raised text-text' : 'text-text-muted hover:text-text'
                     }`}
@@ -143,8 +166,28 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           </ul>
         </nav>
 
+        {open && (
+          <button
+            type="button"
+            aria-label="Close the menu"
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-30 bg-text/20 min-[900px]:hidden"
+          />
+        )}
+
         <div className="min-w-0 flex-1">
-          <header className="flex items-center gap-4 border-b border-border px-5 py-2.5 font-mono text-xs">
+          <header className="flex items-center gap-x-4 gap-y-1 overflow-x-auto border-b border-border px-4 py-2.5 font-mono text-xs">
+            {/* The drawer's handle. Only below 900px, where the rail is gone. */}
+            <button
+              type="button"
+              aria-controls="admin-nav"
+              aria-expanded={open}
+              onClick={() => setOpen((current) => !current)}
+              className="-ml-1 shrink-0 rounded-sm border border-border p-1.5 min-[900px]:hidden"
+            >
+              <span className="sr-only">{open ? 'Close the menu' : 'Open the menu'}</span>
+              {open ? <X size={14} /> : <Menu size={14} />}
+            </button>
             <StripItem
               label="reconciliation"
               value={status?.reconciliation.status ?? '—'}
@@ -170,7 +213,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             )}
           </header>
 
-          <main className="px-5 py-5">{children}</main>
+          <main className="px-4 py-5 min-[900px]:px-5">{children}</main>
         </div>
       </div>
     </div>

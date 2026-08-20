@@ -9,6 +9,7 @@
  */
 export * from './constants';
 export * from './draft';
+export * from './health';
 export * from './prompt';
 export * from './registry';
 export * from './validators';

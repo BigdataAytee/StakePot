@@ -3,6 +3,7 @@ import { Module } from '@nestjs/common';
 import { CommunityModule } from '../community/community.module';
 import { MarketService } from './market.service';
 import { OfficialMarketService } from './official-market.service';
+import { StudioService } from './studio.service';
 import { PriceWindowService } from './price-window.service';
 
 /**
@@ -14,7 +15,7 @@ import { PriceWindowService } from './price-window.service';
  */
 @Module({
   imports: [CommunityModule],
-  providers: [MarketService, OfficialMarketService, PriceWindowService],
-  exports: [OfficialMarketService, PriceWindowService],
+  providers: [MarketService, OfficialMarketService, PriceWindowService, StudioService],
+  exports: [OfficialMarketService, PriceWindowService, StudioService],
 })
 export class MarketModule {}
