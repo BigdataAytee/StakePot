@@ -174,10 +174,22 @@ function SourceWatch({
         </dl>
       )}
 
+      {/*
+        One sentence that is true whether or not a figure has been published,
+        followed by the branch-specific part.
+
+        The first version made the whole paragraph conditional and, in doing
+        so, dropped "not continuously" from the branch that had a reading —
+        which is the only claim on this panel a reader would actually rely on.
+        A source watch showing a fresh figure and *not* saying how often it is
+        read is the exact thing this component was written to avoid.
+      */}
       <p className="mt-1.5 text-text-muted">
-        {reading === null
-          ? `Read at settlement. The price above is what traders think ${market.sourceName} will say on ${dateTime(market.eventDate)}, not a live reading of it.`
-          : `The figure above is the latest ${market.sourceName} has published. What settles this market is what it publishes on ${dateTime(market.eventDate)}.`}
+        {reading !== null && `The figure above is the latest ${market.sourceName} has published. `}
+        Read at settlement, not continuously — what settles this market is what {
+          market.sourceName
+        }{' '}
+        publishes on {dateTime(market.eventDate)}.
       </p>
     </div>
   );

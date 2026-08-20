@@ -334,7 +334,12 @@ test.describe('the walkthrough', () => {
     await expect(page.getByRole('tab', { name: 'Rules' })).toHaveAttribute('aria-selected', 'true');
     // The settlement source, and — the part every reference leaves out — how
     // often anybody actually reads it.
-    await expect(page.getByText(/Read once, at settlement/)).toBeVisible();
+    //
+    // Asserted on the clause that holds whether or not the research pipeline
+    // has found a figure for this market. The first version matched copy that
+    // only appeared in the no-reading branch, so the test passed on an empty
+    // database and failed the moment the panel had something to show.
+    await expect(page.getByText(/Read at settlement, not continuously/)).toBeVisible();
 
     await page.getByRole('tab', { name: /^News/ }).click();
     await expect(page.getByText(/CBN resumes dollar sales/)).toBeVisible();
