@@ -28,6 +28,7 @@ import { TradeService } from '../trade/trade.service';
 import { WalletService } from '../wallet/wallet.service';
 import { ResolutionFlowService } from './resolution-flow.service';
 import type { MarketTemplate } from '../community/market-template';
+import { approvalAnswers, compliantTemplate } from '../testing/templates';
 import { CreatorAnalyticsService } from '../creator/analytics.service';
 import { AutopsyService } from '../creator/autopsy.service';
 import { CreatorService } from '../creator/creator.service';
@@ -152,18 +153,29 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
     await config.refresh();
   });
 
-  const template: MarketTemplate = {
-    question: 'Will the CBN hold the benchmark rate at its next meeting?',
+  const template: MarketTemplate = compliantTemplate({
+    question: 'Will the CBN hold the benchmark rate at its next MPC meeting?',
     outcomes: [
-      { label: 'HOLD', criteria: 'The MPC communique states the rate is unchanged.' },
-      { label: 'CHANGE', criteria: 'The MPC communique states a new rate.' },
+      {
+        label: 'HOLD',
+        criteria:
+          'The MPC communique, as first published, states the benchmark rate is unchanged. Read at 23:59 WAT on the day it is issued.',
+      },
+      {
+        label: 'CHANGE',
+        criteria:
+          'That same first published communique states a new benchmark rate, read at 23:59 WAT.',
+      },
     ],
     sourceName: 'CBN MPC communique',
-    sourceUrl: 'https://www.cbn.gov.ng/',
+    sourceUrl: 'https://www.cbn.gov.ng/documents/mpc-communique/',
     eventDate: new Date(Date.now() + 4 * 86_400_000).toISOString(),
     voidDate: new Date(Date.now() + 10 * 86_400_000).toISOString(),
-    edgeCases: { postponed: 'Voids if the meeting does not sit before the void date.' },
-  };
+    edgeCases: {
+      postponed: 'Voids if the meeting does not sit before the void date.',
+      'no publication': 'If the CBN publishes no communique by the void date, the market voids.',
+    },
+  });
 
   async function person(email: string, role: UserRole = 'user') {
     const { userId } = await auth.signup({
@@ -197,6 +209,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
       activationPath: 'seeded',
     });

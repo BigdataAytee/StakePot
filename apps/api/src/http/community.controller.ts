@@ -31,6 +31,7 @@ import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { CommunityService, CommunityMarketError } from '../community/community.service';
 import { FundingWindowWorker } from '../community/funding-window.worker';
+import { blockersOf } from '../community/market-template';
 import { voidRisks } from '../community/void-risk';
 import { SeedError, SeedService } from '../community/seed.service';
 import { ResolutionFlowError, ResolutionFlowService } from '../resolution/resolution-flow.service';
@@ -172,7 +173,11 @@ export class CommunityController {
     if (screened.state === 'rejected') {
       return {
         state: 'rejected',
-        reason: screened.problems.map((p) => p.message).join(' ') || screened.assessment?.reason,
+        reason: blockersOf(screened.report).join(' ') || screened.assessment?.reason,
+        // The whole checklist, not only what bit. A creator told "rule 26"
+        // with no sight of the other forty-four cannot tell whether they are
+        // one fix away or nowhere near.
+        report: screened.report,
       };
     }
 
@@ -204,10 +209,7 @@ export class CommunityController {
       balanced: result.balanced,
       engagement: result.engagement,
       rationale: result.rationale,
-      problems: result.problems.map((problem) => ({
-        code: problem.code,
-        message: problem.message,
-      })),
+      report: result.report,
     };
   }
 
@@ -234,10 +236,7 @@ export class CommunityController {
       balanced: result.balanced,
       engagement: result.engagement,
       rationale: result.rationale,
-      problems: result.problems.map((problem) => ({
-        code: problem.code,
-        message: problem.message,
-      })),
+      report: result.report,
       // §2.14e: what is likely to go wrong, as distinct from what is not
       // allowed. Computed here rather than by the model — a warning about a
       // deadline is arithmetic, and paying for a language model to do

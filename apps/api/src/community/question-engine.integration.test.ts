@@ -12,6 +12,7 @@ import { QuestionEngineService } from './question-engine.service';
 import { SeedService } from './seed.service';
 import { MarketVoidService } from './void.service';
 import type { MarketTemplate } from './market-template';
+import { approvalAnswers } from '../testing/templates';
 import type { Assessment, GenerationRequest, Proposal, QuestionModel } from './question-model';
 import { CreatorService } from '../creator/creator.service';
 import { EmailSender } from '../notifications/email.sender';
@@ -32,21 +33,47 @@ const TEST_DATABASE_URL = process.env['TEST_DATABASE_URL'];
 
 const inDays = (days: number): string => new Date(Date.now() + days * 86_400_000).toISOString();
 
+/**
+ * A proposal that satisfies the whole ticket-creation checklist.
+ *
+ * Longer than it was, and every added clause is a rule: the year-on-year
+ * qualifier is 28, "first published" is 27, the WAT hours are 26, the silent
+ * source is 4, and the exact report URL rather than the institution's homepage
+ * is R2. Written out in full because a fixture that skips them is a fixture
+ * that only ever exercises the refusal path.
+ */
 const goodProposal = (overrides: Partial<Proposal> = {}): Proposal => ({
   slot: 'economic_banker',
-  question: 'Will headline inflation print below 24.5% for June?',
+  question:
+    'Will year-on-year headline CPI for June, as first published by the NBS, print below 24.5%?',
   outcomes: [
-    { label: 'BELOW', criteria: 'The NBS CPI report for June prints under 24.5%.' },
-    { label: 'AT OR ABOVE', criteria: 'The NBS CPI report for June prints 24.5% or higher.' },
+    {
+      label: 'BELOW',
+      criteria:
+        'The NBS CPI report for June, first published figure, shows year-on-year headline inflation below 24.5%, read at 23:59 WAT. Revisions are ignored.',
+    },
+    {
+      label: 'AT OR ABOVE',
+      criteria:
+        'That same first published year-on-year headline figure is 24.5% or higher, read at 23:59 WAT.',
+    },
   ],
   sourceName: 'NBS CPI report',
-  sourceUrl: 'https://nigerianstat.gov.ng/',
+  sourceUrl: 'https://nigerianstat.gov.ng/elibrary/read/1241',
   eventDate: inDays(20),
   voidDate: inDays(30),
-  edgeCases: { delayed: 'Voids if NBS has not published by the void date.' },
+  edgeCases: {
+    delayed: 'Voids if the NBS has not published by the void date.',
+    'no publication': 'If the NBS publishes no June CPI report at all, the market voids.',
+  },
   balanceEstimates: [0.52, 0.48],
   engagementScore: 0.85,
   rationale: 'Pitched at the analyst consensus of 24.5%, so the argument is real.',
+  influenceable: false,
+  newsExpected: true,
+  rejected: false,
+  rejectedRules: [],
+  rejectionReason: '',
   ...overrides,
 });
 
@@ -133,7 +160,7 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
     expect(drafted[0]?.score).toBeGreaterThan(0.75);
 
     const queue = await engine.queue();
-    expect(queue[0]?.question).toMatch(/inflation/);
+    expect(queue[0]?.question).toMatch(/headline CPI/);
     expect(queue[0]?.slot).toBe('economic_banker');
   });
 
@@ -184,7 +211,10 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
     await prisma.market.create({
       data: {
         shelf: 'official',
-        question: 'Will headline inflation print below 24.5% for June?',
+        // Deliberately the same question the stub proposes, so the duplicate
+        // check has something to actually catch.
+        question:
+          'Will year-on-year headline CPI for June, as first published by the NBS, print below 24.5%?',
         sourceName: 'NBS',
         sourceUrl: 'https://nigerianstat.gov.ng/',
         criteriaJson: {},
@@ -259,6 +289,7 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
       draftId: drafted.draftId,
       staffId: staff.id,
       ip: '10.0.0.2',
+      ...approvalAnswers(),
     });
 
     const market = await prisma.market.findUniqueOrThrow({
@@ -310,8 +341,13 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
       data: { email: 'ops-stale@example.ng', pwHash: 'x', role: 'admin', tier: 1 },
     });
     await expect(
-      official.openFromDraft({ draftId: draft.id, staffId: staff.id, ip: '10.0.0.2' }),
-    ).rejects.toThrow(/no longer passes the screen/);
+      official.openFromDraft({
+        draftId: draft.id,
+        staffId: staff.id,
+        ip: '10.0.0.2',
+        ...approvalAnswers(),
+      }),
+    ).rejects.toThrow(/Rule 2: The void date has already passed/);
   });
 
   it('fails closed with no model configured', async () => {
@@ -328,14 +364,24 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
     const engine = engineWith(
       new StubModel([
         goodProposal({
-          question: 'Who wins the Surulere LGA chairmanship?',
+          question: 'Who will INEC declare winner of the Surulere LGA chairmanship?',
           outcomes: [
-            { label: 'ADEBAYO', criteria: 'INEC declares Adebayo the winner.' },
-            { label: 'OKONKWO', criteria: 'INEC declares Okonkwo the winner.' },
+            {
+              label: 'ADEBAYO',
+              criteria: 'INEC declares Adebayo the winner, per the declaration read at 23:59 WAT.',
+            },
+            {
+              label: 'OKONKWO',
+              criteria: 'INEC declares Okonkwo the winner, per the declaration read at 23:59 WAT.',
+            },
           ],
           otherLabel: 'Any other candidate',
           sourceName: 'INEC declaration',
-          sourceUrl: 'https://inecnigeria.org/',
+          sourceUrl: 'https://inecnigeria.org/elections/lga/surulere/',
+          edgeCases: {
+            rerun: 'If INEC orders a rerun, the market settles on the rerun declaration.',
+            'no publication': 'If INEC declares no winner by the void date, the market voids.',
+          },
           balanceEstimates: [0.45, 0.4, 0.15],
         }),
       ]),
@@ -345,7 +391,10 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
     expect(result.template.outcomes).toHaveLength(2);
     expect(result.template.otherLabel).toBe('Any other candidate');
     expect(result.balanced).toBe(true);
-    expect(result.problems).toHaveLength(0);
+    // The co-pilot's output is held to the same checklist a staff draft is, so
+    // the creator sees rule by rule what still needs doing rather than being
+    // told "looks fine" and refused at approval.
+    expect(result.report.failures).toEqual([]);
     // Nothing is filed while somebody is still typing.
     expect(await prisma.marketDraft.count()).toBe(0);
   });

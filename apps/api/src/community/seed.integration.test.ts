@@ -21,6 +21,7 @@ import { CommunityService } from './community.service';
 import { SeedService } from './seed.service';
 import { MarketVoidService } from './void.service';
 import type { MarketTemplate } from './market-template';
+import { approvalAnswers, compliantTemplate } from '../testing/templates';
 import { CreatorAnalyticsService } from '../creator/analytics.service';
 import { AutopsyService } from '../creator/autopsy.service';
 import { CreatorService } from '../creator/creator.service';
@@ -120,18 +121,27 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
     await config.refresh();
   });
 
-  const template: MarketTemplate = {
+  const template: MarketTemplate = compliantTemplate({
     question: 'Will the Super Eagles qualify from their group at the next AFCON?',
     outcomes: [
-      { label: 'YES', criteria: 'CAF lists Nigeria among the qualified teams.' },
-      { label: 'NO', criteria: 'Nigeria is eliminated at the group stage.' },
+      {
+        label: 'YES',
+        criteria: 'CAF lists Nigeria among the qualified teams at 23:59 WAT on the stated date.',
+      },
+      {
+        label: 'NO',
+        criteria: 'CAF lists Nigeria as eliminated at the group stage, read at 23:59 WAT.',
+      },
     ],
     sourceName: 'CAF official site',
-    sourceUrl: 'https://www.cafonline.com/',
+    sourceUrl: 'https://www.cafonline.com/africa-cup-of-nations/standings/',
     eventDate: new Date(Date.now() + 5 * 86_400_000).toISOString(),
     voidDate: new Date(Date.now() + 12 * 86_400_000).toISOString(),
-    edgeCases: { abandoned: 'Void if the group is not completed.' },
-  };
+    edgeCases: {
+      abandoned: 'Void if the group is not completed.',
+      'no publication': 'If CAF publishes no standings by the void date, the market voids.',
+    },
+  });
 
   async function trader(email: string, topUp = '0') {
     const { userId } = await auth.signup({
@@ -155,6 +165,7 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
     return community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
       activationPath: 'seeded',
     });

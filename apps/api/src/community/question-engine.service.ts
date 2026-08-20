@@ -17,10 +17,11 @@ import {
   type CatalogueSlot,
 } from './draft-ranking';
 import {
+  blockersOf,
   isBalanced,
   screenTemplate,
   type MarketTemplate,
-  type TemplateProblem,
+  type RuleReport,
 } from './market-template';
 import { templateOf, type Assessment, type Proposal, type QuestionModel } from './question-model';
 
@@ -51,7 +52,8 @@ export interface CopilotResult {
   readonly balanced: boolean;
   readonly engagement: number;
   readonly rationale: string;
-  readonly problems: readonly TemplateProblem[];
+  /** The whole checklist, not just what failed — the wizard renders every line. */
+  readonly report: RuleReport;
 }
 
 /**
@@ -102,20 +104,35 @@ export class QuestionEngineService {
     isFirstMarket: boolean;
     /** The activation path the creator chose at creation (§2.4). */
     activationPath?: 'organic' | 'seeded';
+    /** Rules 5 and 16, attested by the creator on the way in. */
+    attestedNoInfluence?: boolean;
     now?: Date;
   }): Promise<{
     draftId: string;
     state: 'suggested' | 'rejected';
-    problems: TemplateProblem[];
+    report: RuleReport;
     assessment: Assessment | null;
   }> {
     const now = params.now ?? new Date();
-    const problems = screenTemplate(params.template, { now });
+    const report = screenTemplate(
+      params.template,
+      { now, attestedNoInfluence: params.attestedNoInfluence ?? false },
+      'community',
+    );
 
-    // Rulebook §8 and the structural rules are decided here, not by the model.
-    if (problems.length > 0) {
-      const draft = await this.fileCommunityDraft(params, problems, null, 'rejected');
-      return { draftId: draft.id, state: 'rejected', problems, assessment: null };
+    // The checklist is decided here, not by the model. A prohibition that only
+    // exists in a prompt is a preference.
+    //
+    // Failures only, not `blocked`. The checklist's two judgement questions —
+    // the front-page test and the stranger test — are answered by the staff
+    // member who approves the market, and that person is not in the room when a
+    // creator presses submit. Refusing the submission because they have not
+    // answered yet would refuse every community market ever made. The
+    // unanswered questions ride into the queue on the report instead, which is
+    // where they get asked.
+    if (report.failures.length > 0) {
+      const draft = await this.fileCommunityDraft(params, report, null, 'rejected');
+      return { draftId: draft.id, state: 'rejected', report, assessment: null };
     }
 
     const assessment = await this.ask().assess(params.template);
@@ -125,13 +142,8 @@ export class QuestionEngineService {
         ? 'rejected'
         : 'suggested';
 
-    const draft = await this.fileCommunityDraft(
-      params,
-      problems,
-      { ...assessment, balanced },
-      state,
-    );
-    return { draftId: draft.id, state, problems, assessment };
+    const draft = await this.fileCommunityDraft(params, report, { ...assessment, balanced }, state);
+    return { draftId: draft.id, state, report, assessment };
   }
 
   // ----------------------------------------------------------- generation mode
@@ -218,8 +230,30 @@ export class QuestionEngineService {
     const template = templateOf(proposal);
     const refusals: string[] = [];
 
-    const problems = screenTemplate(template, { now });
-    refusals.push(...problems.map((problem) => problem.message));
+    // The AI surface of the checklist. Rules 5 and 16 are carried by the
+    // model's own influence judgement rather than by an attestation nobody is
+    // present to give — the model is required to state it, and stating it
+    // wrongly is what the reviewer is there to catch.
+    const report = screenTemplate(
+      template,
+      {
+        now,
+        attestedNoInfluence: !proposal.influenceable,
+        expectedNewsFlow: proposal.newsExpected,
+      },
+      'ai',
+    );
+    refusals.push(...blockersOf(report));
+
+    // §2.9 and the checklist both ask the engine to throw its own work away
+    // rather than lower the bar. When it does, the reason it gives is the
+    // useful part: a draft it could not write is the cheapest signal there is
+    // about what the shelf is short of, and it is invisible unless logged.
+    if (proposal.rejected) {
+      refusals.push(
+        `the engine rejected its own draft — ${proposal.rejectionReason} (rules ${proposal.rejectedRules.join(', ')})`,
+      );
+    }
 
     if (!isCatalogueSlot(proposal.slot)) {
       refusals.push(`"${proposal.slot}" is not a slot on the shelf plan`);
@@ -257,7 +291,8 @@ export class QuestionEngineService {
           rationale: proposal.rationale,
           estimates: proposal.balanceEstimates,
           refusals,
-          problems: problems.map((problem) => ({ code: problem.code, message: problem.message })),
+          report: JSON.parse(JSON.stringify(report)) as object,
+          selfRejected: proposal.rejected,
           duplicateOf: duplicate?.id ?? null,
         } as Prisma.InputJsonValue,
         state,
@@ -298,7 +333,15 @@ export class QuestionEngineService {
       balanced: isBalanced(proposal.balanceEstimates, await this.bounds()),
       engagement: proposal.engagementScore,
       rationale: proposal.rationale,
-      problems: screenTemplate(template, { now }),
+      report: screenTemplate(
+        template,
+        {
+          now,
+          attestedNoInfluence: !proposal.influenceable,
+          expectedNewsFlow: proposal.newsExpected,
+        },
+        'community',
+      ),
     };
   }
 
@@ -308,7 +351,6 @@ export class QuestionEngineService {
     now?: Date;
   }): Promise<Omit<CopilotResult, 'template'>> {
     const now = params.now ?? new Date();
-    const problems = screenTemplate(params.template, { now });
     const assessment = await this.ask().assess(params.template);
 
     return {
@@ -316,7 +358,11 @@ export class QuestionEngineService {
       balanced: isBalanced(assessment.balanceEstimates, await this.bounds()),
       engagement: assessment.engagementScore,
       rationale: assessment.reason,
-      problems,
+      report: screenTemplate(
+        params.template,
+        { now, attestedNoInfluence: !assessment.influenceable },
+        'community',
+      ),
     };
   }
 
@@ -503,7 +549,7 @@ export class QuestionEngineService {
       isFirstMarket: boolean;
       activationPath?: 'organic' | 'seeded';
     },
-    problems: TemplateProblem[],
+    report: RuleReport,
     assessment: (Assessment & { balanced: boolean }) | null,
     state: 'suggested' | 'rejected',
   ) {
@@ -534,13 +580,16 @@ export class QuestionEngineService {
         balanceEstimate: assessment === null ? 0 : Math.max(...assessment.balanceEstimates),
         engagementScore: assessment?.engagementScore ?? 0,
         blocklistFlags: {
-          problems: problems.map((problem) => ({ code: problem.code, message: problem.message })),
+          // The whole report, not the failures. A reviewer opening this draft
+          // needs to see which rules were checked and passed as much as which
+          // ones bit — "clean" is only meaningful against a list.
+          report: JSON.parse(JSON.stringify(report)) as object,
           concerns: assessment?.concerns ?? [],
           estimates: assessment?.balanceEstimates ?? [],
           balanced: assessment?.balanced ?? false,
           influenceable: assessment?.influenceable ?? false,
           duplicate: assessment?.duplicateOfLiveMarket ?? false,
-          reason: assessment?.reason ?? problems.map((problem) => problem.message).join(' '),
+          reason: assessment?.reason ?? blockersOf(report).join(' '),
           firstMarket: params.isFirstMarket,
           // Approval happens later and needs to know whose market this is, and
           // which activation path the creator picked (§2.4 — "the creator

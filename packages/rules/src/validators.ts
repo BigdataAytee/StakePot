@@ -74,6 +74,9 @@ function settlementText(draft: TicketDraft): string {
   ].join(' \n ');
 }
 
+/** A pair that already covers the space, so a catch-all beside it is dead. */
+const BINARY_PAIR = /^(yes\|no|no\|yes|true\|false|false\|true)$/i;
+
 /** ISO instants only. A date with no time is rule 26's whole complaint. */
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -194,9 +197,20 @@ const CHECKS: Readonly<Record<string, Check>> = {
         'A multi-outcome market needs an "Any other" bucket so no result falls outside the list.',
       );
     }
-    if (draft.outcomes.length === 2 && draft.otherLabel !== undefined) {
+    // Only a *complementary* pair. Two named contenders plus a catch-all —
+    // "Okafor, Okonkwo, any other candidate" — is a three-way race and exactly
+    // what rule 3 asks for; the first version of this check refused it, and the
+    // co-pilot's own worked example was the thing that failed.
+    //
+    // Yes plus No plus a catch-all is the incoherent case: the pair already
+    // covers the space, so the third bucket can never be the result.
+    if (
+      draft.outcomes.length === 2 &&
+      draft.otherLabel !== undefined &&
+      BINARY_PAIR.test(labels.slice(0, 2).join('|'))
+    ) {
       return fail(
-        'A binary market with a third bucket is not binary. Drop it or list the outcomes properly.',
+        'Yes and No already cover every result — an "Any other" bucket on top of them can never settle.',
       );
     }
     return pass(`${draft.outcomes.length} outcomes, complete and distinct.`);

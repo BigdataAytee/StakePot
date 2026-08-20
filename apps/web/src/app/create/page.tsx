@@ -7,7 +7,10 @@ import { creator, type Opportunity } from '@/lib/creator-api';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { z } from 'zod';
 
+import type { RuleReport } from '@stakeam/rules';
+
 import { BalanceMeter } from '@/components/balance-meter';
+import { RuleReportPanel } from '@/components/rules/rule-report';
 import { PageShell, PageTitle } from '@/components/market/page-shell';
 import { API_URL } from '@/lib/api';
 import { TICKET_TEMPLATES, type TicketTemplate } from '@/lib/templates';
@@ -58,7 +61,8 @@ interface CopilotResponse {
   balanced: boolean;
   engagement: number;
   rationale: string;
-  problems: { code: string; message: string }[];
+  /** The whole checklist, rule by rule — see RuleReportPanel. */
+  report: RuleReport;
   /** §2.14e's warnings. Present on balance-check, absent on the co-pilot. */
   risks?: Risk[];
 }
@@ -93,6 +97,10 @@ export default function CreatePage() {
   const [rationale, setRationale] = useState<string | null>(null);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [risks, setRisks] = useState<Risk[] | null>(null);
+  // What the checklist made of the draft, as of the last co-pilot or balance
+  // check. Held so the creator can see it while they fix things, rather than
+  // meeting it for the first time as a refusal at submit.
+  const [report, setReport] = useState<RuleReport | null>(null);
   const [conflictAttested, setConflictAttested] = useState(false);
 
   // §2.14b's feed. Public, so it renders before anybody signs in — the whole
@@ -161,6 +169,7 @@ export default function CreatePage() {
       });
       setEstimate(Math.max(...body.estimates));
       setRationale(body.rationale);
+      setReport(body.report);
       setTemplate(null);
     } catch (caught) {
       setError((caught as Error).message);
@@ -202,6 +211,7 @@ export default function CreatePage() {
 
       setEstimate(Math.max(...body.estimates));
       setRationale(body.rationale);
+      setReport(body.report);
       setRisks(body.risks ?? []);
     } catch (caught) {
       setError((caught as Error).message);
@@ -465,6 +475,12 @@ export default function CreatePage() {
         />
 
         <ConflictAttestation value={conflictAttested} onChange={setConflictAttested} />
+
+        {report !== null && (
+          <div className="mt-4">
+            <RuleReportPanel report={report} />
+          </div>
+        )}
 
         {risks !== null && <RiskPanel risks={risks} />}
 

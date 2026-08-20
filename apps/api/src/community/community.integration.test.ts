@@ -20,6 +20,7 @@ import { WalletService } from '../wallet/wallet.service';
 import { CommunityService } from './community.service';
 import { MarketVoidService } from './void.service';
 import type { MarketTemplate } from './market-template';
+import { approvalAnswers, compliantTemplate } from '../testing/templates';
 import { CreatorAnalyticsService } from '../creator/analytics.service';
 import { AutopsyService } from '../creator/autopsy.service';
 import { CreatorService } from '../creator/creator.service';
@@ -112,18 +113,31 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
     await config.refresh();
   });
 
-  const template: MarketTemplate = {
-    question: 'Will Lagos okada ban still hold at the end of the quarter?',
+  // One compliant fixture, from the shared builder. Each test that wants a
+  // refusal overrides the one field it is about, so the reason a call was
+  // refused is never ambiguous.
+  const template: MarketTemplate = compliantTemplate({
+    question: 'Will the Lagos okada ban still hold at 23:59 WAT on the last day of the quarter?',
     outcomes: [
-      { label: 'YES', criteria: 'The ban is still in force on the stated date.' },
-      { label: 'NO', criteria: 'The ban has been lifted or suspended.' },
+      {
+        label: 'YES',
+        criteria:
+          'The Lagos State Government gazette shows the ban still in force at 23:59 WAT on the stated date.',
+      },
+      {
+        label: 'NO',
+        criteria: 'The gazette shows the ban lifted or suspended by 23:59 WAT on the stated date.',
+      },
     ],
     sourceName: 'Lagos State Government gazette',
-    sourceUrl: 'https://lagosstate.gov.ng/',
+    sourceUrl: 'https://lagosstate.gov.ng/gazette/transport-notices/',
     eventDate: new Date(Date.now() + 5 * 86_400_000).toISOString(),
     voidDate: new Date(Date.now() + 12 * 86_400_000).toISOString(),
-    edgeCases: { 'partial lift': 'Counts as lifted.' },
-  };
+    edgeCases: {
+      'partial lift': 'A partial lift counts as lifted.',
+      'no publication': 'If the gazette publishes nothing by the void date, the market voids.',
+    },
+  });
 
   async function trader(email: string) {
     const { userId } = await auth.signup({
@@ -143,6 +157,7 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
     const { marketId } = await community.create({
       creatorId: creator,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 
@@ -166,9 +181,10 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
       community.create({
         creatorId: creator,
         template: { ...template, question: 'Will the governor die in office?' },
+        ...approvalAnswers(),
         liquidityParam: '50000',
       }),
-    ).rejects.toThrow(/death or harm/);
+    ).rejects.toThrow(/Rule 13: Markets on death/);
 
     const after = await wallet.balanceOf(creator);
     expect(after.available.eq(before.available)).toBe(true);
@@ -180,6 +196,7 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
     const { marketId } = await community.create({
       creatorId: creator,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
     await prisma.market.update({ where: { id: marketId }, data: { state: 'active' } });
@@ -201,6 +218,7 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
     const { marketId } = await community.create({
       creatorId: creator,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
     await prisma.market.update({ where: { id: marketId }, data: { state: 'active' } });
@@ -237,6 +255,7 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
     const { marketId } = await community.create({
       creatorId: creator,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
     await prisma.market.update({ where: { id: marketId }, data: { state: 'active' } });
@@ -285,6 +304,7 @@ describe.skipIf(!TEST_DATABASE_URL)('community shelf (integration)', () => {
     const { marketId } = await community.create({
       creatorId: creator,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
     await prisma.market.update({ where: { id: marketId }, data: { state: 'funding' } });

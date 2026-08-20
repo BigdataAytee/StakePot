@@ -11,7 +11,7 @@ import { AutopsyService } from '../creator/autopsy.service';
 import { CreatorService } from '../creator/creator.service';
 import { WalletService } from '../wallet/wallet.service';
 import { decideActivation, type ActivationRules, type OutcomeFunding } from './activation';
-import { screenTemplate, type MarketTemplate } from './market-template';
+import { blockersOf, screenTemplate, type MarketTemplate } from './market-template';
 import { MarketVoidService } from './void.service';
 
 export class CommunityMarketError extends Error {
@@ -59,12 +59,35 @@ export class CommunityService {
      * symmetric seed or a seeding round, and opens the moment one lands (§2.4).
      */
     activationPath?: 'organic' | 'seeded';
+    /** Rules 5 and 16. The creator's own attestation, recorded with the market. */
+    attestedNoInfluence?: boolean;
+    /**
+     * The approving staff member's answers to the rules only a person can
+     * settle — the front-page test, the stranger test, the conflict check.
+     *
+     * They belong here rather than at submission because this method *is* the
+     * approval: a creator pressing submit cannot answer the front-page test on
+     * the platform's behalf, and the reviewer who can is not in the room yet.
+     */
+    confirmations?: Record<string, boolean>;
     now?: Date;
   }): Promise<{ marketId: string; fundingClosesAt: Date | null }> {
     const now = params.now ?? new Date();
-    const problems = screenTemplate(params.template, { now });
-    if (problems.length > 0) {
-      throw new CommunityMarketError(problems.map((p) => p.message).join(' '));
+    // The checklist, scoped to what binds a community creator. Stricter than the
+    // staff path in the one way that matters: rule 16's attestation is not a
+    // box the wizard ticks on their behalf — a submission arriving without it
+    // is refused here, at the service, so no client can skip it.
+    const report = screenTemplate(
+      params.template,
+      {
+        now,
+        attestedNoInfluence: params.attestedNoInfluence ?? false,
+        confirmations: params.confirmations ?? {},
+      },
+      'community',
+    );
+    if (report.blocked) {
+      throw new CommunityMarketError(blockersOf(report).join(' '));
     }
 
     // §2.14c's ladder, applied where it costs something. A level is only worth

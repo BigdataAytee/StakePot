@@ -27,6 +27,7 @@ import { TradeService } from '../trade/trade.service';
 import { WalletService } from '../wallet/wallet.service';
 import { RgBlockedError, RgService } from './rg.service';
 import type { MarketTemplate } from '../community/market-template';
+import { approvalAnswers, compliantTemplate } from '../testing/templates';
 import { CreatorAnalyticsService } from '../creator/analytics.service';
 import { AutopsyService } from '../creator/autopsy.service';
 import { CreatorService } from '../creator/creator.service';
@@ -143,18 +144,27 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
     await config.refresh();
   });
 
-  const template: MarketTemplate = {
-    question: 'Will the Eagles name a new captain before the next window?',
+  const template: MarketTemplate = compliantTemplate({
+    question: 'Will the Eagles name a new captain before 23:59 WAT on the window deadline?',
     outcomes: [
-      { label: 'YES', criteria: 'The NFF announces a new captain.' },
-      { label: 'NO', criteria: 'No new captain is announced.' },
+      {
+        label: 'YES',
+        criteria: 'The NFF announces a new substantive captain before 23:59 WAT on that date.',
+      },
+      {
+        label: 'NO',
+        criteria: 'No new substantive captain has been announced by 23:59 WAT on that date.',
+      },
     ],
     sourceName: 'NFF official site',
-    sourceUrl: 'https://www.thenff.com/',
+    sourceUrl: 'https://www.thenff.com/news/super-eagles/',
     eventDate: new Date(Date.now() + 4 * 86_400_000).toISOString(),
     voidDate: new Date(Date.now() + 10 * 86_400_000).toISOString(),
-    edgeCases: { interim: 'An interim captain does not count.' },
-  };
+    edgeCases: {
+      interim: 'An interim captain does not count.',
+      'no publication': 'If the NFF announces nothing by the void date, the market voids.',
+    },
+  });
 
   async function person(email: string, role: UserRole = 'user') {
     const { userId } = await auth.signup({
@@ -171,6 +181,7 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
       activationPath: 'seeded',
     });

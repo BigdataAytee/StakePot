@@ -68,6 +68,35 @@ export const ProposalSchema = z.object({
     .describe('Your honest probability for each outcome, in order. Must sum to 1.'),
   engagementScore: z.number().describe('0-1, Nigerian mass interest.'),
   rationale: z.string().describe('One sentence: why this is worth arguing about now.'),
+  /*
+   * Checklist rules 5 and 16. Nobody is present to attest on a generated
+   * draft, so the model has to state it — and the validators read this as the
+   * attestation rather than assuming one. Stating it wrongly is what the
+   * reviewer is there to catch; not being asked at all was the gap.
+   */
+  influenceable: z
+    .boolean()
+    .describe('True if any participant, the creator, or staff could affect this outcome.'),
+  /** Checklist rule 8. */
+  newsExpected: z
+    .boolean()
+    .describe('True if this will be in the news between opening and settlement.'),
+  /*
+   * Checklist Parts 1, 3 and 6, and the reason a rejection is a first-class
+   * output. A draft the engine threw away is the cheapest signal there is about
+   * what the shelf is short of, and it is invisible unless the model says why.
+   */
+  rejected: z
+    .boolean()
+    .describe(
+      'True if you could not satisfy the checklist and are refusing rather than lowering the bar.',
+    ),
+  rejectedRules: z
+    .array(z.string())
+    .describe('Checklist rule numbers you could not satisfy. Empty when not rejecting.'),
+  rejectionReason: z
+    .string()
+    .describe('One sentence on what stopped you. Empty when not rejecting.'),
 });
 
 export type Proposal = z.infer<typeof ProposalSchema>;
@@ -104,5 +133,10 @@ export function templateOf(proposal: Proposal): MarketTemplate {
     eventDate: proposal.eventDate,
     voidDate: proposal.voidDate,
     edgeCases: proposal.edgeCases,
+    // Carried through rather than dropped: checklist rule 6 is checked against
+    // the estimate, and a template that arrived without one reported a note
+    // instead of a warning — the engine's own lopsided draft sailing past the
+    // band because the number never reached the validator.
+    balanceEstimates: proposal.balanceEstimates,
   };
 }

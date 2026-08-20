@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 
 import { AdminAuditService } from '../audit/admin-audit.service';
 import { SeedService } from '../community/seed.service';
-import { screenTemplate, type MarketTemplate } from '../community/market-template';
+import { blockersOf, screenTemplate, type MarketTemplate } from '../community/market-template';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -40,6 +40,10 @@ export class OfficialMarketService {
     ip: string;
     liquidityParam?: string;
     seedPerOutcome?: string;
+    /** The review screen's answers to the rules only a person can settle. */
+    confirmations?: Record<string, boolean>;
+    /** Rules 5 and 16, attested by the staff member opening the market. */
+    attestedNoInfluence?: boolean;
     now?: Date;
   }): Promise<{ marketId: string; seeded: string }> {
     const now = params.now ?? new Date();
@@ -56,10 +60,29 @@ export class OfficialMarketService {
     }
 
     const template = draft.templateJson as unknown as MarketTemplate;
-    const problems = screenTemplate(template, { now });
-    if (problems.length > 0) {
+    // Re-run the checklist at the moment of publishing, not only when the draft
+    // was filed. A draft can sit in the queue past its own event date, and the
+    // rules that depend on the clock — the void date, the attention window —
+    // are only true as of the day somebody looked.
+    //
+    // `wizard`, because opening an AI draft *is* the admin path: whatever the
+    // Studio's review screen showed the reviewer has to be what the service
+    // enforces, or the screen is decoration.
+    const report = screenTemplate(
+      template,
+      {
+        now,
+        // The reviewer answered these on the way in. Passing them through means
+        // a draft cannot be published by calling this method directly with the
+        // questions unanswered.
+        confirmations: params.confirmations ?? {},
+        attestedNoInfluence: params.attestedNoInfluence ?? false,
+      },
+      'wizard',
+    );
+    if (report.blocked) {
       throw new OfficialMarketError(
-        `this draft no longer passes the screen: ${problems.map((p) => p.message).join(' ')}`,
+        `this draft no longer passes the checklist: ${blockersOf(report).join(' ')}`,
       );
     }
 

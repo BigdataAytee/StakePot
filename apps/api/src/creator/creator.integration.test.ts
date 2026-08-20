@@ -8,6 +8,7 @@ import { CommunityService } from '../community/community.service';
 import { SeedService } from '../community/seed.service';
 import { MarketVoidService } from '../community/void.service';
 import type { MarketTemplate } from '../community/market-template';
+import { approvalAnswers, compliantTemplate } from '../testing/templates';
 import { LedgerService } from '../ledger/ledger.service';
 import { EmailSender } from '../notifications/email.sender';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -47,18 +48,28 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
   let opportunities: OpportunityService;
   let community: CommunityService;
 
-  const template: MarketTemplate = {
+  const template: MarketTemplate = compliantTemplate({
     question: 'Will the Super Eagles beat Ghana in the next qualifier?',
     outcomes: [
-      { label: 'Yes', criteria: 'A Nigeria win at full time, per the CAF match report.' },
-      { label: 'No', criteria: 'A draw or a Ghana win at full time, per the CAF match report.' },
+      {
+        label: 'Yes',
+        criteria: 'The CAF match report records a Nigeria win at full time, read at 23:59 WAT.',
+      },
+      {
+        label: 'No',
+        criteria:
+          'The CAF match report records a draw or a Ghana win at full time, read at 23:59 WAT.',
+      },
     ],
     sourceName: 'CAF',
-    sourceUrl: 'https://www.cafonline.com/',
+    sourceUrl: 'https://www.cafonline.com/africa-cup-of-nations/matches/',
     eventDate: new Date(Date.now() + 20 * 86_400_000).toISOString(),
     voidDate: new Date(Date.now() + 27 * 86_400_000).toISOString(),
-    edgeCases: { abandoned: 'Void if the match is abandoned.' },
-  };
+    edgeCases: {
+      abandoned: 'Void if the match is abandoned.',
+      'no publication': 'If CAF publishes no match report by the void date, the market voids.',
+    },
+  });
 
   beforeAll(async () => {
     prisma = new PrismaClient({
@@ -146,11 +157,11 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
   it('refuses a third market at level 1 — the cap is enforced, not described', async () => {
     const creatorId = await person('capped@example.com');
 
-    await community.create({ creatorId, template, liquidityParam: '50000' });
-    await community.create({ creatorId, template, liquidityParam: '50000' });
+    await community.create({ creatorId, template, liquidityParam: '50000', ...approvalAnswers() });
+    await community.create({ creatorId, template, liquidityParam: '50000', ...approvalAnswers() });
 
     await expect(
-      community.create({ creatorId, template, liquidityParam: '50000' }),
+      community.create({ creatorId, template, liquidityParam: '50000', ...approvalAnswers() }),
     ).rejects.toThrow(/2 markets at a time/);
   });
 
@@ -167,11 +178,13 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const first = await community.create({
       creatorId: standard,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
     const second = await community.create({
       creatorId: promoted,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 
@@ -192,6 +205,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 
@@ -290,6 +304,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 
@@ -333,6 +348,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
     await creators.ensureProfile(creatorId);
@@ -356,6 +372,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 
@@ -384,6 +401,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 
@@ -411,6 +429,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 
@@ -460,6 +479,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
     await prisma.market.update({ where: { id: marketId }, data: { state: 'active' } });
@@ -514,11 +534,13 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const firstMarket = await community.create({
       creatorId: first,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
     const secondMarket = await community.create({
       creatorId: second,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 

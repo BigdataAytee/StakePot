@@ -1,109 +1,110 @@
 import { describe, expect, it } from 'vitest';
 
-import { isBalanced, screenTemplate, type MarketTemplate } from './market-template';
+import { blockersOf, isBalanced, screenTemplate, type MarketTemplate } from './market-template';
 
+/**
+ * The adapter, not the rules.
+ *
+ * What each rule means, and which drafts trip it, is settled in
+ * `packages/rules` — one copy of those tests, beside the one copy of the rules.
+ * What is left here is the part this file actually owns: that the community
+ * path asks the right surface, that a refusal reaches a creator in words, and
+ * that the balance band still defaults to the checklist's own figures when the
+ * §6.4b console has not overridden them.
+ */
 const NOW = new Date('2026-01-01T00:00:00Z');
 
 const valid: MarketTemplate = {
-  question: 'Will the Super Eagles beat Ivory Coast on Saturday?',
+  question: 'Will the Super Eagles beat Ivory Coast on Saturday 10 January 2026?',
   outcomes: [
-    { label: 'YES', criteria: 'Nigeria wins in regulation or extra time.' },
-    { label: 'NO', criteria: 'Draw, loss, or decided on penalties.' },
+    {
+      label: 'YES',
+      criteria: 'CAF publishes a full-time result with Nigeria ahead, read at 20:00 WAT.',
+    },
+    {
+      label: 'NO',
+      criteria: 'CAF publishes any other full-time result, including a draw, at 20:00 WAT.',
+    },
   ],
   sourceName: 'CAF official match report',
-  sourceUrl: 'https://www.cafonline.com/',
+  sourceUrl: 'https://www.cafonline.com/africa-cup-of-nations/matches/',
   eventDate: '2026-01-10T18:00:00Z',
   voidDate: '2026-01-17T00:00:00Z',
-  edgeCases: { abandoned: 'Void, full refund.' },
+  edgeCases: {
+    abandoned:
+      'If the match is abandoned before full time, the market voids and everyone is refunded.',
+    'no publication': 'If CAF publishes no result by the void date, the market voids.',
+  },
+  balanceEstimates: [0.52, 0.48],
+  category: 'Football',
+  tags: ['super eagles', 'afcon'],
+  icon: 'football',
 };
 
-const screen = (t: MarketTemplate) => screenTemplate(t, { now: NOW });
-const codes = (t: MarketTemplate) => screen(t).map((p) => p.code);
+const screen = (template: MarketTemplate, attested = true) =>
+  screenTemplate(template, { now: NOW, attestedNoInfluence: attested });
 
-describe('template screen', () => {
-  it('passes a complete, settleable market', () => {
-    expect(screen(valid)).toEqual([]);
+describe('the community screen', () => {
+  it('finds nothing wrong with a complete, settleable market', () => {
+    const report = screen(valid);
+    expect(report.failures).toEqual([]);
+    expect(report.warnings).toEqual([]);
   });
 
-  it('rejects the Rulebook §8 categories, in the question or in an outcome', () => {
-    expect(codes({ ...valid, question: 'Will the minister die before June?' })).toContain(
-      'blocklist',
-    );
-    expect(codes({ ...valid, question: 'Will there be a bomb attack in Kano?' })).toContain(
-      'blocklist',
-    );
-    expect(codes({ ...valid, question: 'Will the senator be arrested this year?' })).toContain(
-      'blocklist',
-    );
-
-    // A clean question with a prohibited outcome is still a prohibited market.
-    expect(
-      codes({
-        ...valid,
-        outcomes: [
-          { label: 'YES', criteria: 'The chairman is convicted of fraud.' },
-          { label: 'NO', criteria: 'He is not.' },
-        ],
-      }),
-    ).toContain('blocklist');
+  it('leaves the judgement questions outstanding for the reviewer', () => {
+    // A creator pressing submit cannot answer the front-page test or the
+    // stranger test on the platform's behalf, and the staff member who can is
+    // not in the room. So they ride into the review queue unanswered — which is
+    // why submission gates on failures and approval gates on the whole report.
+    const report = screen(valid);
+    expect(report.unanswered.map((finding) => finding.rule).sort()).toEqual(['18', '25']);
+    expect(report.blocked).toBe(true);
   });
 
-  it('requires a named source reachable over https', () => {
-    expect(codes({ ...valid, sourceName: '  ' })).toContain('missing_source');
-    expect(codes({ ...valid, sourceUrl: 'http://cafonline.com' })).toContain('bad_source_url');
-    expect(codes({ ...valid, sourceUrl: 'ask my guy' })).toContain('bad_source_url');
+  it('asks the community surface, so staff-only rules do not bind a creator', () => {
+    // Rule 32 retunes a recurring series and rule 34 guards the shelf's size.
+    // Neither is a creator's to answer, and putting them on a community
+    // submission would refuse markets for reasons the creator cannot act on.
+    const reported = screen(valid).findings.map((finding) => finding.rule);
+    expect(reported).not.toContain('32');
+    expect(reported).not.toContain('34');
+    expect(reported).toContain('13');
   });
 
-  it('requires a future void date that falls after the event', () => {
-    expect(codes({ ...valid, voidDate: '2025-06-01T00:00:00Z' })).toContain('void_date_not_future');
-    expect(codes({ ...valid, voidDate: '2026-01-05T00:00:00Z' })).toContain(
-      'void_date_before_event',
-    );
+  it('refuses a submission with no attestation, whatever else is right (5, 16)', () => {
+    const report = screen(valid, false);
+    expect(report.blocked).toBe(true);
+    expect(blockersOf(report).join(' ')).toMatch(/attest/i);
   });
 
-  it('requires a complete outcome list with settlement criteria', () => {
-    expect(codes({ ...valid, outcomes: [valid.outcomes[0]!] })).toContain('incomplete_outcomes');
-    expect(
-      codes({ ...valid, outcomes: [{ label: 'YES', criteria: 'yes' }, valid.outcomes[1]!] }),
-    ).toContain('missing_criteria');
-    expect(
-      codes({ ...valid, outcomes: [valid.outcomes[0]!, { ...valid.outcomes[1]!, label: 'yes' }] }),
-    ).toContain('duplicate_outcome');
-  });
-
-  it('reports every problem at once rather than one at a time', () => {
-    const found = codes({
-      ...valid,
-      question: 'no',
-      sourceName: '',
-      sourceUrl: 'nope',
-      voidDate: '2025-01-01T00:00:00Z',
-    });
-    expect(found.length).toBeGreaterThanOrEqual(4);
-    expect(new Set(found).size).toBe(found.length);
+  it('puts the rule number in front of the reason', () => {
+    // The creator is being refused by a document they can go and read. A
+    // message with no number tells them they are wrong without telling them
+    // against what.
+    const report = screen({ ...valid, sourceName: 'widely reported' });
+    expect(blockersOf(report)[0]).toMatch(/^Rule 1: /);
   });
 });
 
-describe('balance pre-check (§2.9 rule 3)', () => {
-  const bounds = { binaryLow: 0.35, binaryHigh: 0.65, multiMax: 0.6 };
-
-  it('accepts a genuinely contested binary question', () => {
-    expect(isBalanced([0.52, 0.48], bounds)).toBe(true);
-    expect(isBalanced([0.36, 0.64], bounds)).toBe(true);
+describe('the balance band', () => {
+  it('defaults to the checklist figures', () => {
+    expect(isBalanced([0.52, 0.48])).toBe(true);
+    expect(isBalanced([0.36, 0.64])).toBe(true);
+    expect(isBalanced([0.9, 0.1])).toBe(false);
+    expect(isBalanced([0.2, 0.8])).toBe(false);
   });
 
-  it('rejects an obvious answer — a lopsided market is a dead market', () => {
-    expect(isBalanced([0.9, 0.1], bounds)).toBe(false);
-    expect(isBalanced([0.2, 0.8], bounds)).toBe(false);
+  it('reads a ceiling on the favourite for a multi-outcome market', () => {
+    expect(isBalanced([0.4, 0.3, 0.2, 0.1])).toBe(true);
+    expect(isBalanced([0.7, 0.2, 0.1])).toBe(false);
   });
 
-  it('rejects a multi-outcome field with a runaway favourite', () => {
-    expect(isBalanced([0.4, 0.3, 0.2, 0.1], bounds)).toBe(true);
-    expect(isBalanced([0.7, 0.2, 0.1], bounds)).toBe(false);
+  it('lets operations override without rewriting the rule', () => {
+    expect(isBalanced([0.3, 0.7], { binaryLow: 0.25, binaryHigh: 0.75 })).toBe(true);
   });
 
-  it('rejects estimates that do not form a distribution', () => {
-    expect(isBalanced([0.5, 0.9], bounds)).toBe(false);
-    expect(isBalanced([], bounds)).toBe(false);
+  it('refuses estimates that do not add up, and an empty list', () => {
+    expect(isBalanced([0.5, 0.9])).toBe(false);
+    expect(isBalanced([])).toBe(false);
   });
 });

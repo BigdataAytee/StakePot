@@ -100,6 +100,40 @@ describe('the five non-negotiables', () => {
     expect(statusOf(report, '2')).toBe('fail');
   });
 
+  it('accepts two named contenders beside an "Any other" (3)', () => {
+    // A three-way race written as two runners plus a catch-all. An earlier
+    // version of this check counted outcomes rather than reading them and
+    // refused it as "binary with a third bucket" — refusing the exact shape
+    // rule 3 asks for.
+    const report = review(
+      goodDraft({
+        question: 'Who will INEC declare winner of the Surulere LGA chairmanship?',
+        outcomes: [
+          {
+            label: 'Okafor',
+            criteria: 'INEC declares Okafor the winner, per the declaration read at 23:59 WAT.',
+          },
+          {
+            label: 'Okonkwo',
+            criteria: 'INEC declares Okonkwo the winner, per the declaration read at 23:59 WAT.',
+          },
+        ],
+        otherLabel: 'Any other candidate',
+        balanceEstimates: [0.45, 0.4, 0.15],
+      }),
+      goodContext(),
+    );
+    expect(statusOf(report, '3')).toBe('pass');
+  });
+
+  it('refuses an "Any other" bucket beside Yes and No (3)', () => {
+    const report = review(
+      goodDraft({ otherLabel: 'Any other outcome', balanceEstimates: [0.4, 0.4, 0.2] }),
+      goodContext(),
+    );
+    expect(statusOf(report, '3')).toBe('fail');
+  });
+
   it('refuses a multi-outcome market with no "Any other" (3)', () => {
     const report = review(
       goodDraft({
