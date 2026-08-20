@@ -432,6 +432,7 @@ model Market {
   topCalls        TopCall[]
   priceHistory    PriceHistory[]
   annotations     MarketAnnotation[]
+  healthFlags     MarketHealthFlag[]
 
   @@index([shelf, state])
   @@index([state, eventDate])
@@ -654,6 +655,13 @@ model MarketOutcomeLog {
   finalSplit   Decimal @db.Decimal(38, 18)
   volume       Decimal @db.Decimal(38, 18)
   disputeCount Int     @default(0)
+  /// Checklist rule numbers whose Part 5 monitoring flag fired while the market
+  /// was live, copied here at settlement. Rule 43 says the post-mortem is "the
+  /// data that trains the AI question engine": a market that ran 82/18 for a
+  /// week is a different training example from one that never tripped a flag,
+  /// and the split alone cannot tell the two apart — a question can settle
+  /// balanced after being lopsided for most of its life.
+  warningsFired String[]
 
   market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
 
@@ -1730,4 +1738,44 @@ model ResolutionDossier {
 
   @@index([reviewedAt])
   @@map("resolution_dossiers")
+}
+
+/// Part 5 of docs/ticket-creation-checklist.md, made durable.
+///
+/// `packages/rules`' `healthFlags()` is a pure function over facts the database
+/// already has, so the Studio could — and does — compute it fresh on every
+/// read. This table exists for the other half of Part 5: rule 43's post-mortem
+/// asks what fired *during* the market's life, and a flag that is only ever
+/// computed on read disappears the moment the condition passes. A whale who
+/// held 60% of a thin market for a day and then got matched leaves no trace at
+/// settlement, which is exactly the market the question engine most needs to
+/// learn from.
+///
+/// One row per (market, rule): a sweep that finds the same condition still
+/// standing bumps `lastFiredAt` and `firings` rather than writing a second row,
+/// so the history reads as "flagged since Tuesday", not as 400 identical lines.
+model MarketHealthFlag {
+  id       String @id @default(uuid())
+  marketId String
+  /// The checklist rule number — 35, 36, 38 or 39.
+  rule     String
+  severity String
+  /// The most recent wording. It carries live numbers ("running 82/18 after
+  /// 71h"), so the latest is the useful one; `firstFiredAt` is what says how
+  /// long it has been true.
+  message  String
+
+  firstFiredAt DateTime @default(now())
+  lastFiredAt  DateTime @default(now())
+  firings      Int      @default(1)
+  /// Set by the first sweep that finds the condition gone. Kept rather than
+  /// deleted: "was lopsided for three days and recovered" is a post-mortem, and
+  /// deleting the row would make it look like nothing ever happened.
+  clearedAt    DateTime?
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@unique([marketId, rule])
+  @@index([marketId, clearedAt])
+  @@map("market_health_flags")
 }

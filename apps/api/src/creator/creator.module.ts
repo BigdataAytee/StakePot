@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 
+import { MarketHealthModule } from '../market/health.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { CreatorAnalyticsService } from './analytics.service';
 import { AutopsyService } from './autopsy.service';
@@ -10,14 +11,15 @@ import { OpportunityService } from './opportunity.service';
 /**
  * §2.14's creator platform.
  *
- * Deliberately depends on nothing but notifications, Prisma and config. The
+ * Deliberately depends on nothing but notifications, Part 5 monitoring, Prisma
+ * and config — and the monitoring module itself depends on nothing but Prisma. The
  * community and resolution modules call *into* this one — the record moves when
  * a market settles, not the other way round — and keeping the arrow pointing
  * one way is what stops the dependency graph turning into a cycle the moment
  * anything else wants a creator's level.
  */
 @Module({
-  imports: [NotificationsModule],
+  imports: [MarketHealthModule, NotificationsModule],
   providers: [
     CreatorService,
     CreatorAnalyticsService,

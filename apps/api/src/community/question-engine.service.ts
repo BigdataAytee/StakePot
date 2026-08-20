@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { MarketDraft } from '@prisma/client';
 
 import { logger } from '../logger';
+import { MarketHealthService } from '../market/health.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuestionEngineUnavailableError } from './anthropic-question-model';
@@ -80,6 +81,7 @@ export class QuestionEngineService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: PlatformConfigService,
+    private readonly health: MarketHealthService,
     @Inject(QUESTION_MODEL) model: QuestionModel | null,
   ) {
     this.model = model;
@@ -392,13 +394,18 @@ export class QuestionEngineService {
     const pot = staked.reduce((sum, value) => sum + value, 0);
     const finalSplit = pot > 0 ? Math.max(...staked) / pot : 0;
 
-    const [volume, disputeCount] = await Promise.all([
+    const [volume, disputeCount, warnings] = await Promise.all([
       this.prisma.trade.aggregate({
         where: { marketId, side: { not: 'seed' } },
         _sum: { cost: true },
       }),
       this.prisma.dispute.count({ where: { marketId } }),
+      // Checklist rule 43: the post-mortem the engine trains on is "volume,
+      // final split, disputes, what you'd change". The first three were here
+      // already; the fourth is which Part 5 flags fired while it was live.
+      this.health.historyFor(marketId),
     ]);
+    const warningsFired = [...new Set(warnings.map((warning) => warning.rule))].sort();
 
     await this.prisma.marketOutcomeLog.upsert({
       where: { marketId },
@@ -410,11 +417,13 @@ export class QuestionEngineService {
         finalSplit: new Prisma.Decimal(finalSplit),
         volume: new Prisma.Decimal(volume._sum.cost?.toString() ?? '0'),
         disputeCount,
+        warningsFired,
       },
       update: {
         finalSplit: new Prisma.Decimal(finalSplit),
         volume: new Prisma.Decimal(volume._sum.cost?.toString() ?? '0'),
         disputeCount,
+        warningsFired,
       },
     });
   }
@@ -433,7 +442,17 @@ export class QuestionEngineService {
     });
 
     return logs
-      .filter((log) => Number(log.finalSplit) <= 0.65 && log.disputeCount === 0)
+      .filter(
+        (log) =>
+          Number(log.finalSplit) <= 0.65 &&
+          log.disputeCount === 0 &&
+          // A market that tripped a Part 5 flag is not a model answer, however
+          // well it ended. Handing the engine a question that ran 85/15 for a
+          // week as something to imitate is how the next batch inherits the
+          // same shape — checklist rule 43, whose whole point is that the
+          // post-mortem changes what gets generated next.
+          log.warningsFired.length === 0,
+      )
       .sort((a, b) => Number(b.volume) - Number(a.volume))
       .slice(0, limit)
       .map((log) => ({

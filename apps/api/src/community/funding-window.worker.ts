@@ -8,6 +8,7 @@ import { OpportunityService } from '../creator/opportunity.service';
 import { AbuseService } from '../hardening/abuse.service';
 import { LedgerAuditService } from '../hardening/ledger-audit.service';
 import { LeaderboardService } from '../leaderboard/leaderboard.service';
+import { MarketHealthService } from '../market/health.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResolutionFlowService } from '../resolution/resolution-flow.service';
 import { SupportService } from '../support/support.service';
@@ -22,6 +23,11 @@ const QUEUE = 'funding-window';
  * fill or refund. `dispute` is the 48h window on a proposed result. Three
  * deadlines, three job ids, so a market that carries more than one cannot lose
  * one to another's.
+ *
+ * `health-sweep` runs Part 5 of the ticket-creation checklist over everything
+ * live — the lopsided split, the early whale, the settlement nobody has
+ * prepared — and records what fires, so rule 43's post-mortem can say what went
+ * wrong during the market rather than only how it ended.
  *
  * `freeze-sweep` is the odd one out: a repeatable job rather than a deadline,
  * flipping markets whose event has started into `pending_resolution` so the
@@ -39,6 +45,7 @@ type CloseKind =
   | 'opportunity-sweep'
   | 'leaderboard-sweep'
   | 'abuse-sweep'
+  | 'health-sweep'
   | 'ledger-audit';
 
 interface CloseJob {
@@ -71,6 +78,7 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
     private readonly opportunities: OpportunityService,
     private readonly leaderboards: LeaderboardService,
     private readonly abuse: AbuseService,
+    private readonly health: MarketHealthService,
     private readonly ledgerAudit: LedgerAuditService,
     private readonly prisma: PrismaService,
   ) {}
@@ -138,6 +146,11 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       case 'abuse-sweep':
         // §6.5's queue. Detection only — every freeze is a person's decision.
         return this.abuse.sweep();
+      case 'health-sweep':
+        // Part 5 of docs/ticket-creation-checklist.md. Detection only as well:
+        // a flag is something for an operator to read on the Manage tab and for
+        // the post-mortem to remember. Nothing here touches a market's state.
+        return this.health.sweep();
       case 'ledger-audit': {
         // §2.7's nightly invariant check. A violation here is arithmetic on our
         // own rows failing, so it is red by definition and opens an incident.
@@ -265,6 +278,15 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       'abuse-sweep',
       { every: 3_600_000 },
       { name: 'close', data: { marketId: '', kind: 'abuse-sweep' } },
+    );
+    // Every fifteen minutes. The checklist's Part 5 thresholds are measured in
+    // hours and days — 48 hours lopsided, 24 hours of whale, hours to the event
+    // — so a quarter-hour sweep is well inside every one of them, and the pass
+    // is two grouped queries over what is live.
+    await this.queue?.upsertJobScheduler(
+      'health-sweep',
+      { every: 900_000 },
+      { name: 'close', data: { marketId: '', kind: 'health-sweep' } },
     );
     // §2.7 says nightly. Six-hourly instead: the check is cheap, and the gap
     // between a broken invariant and somebody knowing about it is the window in

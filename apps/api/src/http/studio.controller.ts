@@ -8,8 +8,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import { healthFlags, type TicketDraft } from '@stakeam/rules';
+import { type TicketDraft } from '@stakeam/rules';
 import { Type } from 'class-transformer';
 import {
   IsArray,
@@ -25,6 +24,7 @@ import {
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { Roles, RolesGuard } from '../auth/roles.guard';
 import { PrismaService } from '../prisma/prisma.service';
+import { MarketHealthService } from '../market/health.service';
 import { StudioError, StudioService } from '../market/studio.service';
 
 class OutcomeDto {
@@ -87,6 +87,7 @@ export class StudioController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly studio: StudioService,
+    private readonly health: MarketHealthService,
   ) {}
 
   /** Run the whole checklist over whatever the wizard currently has. */
@@ -169,54 +170,15 @@ export class StudioController {
 
     if (markets.length === 0) return [];
 
-    const ids = markets.map((market) => market.id);
-    const [positions, proposals] = await Promise.all([
-      // One grouped pass rather than a query per market: the Manage tab is the
-      // screen an operator leaves open, and two hundred round trips per refresh
-      // is how a dashboard becomes the heaviest thing on the database.
-      this.prisma.position.groupBy({
-        by: ['marketId', 'userId'],
-        where: { marketId: { in: ids }, shares: { gt: 0 } },
-        _sum: { shares: true },
-      }),
-      this.prisma.resolution.findMany({
-        where: { marketId: { in: ids } },
-        select: { marketId: true },
-        distinct: ['marketId'],
-      }),
-    ]);
-
-    const proposed = new Set(proposals.map((row) => row.marketId));
-    const holdersBy = new Map<string, { count: number; largest: number; total: number }>();
-    for (const row of positions) {
-      const shares = Number((row._sum.shares ?? new Prisma.Decimal(0)).toString());
-      const seen = holdersBy.get(row.marketId) ?? { count: 0, largest: 0, total: 0 };
-      seen.count += 1;
-      seen.largest = Math.max(seen.largest, shares);
-      seen.total += shares;
-      holdersBy.set(row.marketId, seen);
-    }
+    // Both the flag computation and the holder counts come from the monitoring
+    // service, not from a second copy of the same query here. The sweep that
+    // records these flags every fifteen minutes and this screen have to agree
+    // about what is firing — a Manage tab that disagreed with the post-mortem
+    // written from the same rules would make both unbelievable.
+    const flagsBy = await this.health.standingFlagsFor(markets, now);
+    const holdersBy = await this.health.holderCountsFor(markets.map((market) => market.id));
 
     return markets.map((market) => {
-      const staked = market.outcomes.map((outcome) => Number(outcome.stakedTotal.toString()));
-      const pot = staked.reduce((a, b) => a + b, 0);
-      const holders = holdersBy.get(market.id);
-
-      const flags = healthFlags(
-        {
-          marketId: market.id,
-          state: market.state,
-          openedAt: market.createdAt,
-          eventDate: market.eventDate,
-          leadingShare: pot > 0 ? Math.max(...staked) / pot : null,
-          largestHolderShare:
-            holders !== undefined && holders.total > 0 ? holders.largest / holders.total : null,
-          holders: holders?.count ?? 0,
-          resolutionProposed: proposed.has(market.id),
-        },
-        now,
-      );
-
       return {
         id: market.id,
         question: market.question,
@@ -228,14 +190,14 @@ export class StudioController {
         createdAt: market.createdAt.toISOString(),
         pot: market.potTotal.toString(),
         volume24h: null,
-        holders: holders?.count ?? 0,
+        holders: holdersBy.get(market.id)?.count ?? 0,
         outcomes: market.outcomes.map((outcome) => ({
           id: outcome.id,
           label: outcome.label,
           price: outcome.priceCurrent.toString(),
           staked: outcome.stakedTotal.toString(),
         })),
-        flags,
+        flags: flagsBy.get(market.id) ?? [],
       };
     });
   }

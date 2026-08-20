@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 
 import { CommunityModule } from '../community/community.module';
+import { MarketHealthModule } from './health.module';
 import { MarketService } from './market.service';
 import { OfficialMarketService } from './official-market.service';
 import { StudioService } from './studio.service';
@@ -14,8 +15,8 @@ import { PriceWindowService } from './price-window.service';
  * community shelf needs to know official markets exist.
  */
 @Module({
-  imports: [CommunityModule],
+  imports: [CommunityModule, MarketHealthModule],
   providers: [MarketService, OfficialMarketService, PriceWindowService, StudioService],
-  exports: [OfficialMarketService, PriceWindowService, StudioService],
+  exports: [MarketHealthModule, OfficialMarketService, PriceWindowService, StudioService],
 })
 export class MarketModule {}

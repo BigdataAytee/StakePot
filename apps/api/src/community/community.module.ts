@@ -5,6 +5,7 @@ import { CreatorModule } from '../creator/creator.module';
 import { HardeningModule } from '../hardening/hardening.module';
 import { LeaderboardModule } from '../leaderboard/leaderboard.module';
 import { LedgerModule } from '../ledger/ledger.module';
+import { MarketHealthModule } from '../market/health.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { ResolutionModule } from '../resolution/resolution.module';
 import { SupportModule } from '../support/support.module';
@@ -23,6 +24,7 @@ import { MarketVoidService } from './void.service';
     HardeningModule,
     LeaderboardModule,
     LedgerModule,
+    MarketHealthModule,
     NotificationsModule,
     ResolutionModule,
     SupportModule,

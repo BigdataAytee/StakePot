@@ -8,6 +8,7 @@ import { CommunityService } from '../community/community.service';
 import { SeedService } from '../community/seed.service';
 import { MarketVoidService } from '../community/void.service';
 import type { MarketTemplate } from '../community/market-template';
+import { MarketHealthService } from '../market/health.service';
 import { approvalAnswers, compliantTemplate } from '../testing/templates';
 import { LedgerService } from '../ledger/ledger.service';
 import { EmailSender } from '../notifications/email.sender';
@@ -97,7 +98,13 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     );
     creators = new CreatorService(prisma, config, notifications);
     analytics = new CreatorAnalyticsService(prisma);
-    autopsies = new AutopsyService(prisma, analytics, creators, notifications);
+    autopsies = new AutopsyService(
+      prisma,
+      analytics,
+      creators,
+      notifications,
+      new MarketHealthService(prisma),
+    );
     nudges = new NudgeService(prisma, config, notifications, analytics);
     opportunities = new OpportunityService(prisma, config, analytics);
     const seeds = new SeedService(prisma, config, wallet, voids, creators);
@@ -392,6 +399,39 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
       where: { userId: creatorId, type: 'market_autopsy' },
     });
     expect(told).not.toBeNull();
+  });
+
+  it('carries the Part 5 flags that fired into the post-mortem (rule 43)', async () => {
+    const creatorId = await person('flagged@example.com');
+    const { marketId } = await community.create({
+      creatorId,
+      template,
+      ...approvalAnswers(),
+      liquidityParam: '50000',
+    });
+    await creators.ensureProfile(creatorId);
+
+    // What the monitoring sweep would have written while this was live: it ran
+    // lopsided for three days, and recovered. On its final split alone the
+    // market looks fine, which is precisely why the flag has to survive.
+    await prisma.marketHealthFlag.create({
+      data: {
+        marketId,
+        rule: '35',
+        severity: 'watch',
+        message: 'Running 82/18 after 71h. Note it for the next retune.',
+        firstFiredAt: new Date('2026-03-01T09:00:00Z'),
+        lastFiredAt: new Date('2026-03-04T09:00:00Z'),
+        firings: 288,
+        clearedAt: new Date('2026-03-04T09:15:00Z'),
+      },
+    });
+
+    await autopsies.record({ marketId, kind: 'voided', voidReason: 'the window closed empty' });
+
+    const written = await autopsies.forMarket(marketId);
+    expect(written?.warnings.map((warning) => warning.rule)).toEqual(['35']);
+    expect(written?.warnings[0]?.clearedAt).not.toBeNull();
   });
 
   // ------------------------------------------------------------- analytics

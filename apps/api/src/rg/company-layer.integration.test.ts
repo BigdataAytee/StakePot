@@ -13,6 +13,7 @@ import { CommunityService } from '../community/community.service';
 import { SeedService } from '../community/seed.service';
 import { MarketVoidService } from '../community/void.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { MarketHealthService } from '../market/health.service';
 import { EmailSender } from '../notifications/email.sender';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PushSender } from '../notifications/push.sender';
@@ -103,7 +104,13 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
     // the autopsy that moves a creator's record when a market closes.
     const creators = new CreatorService(prisma, config, notifications);
     const creatorAnalytics = new CreatorAnalyticsService(prisma);
-    const autopsies = new AutopsyService(prisma, creatorAnalytics, creators, notifications);
+    const autopsies = new AutopsyService(
+      prisma,
+      creatorAnalytics,
+      creators,
+      notifications,
+      new MarketHealthService(prisma),
+    );
     const analytics = new AnalyticsService(prisma);
     community = new CommunityService(
       prisma,

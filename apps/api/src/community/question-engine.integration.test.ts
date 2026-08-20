@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { AdminAuditService } from '../audit/admin-audit.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { MarketHealthService } from '../market/health.service';
 import { OfficialMarketService } from '../market/official-market.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import type { PrismaService } from '../prisma/prisma.service';
@@ -147,7 +148,7 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
   });
 
   const engineWith = (model: QuestionModel | null) =>
-    new QuestionEngineService(prisma, config, model);
+    new QuestionEngineService(prisma, config, new MarketHealthService(prisma), model);
 
   it('files a good proposal as a scored suggestion', async () => {
     const engine = engineWith(new StubModel([goodProposal()]));
@@ -446,6 +447,37 @@ describe.skipIf(!TEST_DATABASE_URL)('question engine (integration)', () => {
 
       const retune = await engine.lopsided();
       expect(retune.map((row) => row.question)).toEqual(['Obvious question?']);
+    });
+
+    it('will not hold up a flagged market as an example to copy (rule 43)', async () => {
+      const engine = engineWith(new StubModel([]));
+
+      const clean = await settledMarket('Balanced question?', [52_000, 48_000]);
+      const wobbled = await settledMarket('Balanced in the end?', [51_000, 49_000]);
+      // Same final split, same volume, no dispute. The only difference is that
+      // the Part 5 sweep flagged this one at 48 hours — which is the whole
+      // reason the flag is recorded rather than computed on read, because by
+      // settlement there is nothing left in the numbers to see it in.
+      await prisma.marketHealthFlag.create({
+        data: {
+          marketId: wobbled.id,
+          rule: '35',
+          severity: 'watch',
+          message: 'Running 84/16 after 60h. Note it for the next retune.',
+          clearedAt: new Date(),
+        },
+      });
+
+      await engine.recordOutcome(clean.id);
+      await engine.recordOutcome(wobbled.id);
+
+      const flaggedLog = await prisma.marketOutcomeLog.findUniqueOrThrow({
+        where: { marketId: wobbled.id },
+      });
+      expect(flaggedLog.warningsFired).toEqual(['35']);
+
+      const exemplars = await engine.exemplars();
+      expect(exemplars.map((row) => row.question)).toEqual(['Balanced question?']);
     });
 
     it('hands its own hits and misses to the next generation cycle', async () => {

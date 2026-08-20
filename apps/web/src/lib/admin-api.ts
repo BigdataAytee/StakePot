@@ -223,7 +223,19 @@ export interface StudioMarketRow {
   pot: string;
   holders: number;
   outcomes: { id: string; label: string; price: string; staked: string }[];
-  flags: HealthFlag[];
+  flags: StandingFlag[];
+}
+
+/**
+ * A live flag, plus when the monitoring sweep first recorded it.
+ *
+ * The wording and severity are computed fresh on every request, so nothing on
+ * the screen is stale; `since` comes from the recorded row. Both, because
+ * "running 82/18" is a number and "running 82/18 since Tuesday" is a decision.
+ * Null when the sweep has not run since the condition appeared.
+ */
+export interface StandingFlag extends HealthFlag {
+  since: string | null;
 }
 
 /**

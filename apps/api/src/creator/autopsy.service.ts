@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { MarketHealthService } from '../market/health.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatorAnalyticsService } from './analytics.service';
@@ -27,6 +28,7 @@ export class AutopsyService {
     private readonly analytics: CreatorAnalyticsService,
     private readonly creators: CreatorService,
     private readonly notifications: NotificationsService,
+    private readonly health: MarketHealthService,
   ) {}
 
   /**
@@ -52,7 +54,7 @@ export class AutopsyService {
     });
     if (market === null || market.creatorId === null) return { written: false };
 
-    const [stakers, views, fees] = await Promise.all([
+    const [stakers, views, fees, warnings] = await Promise.all([
       this.prisma.trade.findMany({
         where: { marketId: market.id, side: 'buy', userId: { not: market.creatorId } },
         select: { userId: true },
@@ -63,6 +65,10 @@ export class AutopsyService {
         where: { marketId: market.id, type: 'fee_creator' },
         _sum: { amount: true },
       }),
+      // Rule 43's fourth column: what the Part 5 sweep flagged while this was
+      // live. Cleared flags included — "it ran 85/15 for a week and converged
+      // on the day" is the post-mortem, and the final split alone cannot say it.
+      this.health.historyFor(market.id),
     ]);
 
     const pot = Number(market.potTotal);
@@ -88,6 +94,7 @@ export class AutopsyService {
       activationPath: market.activationPath === 'seeded' ? 'seeded' : 'organic',
       voidReason: params.voidReason ?? null,
       creatorFeeEarned: Number((fees._sum.amount ?? new Prisma.Decimal(0)).abs()),
+      warnings: warnings.map((warning) => ({ rule: warning.rule, message: warning.message })),
     };
 
     const autopsy = autopsyFor(facts, DEFAULT_AUTOPSY_RULES);
@@ -102,6 +109,13 @@ export class AutopsyService {
           worked: autopsy.worked,
           tip: autopsy.tip,
           signals: autopsy.signals,
+          warnings: warnings.map((warning) => ({
+            rule: warning.rule,
+            severity: warning.severity,
+            message: warning.message,
+            firstFiredAt: warning.firstFiredAt.toISOString(),
+            clearedAt: warning.clearedAt?.toISOString() ?? null,
+          })),
         } as Prisma.InputJsonValue,
         ...(finalSplit === null ? {} : { finalSplit: new Prisma.Decimal(finalSplit) }),
         volume: market.potTotal,
@@ -151,6 +165,12 @@ export class AutopsyService {
     distinctStakers: number;
     views: number;
     finalSplit: string | null;
+    warnings: readonly {
+      rule: string;
+      severity: string;
+      message: string;
+      clearedAt: string | null;
+    }[];
     createdAt: Date;
   } | null> {
     const row = await this.prisma.marketAutopsy.findUnique({ where: { marketId } });
@@ -159,6 +179,7 @@ export class AutopsyService {
     const tips = row.tipsJson as {
       worked?: string[];
       tip?: string | null;
+      warnings?: { rule: string; severity: string; message: string; clearedAt: string | null }[];
     } | null;
 
     return {
@@ -170,6 +191,7 @@ export class AutopsyService {
       distinctStakers: row.distinctStakers,
       views: row.views,
       finalSplit: row.finalSplit === null ? null : row.finalSplit.toString(),
+      warnings: tips?.warnings ?? [],
       createdAt: row.createdAt,
     };
   }

@@ -204,6 +204,10 @@ function MarketRow({ row }: { row: StudioMarketRow }) {
                 {/* The rule number, so a flag can be looked up rather than
                     argued with. */}
                 <b className="font-mono">Rule {flag.rule}</b> — {flag.message}
+                {/* How long it has held. A flag that appeared this morning and
+                    one that has stood for four days need different answers, and
+                    the message alone cannot tell them apart. */}
+                {flag.since !== null && <span className="opacity-70"> {standing(flag.since)}</span>}
               </span>
             </li>
           ))}
@@ -211,4 +215,13 @@ function MarketRow({ row }: { row: StudioMarketRow }) {
       )}
     </li>
   );
+}
+
+/** "Flagged 3 days ago" — how long a Part 5 flag has been standing. */
+function standing(since: string): string {
+  const hours = (Date.now() - new Date(since).getTime()) / 3_600_000;
+  if (hours < 1) return 'Flagged just now.';
+  if (hours < 48) return `Flagged ${Math.round(hours)}h ago.`;
+  const days = Math.round(hours / 24);
+  return `Flagged ${days} days ago.`;
 }
