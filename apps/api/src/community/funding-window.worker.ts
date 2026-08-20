@@ -11,6 +11,7 @@ import { LeaderboardService } from '../leaderboard/leaderboard.service';
 import { ResearchService } from '../intel/research.service';
 import { MarketHealthService } from '../market/health.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { ResolutionFlowService } from '../resolution/resolution-flow.service';
 import { SupportService } from '../support/support.service';
 import { CommunityService } from './community.service';
@@ -53,6 +54,7 @@ type CloseKind =
   | 'abuse-sweep'
   | 'health-sweep'
   | 'research-sweep'
+  | 'reconciliation'
   | 'ledger-audit';
 
 interface CloseJob {
@@ -87,6 +89,7 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
     private readonly abuse: AbuseService,
     private readonly health: MarketHealthService,
     private readonly research: ResearchService,
+    private readonly reconciliation: ReconciliationService,
     private readonly ledgerAudit: LedgerAuditService,
     private readonly prisma: PrismaService,
   ) {}
@@ -164,6 +167,14 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
         // a flag is something for an operator to read on the Manage tab and for
         // the post-mortem to remember. Nothing here touches a market's state.
         return this.health.sweep();
+      case 'reconciliation': {
+        // §2.7's nightly reconciliation: the ledger against the stored wallet
+        // totals, with withdrawals frozen on any mismatch. It had no caller at
+        // all, which is why the admin dashboard has read "reconciliation
+        // never-run" since the day it was built — accurately, and for months.
+        const outcome = await this.reconciliation.run('SPC', new Date());
+        return { status: outcome.status, diff: outcome.diff.toString() };
+      }
       case 'ledger-audit': {
         // §2.7's nightly invariant check. A violation here is arithmetic on our
         // own rows failing, so it is red by definition and opens an incident.
@@ -310,6 +321,16 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       'research-sweep',
       { every: 300_000 },
       { name: 'close', data: { marketId: '', kind: 'research-sweep' } },
+    );
+    // §2.7's reconciliation, nightly at 02:00 UTC — 03:00 in Lagos, which is
+    // the quietest hour on a Nigerian shelf. A cron pattern rather than an
+    // interval because `every` counts from the last boot, and a control that
+    // freezes withdrawals should not drift onto peak trading because somebody
+    // redeployed at lunchtime.
+    await this.queue?.upsertJobScheduler(
+      'reconciliation',
+      { pattern: '0 2 * * *' },
+      { name: 'close', data: { marketId: '', kind: 'reconciliation' } },
     );
     // §2.7 says nightly. Six-hourly instead: the check is cheap, and the gap
     // between a broken invariant and somebody knowing about it is the window in

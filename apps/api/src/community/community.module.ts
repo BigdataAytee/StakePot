@@ -8,6 +8,7 @@ import { LedgerModule } from '../ledger/ledger.module';
 import { IntelModule } from '../intel/intel.module';
 import { MarketHealthModule } from '../market/health.module';
 import { NotificationsModule } from '../notifications/notifications.module';
+import { ReconciliationModule } from '../reconciliation/reconciliation.module';
 import { ResolutionModule } from '../resolution/resolution.module';
 import { SupportModule } from '../support/support.module';
 import { WalletModule } from '../wallet/wallet.module';
@@ -29,6 +30,7 @@ import { MarketVoidService } from './void.service';
     LedgerModule,
     MarketHealthModule,
     NotificationsModule,
+    ReconciliationModule,
     ResolutionModule,
     SupportModule,
     WalletModule,

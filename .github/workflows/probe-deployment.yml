@@ -56,3 +56,25 @@ jobs:
           echo "'Nothing open here yet': $(echo "$page" | grep -c 'Nothing open here yet')"
           echo "seeded questions on the page: $(echo "$page" | grep -oE 'naira close below|Super Eagles|Apple Music|Premier League|headline inflation|petrol sell below' | sort -u | tr '\n' ' ')"
           echo "build-commit meta: $(echo "$page" | grep -o 'name="build-commit" content="[^"]*"' || echo 'absent — old build')"
+          say "api /community/templates — did the library sync on boot?"
+          # The starter templates are synced from TEMPLATE_LIBRARY when the API
+          # boots, and re-synced on read if the table is ever emptied. An empty
+          # array here means the deployed build predates that, or the sync is
+          # failing — both of which make the create page a blank form.
+          tpl=$(curl -sS -m 60 "$API/community/templates" || echo '[]')
+          echo "templates returned: $(echo "$tpl" | grep -o '"id"' | wc -l)"
+          echo "ids: $(echo "$tpl" | grep -oE '"id":"[a-z-]+"' | tr '\n' ' ')"
+
+          say "api /admin/studio/crawl — reachable without a token? (it must not be)"
+          # Not a capability check: a 401 here is the correct answer and the one
+          # we want to see. The crawl report names every source and its trust
+          # score, which is staff-only by design.
+          curl -sS -m 60 -o /dev/null -w 'HTTP %{http_code} (401 expected)\n' \
+            "$API/admin/studio/crawl" || echo "unreachable"
+
+          say "what this probe cannot see"
+          echo "Research heartbeat counters, the Library tab's series list and the"
+          echo "resolution dossier all sit behind staff auth, so they are not"
+          echo "checkable from an unauthenticated runner. What is provable here is"
+          echo "that the deployed build carries them: the template endpoint above"
+          echo "only exists on this morning's build."

@@ -16,7 +16,7 @@
     "test:props": "pnpm -r test:props",
     "test:load": "k6 run scripts/load/smoke.js",
     "test:load:peak": "k6 run scripts/load/peak.js",
-    "lint": "pnpm -r lint && pnpm run lint:vocabulary",
+    "lint": "pnpm -r lint && pnpm run lint:vocabulary && pnpm run lint:wiring",
     "//typecheck": "The apps resolve @stakeam/* through dist, so the libraries have to exist before tsc runs. Without this, typecheck fails on a clean checkout \u2014 which is exactly what CI is.",
     "pretypecheck": "pnpm run libs",
     "typecheck": "pnpm -r typecheck",
@@ -24,7 +24,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "prepare": "husky",
-    "lint:vocabulary": "node scripts/check-vocabulary.mjs"
+    "lint:vocabulary": "node scripts/check-vocabulary.mjs",
+    "lint:wiring": "node scripts/check-wiring.mjs"
   },
   "pnpm": {
     "//": "pnpm 10 blocks lifecycle scripts by default. These need theirs: prisma downloads query engines, argon2 and sharp build/fetch native binaries, esbuild installs its platform binary.",

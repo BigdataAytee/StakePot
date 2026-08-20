@@ -109,6 +109,22 @@ export class NextInSeriesDto {
   @IsIn(['weekly', 'fortnightly', 'monthly']) cadence!: 'weekly' | 'fortnightly' | 'monthly';
 }
 
+export class SourceEntryDto {
+  @IsIn(['resolution', 'news', 'signal']) tier!: 'resolution' | 'news' | 'signal';
+  @IsIn(['api', 'rss', 'sitemap', 'crawl']) kind!: 'api' | 'rss' | 'sitemap' | 'crawl';
+  @IsString() @MaxLength(120) name!: string;
+  @IsString() @MaxLength(400) homeUrl!: string;
+  @IsOptional() @IsString() @MaxLength(400) feedUrl?: string;
+  @IsOptional() @IsArray() categories?: string[];
+  @IsOptional() @IsString() region?: string;
+  @IsOptional() @IsString() language?: string;
+}
+
+/** A list of sources to add or update. See docs/research-sources.md. */
+export class ImportSourcesDto {
+  @IsArray() @ValidateNested({ each: true }) @Type(() => SourceEntryDto) sources!: SourceEntryDto[];
+}
+
 export class SourceSwitchDto {
   @IsIn(['source', 'tier', 'all']) scope!: 'source' | 'tier' | 'all';
   @IsOptional() @IsString() sourceId?: string;
@@ -224,6 +240,36 @@ export class StudioController {
       return await this.studio.nextInSeries({ marketId: id, cadence: body.cadence });
     } catch (error) {
       if (error instanceof StudioError) throw new BadRequestException(error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk-import sources.
+   *
+   * Upserts on (tier, homeUrl), so re-importing a list is safe and preserves
+   * each source's earned trust — a re-import is usually somebody adding three
+   * rows to a file of eighty, and resetting eighty trust scores to seed the
+   * three would be a strange way to do it.
+   *
+   * Admin rather than resolver: a Tier 1 source is one a market may name and
+   * settle against, so adding one is closer to publishing than to reading.
+   */
+  @Post('sources/import')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('admin')
+  async importSources(@Req() request: RequestWithUser, @Body() body: ImportSourcesDto) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+
+    try {
+      return await this.sources.importSources({
+        sources: body.sources,
+        staffId: user.userId,
+        ip: request.ip ?? 'unknown',
+      });
+    } catch (error) {
+      if (error instanceof SourceRegistryError) throw new BadRequestException(error.message);
       throw error;
     }
   }
