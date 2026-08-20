@@ -114,6 +114,23 @@ export function countdown(iso: string, now = Date.now()): string | null {
   return `${hours}:${String(minutes).padStart(2, '0')}`;
 }
 
+/**
+ * How long ago something happened, in the shortest form that is still true.
+ *
+ * Coarse on purpose past an hour. "17h ago" and "17 hours ago" carry the same
+ * information in a feed, and the feed is a column of them — the long form turns
+ * a scannable list into a paragraph.
+ */
+export function ago(iso: string, now = Date.now()): string {
+  const seconds = Math.max(0, Math.round((now - new Date(iso).getTime()) / 1000));
+  if (seconds < 45) return 'just now';
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  if (seconds < 86_400) return `${Math.round(seconds / 3600)}h ago`;
+  const days = Math.round(seconds / 86_400);
+  if (days < 7) return `${days}d ago`;
+  return new Date(iso).toLocaleDateString('en-NG', { day: 'numeric', month: 'short' });
+}
+
 export const STATE_LABEL: Record<string, string> = {
   draft: 'AWAITING SEED',
   seeding: 'SEEDING',

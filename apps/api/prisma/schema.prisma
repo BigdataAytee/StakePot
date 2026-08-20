@@ -1164,6 +1164,11 @@ model MarketAnnotation {
   marketId String
   type     AnnotationType
   label    String
+  /// Where a `news` annotation came from. Null for platform-generated events,
+  /// which have no source to cite — see the migration for why.
+  url      String?
+  /// The staff account that pinned it, for `news`. Null for generated events.
+  pinnedBy String?
   ts       DateTime       @default(now())
 
   market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)

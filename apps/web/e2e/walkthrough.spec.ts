@@ -325,6 +325,40 @@ test.describe('the walkthrough', () => {
     await capture(page, 'after-sell', testInfo);
   });
 
+  test('7b · the context panel answers what this market is, under one frame', async ({
+    page,
+  }, testInfo) => {
+    await page.goto('/market/wt-naira');
+
+    // Rules leads, because it is the tab that changes whether to trade at all.
+    await expect(page.getByRole('tab', { name: 'Rules' })).toHaveAttribute('aria-selected', 'true');
+    // The settlement source, and — the part every reference leaves out — how
+    // often anybody actually reads it.
+    await expect(page.getByText(/Read once, at settlement/)).toBeVisible();
+
+    await page.getByRole('tab', { name: /^News/ }).click();
+    await expect(page.getByText(/CBN resumes dollar sales/)).toBeVisible();
+    await expect(page.getByText(/Pinned by/).first()).toBeVisible();
+
+    await page.getByRole('tab', { name: 'Stats' }).click();
+    // Lifetime, not the last day: a market that opened ten days ago has an
+    // opening price, and the panel has to have gone and got it.
+    await expect(page.getByRole('columnheader', { name: 'Opened' })).toBeVisible();
+    await expect(page.getByText('Biggest move')).toBeVisible();
+
+    // Placed after the buy and the sell rather than beside the ticket's other
+    // assertions, and deliberately: an activity feed with nothing in it proves
+    // only that the tab renders. By here this account has bought and sold, so
+    // the feed has something to be right or wrong about.
+    await page.getByRole('tab', { name: 'Activity' }).click();
+    await expect(page.getByText(/shown under a code, not a name/)).toBeVisible();
+    // `.first()`: the two Playwright projects share a database, so by the phone
+    // run the same fixture market carries the desktop run's sells as well.
+    await expect(page.getByText('sold').first()).toBeVisible();
+
+    await capture(page, 'context-panel', testInfo);
+  });
+
   test('8 · the wallet history agrees with the ledger', async ({ page }, testInfo) => {
     const token = await signIn(page, email, password);
     await page.goto('/wallet');

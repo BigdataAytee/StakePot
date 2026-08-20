@@ -21,7 +21,6 @@ import { ResolvedReceipt } from '@/components/market/resolved-receipt';
 import { TradePanel } from '@/components/market/trade-panel';
 import { WatchStar } from '@/components/market/watch-star';
 import { PriceChart, TIMEFRAMES, type Timeframe } from '@/components/price-chart';
-import { RulesCard } from '@/components/rules-card';
 import { SeedPanel } from '@/components/seed-panel';
 import { ShareSheet } from '@/components/share-sheet';
 import { TakeThread } from '@/components/take-thread';
@@ -31,6 +30,7 @@ import { api, type MarketDetail, type PricePoint, type SeedComposition } from '@
 import { PAGE_WIDTH } from '@/lib/layout';
 import { recordView } from '@/lib/creator-api';
 import { STATE_LABEL, money, percent } from '@/lib/format';
+import { ContextPanel } from '@/components/market/context-panel';
 import { QuoteStrip } from '@/components/market/quote-strip';
 import { PositionPanel } from './position-panel';
 
@@ -401,9 +401,7 @@ export function TicketView({
               onSell={(outcome, held) => setIntent({ outcome, side: 'sell', held })}
             />
 
-            <div className="mt-4">
-              <RulesCard market={initial} />
-            </div>
+            <ContextPanel market={initial} refreshKey={filled} />
 
             {/* §2.15a: the market page *is* the community space — no separate
                 forum, because the argument and the money belong on one screen. */}

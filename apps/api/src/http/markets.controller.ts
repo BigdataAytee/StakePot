@@ -3,6 +3,7 @@ import { Decimal } from '@stakeam/engine';
 
 import { OptionalJwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { Prisma } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import { subHours } from 'date-fns';
 
 import { PriceCacheService } from '../realtime/price-cache.service';
@@ -177,6 +178,10 @@ export class MarketsController {
         id: a.id,
         type: a.type,
         label: a.label,
+        // Only `news` carries these: the rest are events this platform
+        // generated itself and has no outside source to cite for.
+        url: a.url,
+        pinnedBy: a.pinnedBy,
         ts: a.ts.toISOString(),
       })),
       traderCount: traders.length,
@@ -320,6 +325,147 @@ export class MarketsController {
     }));
   }
 
+  /**
+   * The ticket's context panel (§7.2f, extended): what the price has done since
+   * it opened, how the room is positioned, and what has just happened.
+   *
+   * Separate from `detail` on purpose. The detail response is server-rendered
+   * into the page and has to be fast; this is everything below the fold, it
+   * refreshes after a fill, and none of it is needed to decide whether to
+   * trade — only to understand what you are trading into.
+   */
+  @Get(':id/context')
+  async context(@Param('id') id: string) {
+    const market = await this.prisma.market.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        createdAt: true,
+        outcomes: {
+          orderBy: { ordinal: 'asc' },
+          select: { id: true, label: true },
+        },
+      },
+    });
+    if (market === null) throw new NotFoundException('market not found');
+
+    const labels = new Map(market.outcomes.map((o) => [o.id, o.label]));
+
+    const [windows, biggest, holders, activity] = await Promise.all([
+      // Since it opened, not since yesterday: "high" on a quote page means the
+      // highest it has ever been, and a 24h high labelled "High" would be a
+      // different number every morning for a price that had not moved.
+      //
+      // Windowed from the epoch rather than from `createdAt`. They are the same
+      // window for any real market, and the epoch is the one that cannot be
+      // wrong: a row whose `createdAt` was written after its first price — a
+      // restored backup, a fixture — would otherwise report "no opening price"
+      // beneath a chart visibly drawing one.
+      this.window.forMarket(id, Date.now()),
+      this.biggestMove(id),
+      // Only live holders. A position closed back to zero is a row that stays
+      // behind, and counting it would report a crowd that has already left.
+      this.prisma.position.groupBy({
+        by: ['outcomeId'],
+        where: { marketId: id, shares: { gt: 0 } },
+        _count: { userId: true },
+      }),
+      this.prisma.trade.findMany({
+        where: { marketId: id, side: { not: 'seed' } },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: {
+          id: true,
+          userId: true,
+          outcomeId: true,
+          side: true,
+          shares: true,
+          cost: true,
+          priceAfter: true,
+          createdAt: true,
+        },
+      }),
+    ]);
+
+    const holdersBy = new Map(holders.map((row) => [row.outcomeId, row._count.userId]));
+
+    return {
+      openedAt: market.createdAt.toISOString(),
+      stats: market.outcomes.map((outcome) => {
+        const window = windows.find((w) => w.outcomeId === outcome.id);
+        return {
+          outcomeId: outcome.id,
+          label: outcome.label,
+          opened: window?.opened ?? null,
+          latest: window?.latest ?? null,
+          high: window?.high ?? null,
+          low: window?.low ?? null,
+          change: window?.change ?? null,
+          holders: holdersBy.get(outcome.id) ?? 0,
+        };
+      }),
+      /** The single tick that moved the price most, and which side it moved. */
+      biggestMove:
+        biggest === null
+          ? null
+          : {
+              outcomeId: biggest.outcomeId,
+              label: labels.get(biggest.outcomeId) ?? '',
+              from: biggest.prev,
+              to: biggest.price,
+              ts: biggest.ts.toISOString(),
+            },
+      activity: activity.map((trade) => ({
+        id: trade.id,
+        // Pseudonymous, and per-market. A trade is not a post: somebody who
+        // has said nothing in the thread has not agreed to have their
+        // positions read off a public feed. Salting with the market id stops
+        // the same handle being followed from one market to the next.
+        actor: pseudonym(id, trade.userId),
+        side: trade.side,
+        outcomeId: trade.outcomeId,
+        label: labels.get(trade.outcomeId) ?? '',
+        shares: trade.shares.toString(),
+        cost: trade.cost.toString(),
+        price: trade.priceAfter.toString(),
+        ts: trade.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  /**
+   * The largest single move in this market's price, across every outcome.
+   *
+   * A window function rather than a scan in Node: price history is one row per
+   * outcome per trade, so a busy market has tens of thousands of them and the
+   * answer is one row. Reading them all back to subtract pairs would make the
+   * cheapest fact on the panel the most expensive query on the page.
+   */
+  private async biggestMove(marketId: string) {
+    const rows = await this.prisma.$queryRaw<
+      { outcomeId: string; ts: Date; price: Prisma.Decimal; prev: Prisma.Decimal }[]
+    >`
+      SELECT "outcomeId", ts, price, prev
+      FROM (
+        SELECT "outcomeId", ts, price,
+               lag(price) OVER (PARTITION BY "outcomeId" ORDER BY ts) AS prev
+        FROM price_history
+        WHERE "marketId" = ${marketId}
+      ) moves
+      WHERE prev IS NOT NULL
+      ORDER BY abs(price - prev) DESC
+      LIMIT 1
+    `;
+    const row = rows[0];
+    if (row === undefined) return null;
+    return {
+      outcomeId: row.outcomeId,
+      ts: row.ts,
+      price: Number(row.price.toString()),
+      prev: Number(row.prev.toString()),
+    };
+  }
+
   private serialiseMarket(market: {
     id: string;
     shelf: string;
@@ -387,4 +533,15 @@ function badgeFor(level: number): string | null {
   if (level >= 3) return 'Pro';
   if (level === 2) return 'Verified';
   return null;
+}
+
+/**
+ * A stable, market-local alias for a trader.
+ *
+ * Six hex characters rather than four: at four, a market with a few hundred
+ * traders is likelier than not to show two different people under one name,
+ * and a feed that silently merges two traders into one is worse than no feed.
+ */
+function pseudonym(marketId: string, userId: string): string {
+  return createHash('sha256').update(`${marketId}:${userId}`).digest('hex').slice(0, 6);
 }

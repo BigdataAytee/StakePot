@@ -48,6 +48,10 @@ export interface Annotation {
   id: string;
   type: 'open' | 'activation' | 'big_trade' | 'news' | 'freeze' | 'resolution';
   label: string;
+  /** Set only on `news`: where a pinned item came from. */
+  url: string | null;
+  /** Set only on `news`: the staff account that pinned it. */
+  pinnedBy: string | null;
   ts: string;
 }
 
@@ -69,6 +73,46 @@ export interface MarketDetail extends MarketSummary {
   } | null;
   /** When the 48h dispute window shuts. Null until a resolution is proposed. */
   disputeClosesAt: string | null;
+}
+
+/** One outcome's lifetime numbers, for the context panel's key stats. */
+export interface OutcomeStats {
+  outcomeId: string;
+  label: string;
+  /** Prices are 0-1 fractions here, not strings: nothing settles against them. */
+  opened: number | null;
+  latest: number | null;
+  high: number | null;
+  low: number | null;
+  change: number | null;
+  /** How many accounts are holding this side right now. */
+  holders: number;
+}
+
+export interface ActivityEntry {
+  id: string;
+  /** A per-market pseudonym. Never a handle — a trade is not a post. */
+  actor: string;
+  side: 'buy' | 'sell' | 'seed';
+  outcomeId: string;
+  label: string;
+  shares: string;
+  cost: string;
+  price: string;
+  ts: string;
+}
+
+export interface MarketContext {
+  openedAt: string;
+  stats: OutcomeStats[];
+  biggestMove: {
+    outcomeId: string;
+    label: string;
+    from: number;
+    to: number;
+    ts: string;
+  } | null;
+  activity: ActivityEntry[];
 }
 
 export interface SponsorView {
@@ -134,6 +178,8 @@ export const api = {
   market: (id: string) => get<MarketDetail>(`/markets/${id}`),
   /** Seed composition and seeding-round terms (§2.4, Rulebook Part 3 §3). */
   seed: (id: string) => get<SeedComposition>(`/community/markets/${id}/seed`),
+  /** Everything under the chart: key stats, biggest move, recent activity. */
+  context: (id: string) => get<MarketContext>(`/markets/${id}/context`),
   /** Omit `outcomeId` to get every outcome's series — the multi-line overlay. */
   history: (id: string, outcomeId: string | undefined, tf: string) =>
     get<PricePoint[]>(
