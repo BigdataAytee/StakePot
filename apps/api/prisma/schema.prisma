@@ -274,6 +274,10 @@ enum AnnotationType {
   news
   freeze
   resolution
+  /// The platform added to the pot symmetrically, taking no side. Its own type
+  /// because a reader looking at a jump in the pot with a flat price deserves
+  /// to be told which of the two it was.
+  seed
 }
 
 // ---------------------------------------------------------------- identity & money

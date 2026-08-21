@@ -1,6 +1,6 @@
 'use client';
 
-import { AlertTriangle, Eye } from 'lucide-react';
+import { AlertTriangle, Eye, Plus } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { CreateTab } from './create-tab';
@@ -160,7 +160,7 @@ function ManageTab() {
       ) : (
         <ul className="space-y-2.5">
           {shown.map((row) => (
-            <MarketRow key={row.id} row={row} />
+            <MarketRow key={row.id} row={row} onSeeded={load} />
           ))}
         </ul>
       )}
@@ -320,10 +320,24 @@ function FreezeDeskPanel({ desk, onChanged }: { desk: FreezeDesk; onChanged: () 
   );
 }
 
-function MarketRow({ row }: { row: StudioMarketRow }) {
+/**
+ * States where platform money can still be added.
+ *
+ * Mirrors the server's list; the server is the one that decides, and it
+ * refuses a market this misses. Duplicated rather than fetched because the
+ * cost of being wrong here is a button that fails with a clear message.
+ */
+const TOPPABLE = ['draft', 'seeding', 'funding', 'active'];
+
+function MarketRow({ row, onSeeded }: { row: StudioMarketRow; onSeeded: () => void }) {
+  const [seeding, setSeeding] = useState(false);
   const staked = row.outcomes.map((outcome) => Number(outcome.staked));
   const pot = staked.reduce((a, b) => a + b, 0);
   const leading = pot > 0 ? Math.max(...staked) / pot : null;
+  // Community markets are seeded by their creator, out of the creator's own
+  // money, at creation. Platform money going into one would be the platform
+  // taking a position in somebody else's market.
+  const canSeed = row.shelf === 'official' && TOPPABLE.includes(row.state);
 
   return (
     <li className="rounded-xl border border-border bg-surface-raised p-3.5">
@@ -334,6 +348,16 @@ function MarketRow({ row }: { row: StudioMarketRow }) {
         <a href={`/market/${row.id}`} className="flex-1 font-semibold hover:underline">
           {row.question}
         </a>
+        {canSeed && (
+          <button
+            type="button"
+            onClick={() => setSeeding((open) => !open)}
+            aria-expanded={seeding}
+            className="flex items-center gap-1 rounded-sm border border-border px-2 py-0.5 text-xs font-semibold text-text-muted hover:text-text"
+          >
+            <Plus size={12} /> Add stake
+          </button>
+        )}
         <a
           href={`/market/${row.id}`}
           aria-label={`Open ${row.question} as a trader sees it`}
@@ -342,6 +366,16 @@ function MarketRow({ row }: { row: StudioMarketRow }) {
           <Eye size={15} />
         </a>
       </div>
+
+      {seeding && (
+        <SeedForm
+          row={row}
+          onDone={() => {
+            setSeeding(false);
+            onSeeded();
+          }}
+        />
+      )}
 
       <dl className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-text-muted">
         <span>
@@ -406,4 +440,131 @@ function standing(since: string): string {
   if (hours < 48) return `Flagged ${Math.round(hours)}h ago.`;
   const days = Math.round(hours / 24);
   return `Flagged ${days} days ago.`;
+}
+
+/**
+ * Put platform money into a live official market, equally across outcomes.
+ *
+ * The thing worth saying on screen is the thing an operator will not believe:
+ * adding money to a running market does not move the odds. It is true because
+ * the money is spread equally — the engine's cost function has C(q + δ·1) =
+ * C(q) + δ, so buying δ of every outcome costs exactly δ and leaves every
+ * price where it was. So the panel says it, and shows the pot before and
+ * after so it can be checked rather than trusted.
+ *
+ * There is no amount field on a market row anywhere else in this app, and
+ * this is not one either: the number goes through the engine as a trade and
+ * lands in the ledger. Nothing here writes a pot total.
+ */
+function SeedForm({ row, onDone }: { row: StudioMarketRow; onDone: () => void }) {
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [done, setDone] = useState<{ added: string; potAfter: string } | null>(null);
+  // One id per open panel, so a double-click or a retry after a timeout seeds
+  // once. Regenerated only when the panel is reopened for a fresh decision.
+  const [requestId] = useState(() => crypto.randomUUID());
+
+  const perOutcome = Number(amount);
+  const outcomes = row.outcomes.length;
+  const total = Number.isFinite(perOutcome) && perOutcome > 0 ? perOutcome * outcomes : 0;
+  const ready = total > 0 && reason.trim().length >= 3 && !busy;
+
+  async function submit(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    if (!ready) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await admin.seedMarket(row.id, {
+        perOutcome: String(perOutcome),
+        reason: reason.trim(),
+        requestId,
+      });
+      setDone({ added: result.added, potAfter: result.potAfter });
+    } catch (caught) {
+      setError((caught as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (done !== null) {
+    return (
+      <div className="mt-2.5 rounded-md border border-rise/40 bg-rise/[.08] p-2.5 text-xs">
+        <p className="font-semibold text-rise">
+          Added {money(done.added)}. Pot is now {money(done.potAfter)}.
+        </p>
+        <p className="mt-1 text-text-muted">
+          Every price is exactly where it was. It is in the ledger and the audit log.
+        </p>
+        <button
+          type="button"
+          onClick={onDone}
+          className="mt-1.5 rounded-sm border border-border px-2 py-0.5 font-semibold"
+        >
+          Done
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-2.5 rounded-md border border-border bg-surface p-2.5">
+      <p className="text-xs text-text-muted">
+        Platform money, split equally over {outcomes} outcomes. It deepens the pot and moves no
+        price.
+      </p>
+
+      <div className="mt-2 flex flex-wrap items-end gap-2">
+        <label className="flex-1 min-w-[8rem]">
+          <span className="font-mono text-fine uppercase tracking-widest text-text-muted">
+            Per outcome (₦)
+          </span>
+          <input
+            inputMode="decimal"
+            value={amount}
+            onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
+            placeholder="5000"
+            aria-label="Amount per outcome in naira"
+            className="mt-0.5 w-full rounded-md border border-border bg-surface-raised px-2 py-1.5 font-mono text-sm"
+          />
+        </label>
+        <label className="flex-[2] min-w-[12rem]">
+          <span className="font-mono text-fine uppercase tracking-widest text-text-muted">Why</span>
+          <input
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            maxLength={300}
+            placeholder="Thin pot before kickoff"
+            aria-label="Reason for the seed"
+            className="mt-0.5 w-full rounded-md border border-border bg-surface-raised px-2 py-1.5 text-sm"
+          />
+        </label>
+      </div>
+
+      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+        <span className="text-text-muted">
+          Total <b className="font-mono text-text">{total > 0 ? money(String(total)) : '—'}</b>
+        </span>
+        <button
+          type="submit"
+          disabled={!ready}
+          className="ml-auto rounded-sm bg-brand px-2.5 py-1 font-semibold text-paper disabled:opacity-40"
+        >
+          {busy ? 'Seeding…' : 'Add stake'}
+        </button>
+        <button
+          type="button"
+          onClick={onDone}
+          className="rounded-sm border border-border px-2 py-1"
+        >
+          Cancel
+        </button>
+      </div>
+
+      {error !== null && <p className="mt-1.5 text-xs text-fall">{error}</p>}
+    </form>
+  );
 }

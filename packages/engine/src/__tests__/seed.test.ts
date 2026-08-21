@@ -9,6 +9,7 @@ import {
   resolve,
   seed,
   sell,
+  topUpSymmetric,
   stakedIdentityResidual,
 } from '../index';
 
@@ -217,5 +218,58 @@ describe('a losing pool can never exceed the pot', () => {
         .abs()
         .lte('1e-20'),
     ).toBe(true);
+  });
+});
+
+describe('topUpSymmetric', () => {
+  it('leaves every price exactly where it was, on a market that has traded', () => {
+    // The property the whole operation rests on: C(q + δ·1) = C(q) + δ, so a
+    // symmetric top-up takes no side. `seed` refuses this market; the
+    // arithmetic never did.
+    const opened = openMarket({ outcomes: 3, liquidity: 5_000 });
+    const traded = buy(buy(opened, 0, '4000').state, 2, '1500').state;
+
+    const before = prices(traded.q, traded.liquidity);
+    const after = topUpSymmetric(traded, '250');
+
+    for (const [index, price] of after.pricesAfter.entries()) {
+      expect(price.minus(before[index]!).abs().lt('1e-30')).toBe(true);
+    }
+  });
+
+  it('costs exactly what it adds to the pot, and adds it to every outcome', () => {
+    const traded = buy(openMarket({ outcomes: 2, liquidity: 5_000 }), 0, '3000').state;
+    const before = traded.pot;
+
+    const result = topUpSymmetric(traded, '250');
+
+    expect(result.total.toString()).toBe('500');
+    expect(result.state.pot.minus(before).toString()).toBe('500');
+    // δ shares of every outcome for a cost of δ.
+    expect(result.sharesPerOutcome.toString()).toBe('500');
+    for (const [index, q] of result.state.q.entries()) {
+      expect(q.minus(traded.q[index]!).toString()).toBe('500');
+    }
+  });
+
+  it('keeps the pot identity, which is what the invariants check', () => {
+    const traded = buy(openMarket({ outcomes: 4, liquidity: 9_000 }), 1, '7777.77').state;
+    const result = topUpSymmetric(traded, '123.456');
+
+    const staked = result.state.staked.reduce((total, s) => total.plus(s), new Decimal(0));
+    expect(staked.minus(result.state.pot).abs().lt('1e-18')).toBe(true);
+  });
+
+  it('refuses a top-up of nothing, exactly as a seed does', () => {
+    const traded = buy(openMarket({ outcomes: 2, liquidity: 5_000 }), 0, '100').state;
+    expect(() => topUpSymmetric(traded, '0')).toThrow();
+    expect(() => topUpSymmetric(traded, '-5')).toThrow();
+  });
+
+  it('does not relax the precondition `seed` still carries', () => {
+    // The two are separate exports so that a caller has to say by name that it
+    // means the untraded rule not to apply.
+    const traded = buy(openMarket({ outcomes: 2, liquidity: 5_000 }), 0, '100').state;
+    expect(() => seed(traded, '250')).toThrow();
   });
 });

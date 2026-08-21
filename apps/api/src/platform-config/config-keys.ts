@@ -90,6 +90,10 @@ export const CONFIG_SCHEMAS = {
   official_shelf_slots: z.number().int().positive(),
   /** What the platform puts into each pool when it opens an official market. */
   official_seed_per_outcome_spc: z.number().positive(),
+  /// The most one admin top-up may add per outcome. A ceiling rather than an
+  /// approval: raising it is itself a config change, which is four-eyed and
+  /// delayed (§6.8), so the slow door is where the real control sits.
+  official_seed_max_per_outcome_spc: z.number().positive(),
 
   // Support desk and responsible gambling (§2.12, §6.7)
   /** Hours until a ticket is late, per category. */

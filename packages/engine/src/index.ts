@@ -22,6 +22,7 @@ export {
   potIdentityResidual,
   resolve,
   seed,
+  topUpSymmetric,
   sell,
   splitResolutionFee,
   stakedIdentityResidual,

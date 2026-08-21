@@ -553,6 +553,23 @@ export const admin = {
       method: 'POST',
       body: JSON.stringify(body),
     }),
+  /**
+   * Put platform money into a live official market, equally on every outcome.
+   *
+   * Equally, so it moves no price: the engine's translation identity says
+   * adding the same number of shares to every outcome costs exactly what it
+   * adds and leaves the odds where they were. It runs as a real trade through
+   * the engine and lands in the ledger — there is no "pot size" field to type
+   * a number into, here or anywhere.
+   *
+   * `requestId` is generated per attempt so a double-click, or a retry after a
+   * timeout, seeds once.
+   */
+  seedMarket: (id: string, body: { perOutcome: string; reason: string; requestId: string }) =>
+    request<{ marketId: string; added: string; potAfter: string; perOutcome: string }>(
+      `/admin/markets/${id}/seed`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
   /** Freezing soon, frozen, and anything that should have frozen and has not. */
   freezeDesk: () => request<FreezeDesk>('/admin/studio/freezes'),
   /**

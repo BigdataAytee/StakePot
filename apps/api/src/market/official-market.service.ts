@@ -156,6 +156,67 @@ export class OfficialMarketService {
     return { marketId: market.id, seeded: applied.total.toString() };
   }
 
+  /**
+   * Add to a live official market's pot, symmetrically, and write it down.
+   *
+   * The seeding that already existed only ran at the moment a market opened,
+   * from its own defaults, with nobody able to choose an amount — so an
+   * operator watching a thin market had no way to do anything about it. This
+   * is that action.
+   *
+   * The money is `SeedService`'s job and the guards live with it, where the
+   * row lock is. What belongs here is the record: who did it, to which market,
+   * for how much, and why. A platform seed changes what every trader in that
+   * market is playing for, so "somebody decided this" has to be a row, not an
+   * inference from a jump in the pot.
+   */
+  async topUpSeed(params: {
+    marketId: string;
+    perOutcome: string;
+    reason: string;
+    staffId: string;
+    ip: string;
+    requestId: string;
+  }): Promise<{ marketId: string; added: string; potAfter: string; perOutcome: string }> {
+    const reason = params.reason.trim();
+    if (reason.length < 3) {
+      throw new OfficialMarketError('a platform seed needs a reason — it goes in the audit log');
+    }
+
+    const before = await this.prisma.market.findUnique({
+      where: { id: params.marketId },
+      select: { potTotal: true, state: true },
+    });
+    if (before === null) throw new OfficialMarketError('no such market');
+
+    const applied = await this.seeds.topUpOfficial({
+      marketId: params.marketId,
+      perOutcome: params.perOutcome,
+      requestId: params.requestId,
+    });
+
+    await this.audit.record({
+      staffId: params.staffId,
+      action: 'market.seed:top_up',
+      targetRef: `market:${params.marketId}`,
+      before: { potTotal: before.potTotal.toString(), state: before.state },
+      after: {
+        perOutcome: applied.perOutcome.toString(),
+        added: applied.total.toString(),
+        potTotal: applied.potAfter.toString(),
+        reason,
+      },
+      ip: params.ip,
+    });
+
+    return {
+      marketId: params.marketId,
+      added: applied.total.toString(),
+      perOutcome: applied.perOutcome.toString(),
+      potAfter: applied.potAfter.toString(),
+    };
+  }
+
   /** Refuse a draft, with the reason kept on the row. */
   async rejectDraft(params: {
     draftId: string;

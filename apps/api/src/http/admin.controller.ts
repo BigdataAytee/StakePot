@@ -15,9 +15,11 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
+  IsNotEmpty,
   IsObject,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -138,6 +140,23 @@ export class RevealDto {
   fields!: ('email' | 'phone')[];
 
   @IsString() @MinLength(10) @MaxLength(300) reason!: string;
+}
+
+/**
+ * A platform seed on a live official market.
+ *
+ * Above the controller, like every other DTO here: a class declared below the
+ * controller that uses it compiles, typechecks and passes every test, then
+ * dies on boot with "Cannot access X before initialization" because
+ * `emitDecoratorMetadata` reads it while the module is still evaluating.
+ */
+class SeedMarketDto {
+  @Matches(/^\d+(\.\d+)?$/, { message: 'perOutcome must be a positive decimal string' })
+  perOutcome!: string;
+  /** Goes in the audit log beside the amount. */
+  @IsString() @IsNotEmpty() @MaxLength(300) reason!: string;
+  /** Idempotency: a retried click must not seed twice. */
+  @IsString() @IsNotEmpty() requestId!: string;
 }
 
 @Controller('admin')
@@ -741,6 +760,33 @@ export class AdminController {
         ...(body.attestedNoInfluence === undefined
           ? {}
           : { attestedNoInfluence: body.attestedNoInfluence }),
+      }),
+    );
+  }
+
+  /**
+   * Seed a live official market, equally across every outcome.
+   *
+   * Admin only, and deliberately not `resolver`: this mints platform money
+   * into a market, which is a different kind of decision from judging one.
+   */
+  @Post('markets/:id/seed')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('admin')
+  async seedMarket(
+    @Req() request: RequestWithUser,
+    @Param('id') marketId: string,
+    @Body() body: SeedMarketDto,
+  ) {
+    const actor = this.actor(request);
+    return this.run(() =>
+      this.official.topUpSeed({
+        marketId,
+        perOutcome: body.perOutcome,
+        reason: body.reason,
+        requestId: body.requestId,
+        staffId: actor.userId,
+        ip: actor.ip,
       }),
     );
   }

@@ -579,11 +579,6 @@ export interface SeedResult {
  * trading yet, and the seed is what opens it.
  */
 export function seed(state: MarketState, perOutcome: Numeric): SeedResult {
-  const m = toDecimal(perOutcome);
-  if (m.lte(0)) {
-    throw new EngineValidationError(`seed per outcome must be > 0, received ${m.toString()}`);
-  }
-
   const first = at(state.q, 0);
   for (const qi of state.q) {
     if (!qi.equals(first)) {
@@ -592,6 +587,50 @@ export function seed(state: MarketState, perOutcome: Numeric): SeedResult {
           `across outcomes (${state.q.map((v) => v.toString()).join(', ')})`,
       );
     }
+  }
+
+  return translate(state, perOutcome);
+}
+
+/**
+ * The same symmetric translation, on a market that has already traded.
+ *
+ * `seed` refuses an uneven share vector, and for its own job that is right: a
+ * Path B seed is what *opens* a market, and "equal money in every pool" and
+ * "equal shares of every outcome" only coincide while prices are flat. But the
+ * refusal is a policy about when a market may be opened, not a limit of the
+ * arithmetic — the cost function is translation-invariant, so
+ *
+ *     C(q + δ·1) = C(q) + δ
+ *
+ * holds at every q. Adding δ shares of *every* outcome costs exactly δ and
+ * leaves every price where it was, whether the market opened this morning or
+ * has been traded a thousand times.
+ *
+ * That is what lets the platform top up a live market's pot without taking a
+ * side, which is the whole meaning of a symmetric seed. Note what it does not
+ * do: `liquidity` is untouched, so the market is no *deeper* — the same trade
+ * moves the price by the same amount afterwards. This adds stake, not depth,
+ * and the money it adds is genuinely at risk like anybody else's.
+ *
+ * Deliberately a separate export rather than a flag on `seed`. Every existing
+ * caller keeps the precondition it was written under, and a caller that wants
+ * to skip it has to say so by name.
+ */
+export function topUpSymmetric(state: MarketState, perOutcome: Numeric): SeedResult {
+  return translate(state, perOutcome);
+}
+
+/**
+ * Shift the whole share vector by the same amount, and account for it.
+ *
+ * One implementation, so `seed` and `topUpSymmetric` cannot drift apart — the
+ * thing they disagree about is a precondition, not the money.
+ */
+function translate(state: MarketState, perOutcome: Numeric): SeedResult {
+  const m = toDecimal(perOutcome);
+  if (m.lte(0)) {
+    throw new EngineValidationError(`seed per outcome must be > 0, received ${m.toString()}`);
   }
 
   const n = new Decimal(state.q.length);

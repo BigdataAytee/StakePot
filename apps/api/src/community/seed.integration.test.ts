@@ -512,4 +512,158 @@ describe.skipIf(!TEST_DATABASE_URL)('Path B seeds and syndicates (integration)',
       /active — it cannot be seeded/,
     );
   });
+  /**
+   * The platform's own top-up on a live official market.
+   *
+   * The claim under test is the one an operator will not take on trust: money
+   * can go into a market that is already trading without moving a single
+   * price. It holds because the money is spread equally and the cost function
+   * is translation-invariant — C(q + δ·1) = C(q) + δ at any q, traded or not.
+   * `seed` refuses a traded market because a *creator's* seed is supposed to
+   * be the opening stake; the arithmetic never had the objection.
+   */
+  describe('platform top-up on an official market', () => {
+    /** A live market on the official shelf, with a trade already through it. */
+    async function tradedOfficialMarket(): Promise<{ marketId: string }> {
+      const creator = await trader('official-owner@example.ng');
+      const { marketId } = await seededMarket(creator);
+      await seeds.seedSolo({ marketId, userId: creator });
+      await prisma.market.update({ where: { id: marketId }, data: { shelf: 'official' } });
+
+      const punter = await trader('official-punter@example.ng');
+      const outcome = await prisma.outcome.findFirstOrThrow({ where: { marketId, ordinal: 0 } });
+      await trades.buy({
+        marketId,
+        outcomeId: outcome.id,
+        userId: punter,
+        amount: '750',
+        requestId: `tilt:${marketId}`,
+      });
+      return { marketId };
+    }
+
+    it('adds exactly what it costs and leaves every price untouched', async () => {
+      const { marketId } = await tradedOfficialMarket();
+
+      const before = await prisma.outcome.findMany({
+        where: { marketId },
+        orderBy: { ordinal: 'asc' },
+      });
+      const potBefore = new Decimal(
+        (await prisma.market.findUniqueOrThrow({ where: { id: marketId } })).potTotal.toString(),
+      );
+      // The trade tilted it: this is not the flat market `seed` would accept.
+      expect(new Decimal(before[0]!.priceCurrent.toString()).eq('0.5')).toBe(false);
+
+      const applied = await seeds.topUpOfficial({
+        marketId,
+        perOutcome: '1500',
+        requestId: 'top-up-1',
+      });
+
+      expect(applied.total.eq(3_000)).toBe(true);
+      expect(applied.perOutcome.eq(1_500)).toBe(true);
+
+      const market = await prisma.market.findUniqueOrThrow({ where: { id: marketId } });
+      expect(new Decimal(market.potTotal.toString()).minus(potBefore).eq(3_000)).toBe(true);
+      expect(applied.potAfter.eq(new Decimal(market.potTotal.toString()))).toBe(true);
+      // Still active: a top-up is not a lifecycle event.
+      expect(market.state).toBe('active');
+
+      const after = await prisma.outcome.findMany({
+        where: { marketId },
+        orderBy: { ordinal: 'asc' },
+      });
+      for (const [index, outcome] of after.entries()) {
+        const moved = new Decimal(outcome.priceCurrent.toString())
+          .minus(new Decimal(before[index]!.priceCurrent.toString()))
+          .abs();
+        expect(moved.lt('1e-12'), `outcome ${index} moved by ${moved.toString()}`).toBe(true);
+        // Equal money on every side, which is what makes it move no price.
+        const staked = new Decimal(outcome.stakedTotal.toString()).minus(
+          new Decimal(before[index]!.stakedTotal.toString()),
+        );
+        expect(staked.eq(1_500)).toBe(true);
+      }
+
+      // It is real money through the real ledger, not a number written on the
+      // market row — and it balances.
+      await expectLedgerBalances(marketId);
+      const postings = await prisma.ledgerEntry.findMany({
+        where: { marketId, ref: 'official-topup:top-up-1' },
+      });
+      expect(postings.length).toBeGreaterThan(0);
+
+      const annotation = await prisma.marketAnnotation.findFirst({
+        where: { marketId, type: 'seed' },
+      });
+      expect(annotation).not.toBeNull();
+    });
+
+    it('seeds once however many times the click is retried', async () => {
+      const { marketId } = await tradedOfficialMarket();
+
+      const first = await seeds.topUpOfficial({
+        marketId,
+        perOutcome: '1000',
+        requestId: 'same-click',
+      });
+      const second = await seeds.topUpOfficial({
+        marketId,
+        perOutcome: '1000',
+        requestId: 'same-click',
+      });
+
+      expect(first.total.eq(2_000)).toBe(true);
+      expect(second.total.isZero()).toBe(true);
+      expect(second.potAfter.eq(first.potAfter)).toBe(true);
+
+      const market = await prisma.market.findUniqueOrThrow({ where: { id: marketId } });
+      expect(new Decimal(market.potTotal.toString()).eq(first.potAfter)).toBe(true);
+      await expectLedgerBalances(marketId);
+    });
+
+    it('refuses a community market — that seed is its creator’s, not ours', async () => {
+      const creator = await trader('community-owner@example.ng');
+      const { marketId } = await seededMarket(creator);
+      await seeds.seedSolo({ marketId, userId: creator });
+
+      await expect(
+        seeds.topUpOfficial({ marketId, perOutcome: '500', requestId: 'wrong-shelf' }),
+      ).rejects.toThrow(/only official markets/);
+      await expectLedgerBalances(marketId);
+    });
+
+    it('refuses once the market has frozen, with no staff-shaped exception', async () => {
+      const { marketId } = await tradedOfficialMarket();
+      await prisma.market.update({
+        where: { id: marketId },
+        data: { state: 'frozen', frozenAt: new Date() },
+      });
+
+      await expect(
+        seeds.topUpOfficial({ marketId, perOutcome: '500', requestId: 'too-late' }),
+      ).rejects.toThrow(/cannot be seeded|frozen/);
+      expect(await prisma.ledgerEntry.count({ where: { ref: 'official-topup:too-late' } })).toBe(0);
+    });
+
+    it('refuses an amount over the ceiling, and one of nothing', async () => {
+      const { marketId } = await tradedOfficialMarket();
+      const ceiling = new Decimal(
+        (await config.get('official_seed_max_per_outcome_spc')).toString(),
+      );
+
+      await expect(
+        seeds.topUpOfficial({
+          marketId,
+          perOutcome: ceiling.plus(1).toString(),
+          requestId: 'too-big',
+        }),
+      ).rejects.toThrow(/capped at/);
+      await expect(
+        seeds.topUpOfficial({ marketId, perOutcome: '0', requestId: 'nothing' }),
+      ).rejects.toThrow(/greater than zero/);
+      await expectLedgerBalances(marketId);
+    });
+  });
 });
