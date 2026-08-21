@@ -7,6 +7,7 @@ import { AdminAuditService } from '../audit/admin-audit.service';
 import { MONEY_ROLES } from '../auth/roles.guard';
 import { TotpService } from '../auth/totp.service';
 import { MarketVoidService } from '../community/void.service';
+import { SeedService } from '../community/seed.service';
 import { PrizeService } from '../leaderboard/prize.service';
 import { NotImplementedError } from '../integrations/errors';
 import { LedgerService, type Tx } from '../ledger/ledger.service';
@@ -55,6 +56,7 @@ export class ApprovalsService {
     private readonly audit: AdminAuditService,
     private readonly totp: TotpService,
     private readonly prizes: PrizeService,
+    private readonly seeds: SeedService,
   ) {}
 
   /**
@@ -354,6 +356,22 @@ export class ApprovalsService {
           where: { id: bond.id },
           data: { state: 'forfeited', reason: context.reason, resolvedAt: new Date() },
         });
+        return;
+      }
+
+      case 'liquidity.seed_live': {
+        // The seed itself is `SeedService.topUpOfficial`, unchanged and with
+        // all of its own guards — official shelf, not past the freeze, under
+        // the ceiling, idempotent on the request id. What approval adds is the
+        // second person, and nothing else: an approved seed must not take a
+        // different path from an unapproved one, or the reviewed behaviour and
+        // the executed behaviour are two different things.
+        const { marketId, perOutcome, requestId } = parsed as {
+          marketId: string;
+          perOutcome: string;
+          requestId: string;
+        };
+        await this.seeds.topUpOfficial({ marketId, perOutcome, requestId });
         return;
       }
 

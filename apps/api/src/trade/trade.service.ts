@@ -11,6 +11,7 @@ import { isValidPrice, sharesFor, KOBO_PER_SHARE } from '../orderbook/matching';
 import { release } from '../ledger/posting';
 import { indexOf, outcomeAt, toEngineState } from '../market/market-state';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
+import { impactOf, largestWithinImpact } from './max-impact';
 import { PrismaService } from '../prisma/prisma.service';
 import { PriceCacheService } from '../realtime/price-cache.service';
 import { RgService } from '../rg/rg.service';
@@ -96,6 +97,9 @@ const dec = (v: Decimal | Decimal): Prisma.Decimal => new Prisma.Decimal(v.toStr
  * which serialises writers per market while leaving different markets fully
  * parallel — the same property, enforced one layer down.
  */
+/** A probability as the percentage a trader reads on the button. */
+const asPercent = (price: Decimal): string => `${price.times(100).toDecimalPlaces(1).toString()}%`;
+
 @Injectable()
 export class TradeService {
   constructor(
@@ -277,6 +281,12 @@ export class TradeService {
         const trial = buy(loaded.state, index, budget.toString());
         if (withinLimit(averageKobo(budget, new Decimal(trial.shares.toString())), limit)) {
           // Escrow first: a trade the user cannot fund must not move the market.
+          //
+          // And before the impact ceiling below, deliberately. Both refuse the
+          // same trade, but only one of them is about the person doing it: told
+          // "that would move the price too far" when the real problem is an
+          // empty wallet, somebody goes looking for a smaller stake that will
+          // also fail.
           await this.wallet.escrow({
             userId: input.userId,
             marketId: input.marketId,
@@ -285,6 +295,44 @@ export class TradeService {
             ref: input.requestId,
             tx,
           });
+
+          /*
+            The max-impact ceiling (§E, and the other half of checklist rule 24).
+
+            A price is a claim about what a crowd believes, and a single stake
+            large enough to reprice the market on its own is not that claim —
+            it is one person's cheque wearing the crowd's clothes, and everyone
+            who trades on the number afterwards is reading something that was
+            bought rather than agreed.
+
+            Only the pot leg. A matched fill moves no formula price at all, and
+            a resting order moves nothing until somebody agrees with it — which
+            is exactly the remedy offered below: the same money, at a price a
+            counterparty has to accept.
+
+            The throw rolls the escrow back with the rest of the transaction.
+          */
+          const impact = impactOf({
+            state: loaded.state,
+            index,
+            amount: budget,
+            ceilingBps: Math.round(Number(await this.config.get('max_impact_bps'))),
+          });
+          if (!impact.allowed) {
+            const most = largestWithinImpact({
+              state: loaded.state,
+              index,
+              ceilingBps: impact.ceilingBps,
+              upperBound: budget,
+            });
+            throw new TradeError(
+              `that would move the price from ${asPercent(impact.priceBefore)} to ` +
+                `${asPercent(impact.priceAfter)} on its own. The most this market takes in ` +
+                `one trade is ${most.toDecimalPlaces(0, Decimal.ROUND_DOWN).toString()} — ` +
+                'stake that, or set a limit price and let somebody meet you there.',
+            );
+          }
+
           await this.persist(tx, input, loaded, index, trial, 'buy', budget, new Decimal(0));
           trade = await this.recordTrade(tx, input, index, trial, 'buy', budget, new Decimal(0));
           potResult = trial;

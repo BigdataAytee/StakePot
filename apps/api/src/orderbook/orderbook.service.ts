@@ -57,6 +57,15 @@ export interface PlaceInput {
   /** Shares to rest. Money locked is `stakeFor(side, shares, price)`. */
   readonly shares: Decimal;
   readonly requestId: string;
+  /**
+   * Posted by the platform's market maker rather than by a person.
+   *
+   * Carried onto the row so the market's disclosure and the reconciliation of
+   * platform positions can both ask the book directly, rather than inferring
+   * it from the account id — which would stop working the day the maker is
+   * given its own account, silently, in both places at once.
+   */
+  readonly maker?: boolean;
 }
 
 export interface MatchResult {
@@ -410,6 +419,7 @@ export class OrderBookService {
         shares: dec(shares),
         locked: dec(locked),
         requestId: input.requestId,
+        ...(input.maker === true ? { maker: true } : {}),
       },
     });
 
@@ -447,6 +457,25 @@ export class OrderBookService {
       }
       return this.releaseOrder(tx, order, `cancel:${order.id}`);
     });
+  }
+
+  /**
+   * Cancel one order inside a transaction the caller already owns.
+   *
+   * For the market maker, which cancels its own quotes every cycle under the
+   * market's row lock. `cancel` above opens its own transaction and checks the
+   * order belongs to the person asking — neither of which fits here: the lock
+   * is already held, and the owner is the platform.
+   *
+   * Deliberately not exported to any HTTP path. The ownership check in
+   * `cancel` is what stops one person cancelling another's order, and a method
+   * without it must only ever be reachable from code that has already
+   * established whose order it is.
+   */
+  async cancelAsSystem(tx: Tx, orderId: string, ref: string): Promise<void> {
+    const order = await tx.order.findUnique({ where: { id: orderId } });
+    if (order === null || order.state !== 'open') return;
+    await this.releaseOrder(tx, order, ref);
   }
 
   /**

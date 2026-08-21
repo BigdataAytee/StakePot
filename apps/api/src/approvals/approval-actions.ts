@@ -56,6 +56,29 @@ export const APPROVAL_ACTIONS = {
     money: true,
     summary: 'Reopen a frozen market for trading',
   },
+  /**
+   * A platform seed in LIVE mode.
+   *
+   * In TEST mode the seed tool executes straight away: it spends points, and a
+   * second signature on points is ceremony that teaches people to click
+   * through ceremony. In LIVE mode the same button spends real naira into a
+   * market the platform runs, which is precisely the shape §6.4b exists for —
+   * one credential must not be enough to move company money into a market
+   * whose odds the company also publishes.
+   *
+   * The action is registered now, unreachable, because LIVE mode is off until
+   * licensing. Registering it later, under a launch deadline, is how the
+   * four-eyes step gets skipped "just for the first one".
+   */
+  'liquidity.seed_live': {
+    schema: z.object({
+      marketId: z.string().min(1),
+      perOutcome: decimalString,
+      requestId: z.string().min(1),
+    }),
+    money: true,
+    summary: 'Seed a market with real money, equally across every outcome',
+  },
   'ledger.adjust': {
     schema: z.object({
       userId: z.string().min(1),

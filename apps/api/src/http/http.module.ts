@@ -44,6 +44,9 @@ import {
   PrizeController,
 } from './leaderboard.controller';
 import { MarketsController } from './markets.controller';
+import { LiquidityModule } from '../liquidity/liquidity.module';
+import { SeedToolModule } from '../liquidity/seed-tool.module';
+import { LiquidityController } from './liquidity.controller';
 import { StudioController } from './studio.controller';
 import { ReputationController, TopCallsAdminController } from './reputation.controller';
 import { ModerationController, ThreadsController } from './threads.controller';
@@ -63,6 +66,8 @@ import { OrderBookController } from './orderbook.controller';
     IntelModule,
     LeaderboardModule,
     LedgerModule,
+    LiquidityModule,
+    SeedToolModule,
     MarketModule,
     NotificationsModule,
     ResolutionModule,
@@ -97,6 +102,7 @@ import { OrderBookController } from './orderbook.controller';
     PrizeController,
     MarketSignalsController,
     MarketsController,
+    LiquidityController,
     StudioController,
     ModerationController,
     ReputationController,

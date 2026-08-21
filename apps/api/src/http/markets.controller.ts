@@ -193,6 +193,21 @@ export class MarketsController {
 
     return {
       ...this.serialiseMarket(market),
+      /*
+        Disclosure: does the platform itself quote on this market?
+
+        Read from the book — an order tagged `maker` — rather than from a flag
+        somebody sets alongside turning the maker on. Two switches for one fact
+        is one switch that gets forgotten, and the direction it fails in
+        matters: a market where the platform is quoting and the badge is off is
+        a market whose traders were not told who is on the other side.
+
+        True while any maker order rests, and also once the maker has stopped
+        but its filled positions are still open, because the platform is still
+        a counterparty on those.
+      */
+      platformLiquidity:
+        (await this.prisma.order.count({ where: { marketId: id, maker: true } })) > 0,
       // Live prices come from Redis when they are there; the row is the fallback.
       livePrices: cached?.prices ?? null,
       annotations: annotations.map((a) => ({

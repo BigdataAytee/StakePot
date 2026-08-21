@@ -42,6 +42,18 @@ const ALLOWED = new Map([
   // Studio, or plain inserts). Listed here so the check stays honest about the
   // rest rather than being switched off over one known case.
   ['MarketService', 'DEBT: dead in production, kept compiling by one test suite’s fixtures'],
+  // A stub with no caller *by design*, and the only entry here that is
+  // supposed to stay. §2.16's fintech connector is registered now, throwing
+  // NotImplemented, so that the shape of "reserve, capture, release" is fixed
+  // while it is still free to choose — rather than being invented under a
+  // launch deadline as a single "take the money" call with no reservation and
+  // no refund path. Nothing calls it because nothing may: TEST mode has no
+  // real balance to draw on and LIVE mode is unreachable until licensing.
+  // Delete this line when the real connector lands and the seed tool calls it.
+  [
+    'StubFundingConnector',
+    'a deliberate stub: the funding seam is fixed now, unreachable until licensing',
+  ],
 ]);
 
 function walk(dir) {

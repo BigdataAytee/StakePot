@@ -464,6 +464,7 @@ model Market {
   healthFlags      MarketHealthFlag[]
   orders           Order[]
   matchedPositions MatchedPosition[]
+  maker            MarketMaker?
 
   @@index([shelf, state])
   @@index([state, eventDate])
@@ -1966,10 +1967,20 @@ model Order {
   /// Escrow still held against the unfilled remainder.
   locked Decimal @default(0) @db.Decimal(38, 18)
 
-  state       OrderState @default(open)
+  state OrderState @default(open)
+
+  /// Posted by the platform's market maker rather than by a person.
+  ///
+  /// On the row rather than inferred from `userId == 'sys_platform'`, because
+  /// the disclosure on the market and the reconciliation of platform positions
+  /// both key off it, and both would silently stop working the day the maker
+  /// is given its own account. It is also what makes the ledger's
+  /// platform-liquidity tag checkable against the book.
+  maker Boolean @default(false)
+
   /// The taker request that created this order — idempotency, as trades have.
-  requestId   String     @unique
-  createdAt   DateTime   @default(now())
+  requestId   String    @unique
+  createdAt   DateTime  @default(now())
   cancelledAt DateTime?
 
   market  Market  @relation(fields: [marketId], references: [id], onDelete: Cascade)
@@ -1980,6 +1991,9 @@ model Order {
   /// oldest first. Price-time priority is an index, not a sort in Node.
   @@index([marketId, outcomeId, side, state, priceKobo, createdAt])
   @@index([userId, state])
+  /// "Does the platform quote here" — the market's disclosure, and the
+  /// reconciliation of platform positions, both ask exactly this.
+  @@index([marketId, maker])
   @@map("orders")
 }
 
@@ -2048,4 +2062,110 @@ model MatchedPosition {
   @@unique([userId, marketId, outcomeId, side])
   @@index([marketId, outcomeId])
   @@map("matched_positions")
+}
+
+// ---------------------------------------------------------------- platform liquidity
+
+/// Which kind of money a liquidity action moved.
+///
+/// `test` is points: the starter currency the whole platform already runs on,
+/// worth nothing outside it. `live` is naira, and is unreachable until
+/// licensing — gated by a feature flag *and* a config key, checked together,
+/// because one switch left on by accident is how a test tool spends real money.
+///
+/// Stored on the action rather than read from config at display time. Config is
+/// a current value; an audit row is a claim about the past, and "which mode was
+/// this in" has to survive somebody changing the mode afterwards.
+enum LiquidityMode {
+  test
+  live
+}
+
+/// Why the maker is not quoting.
+///
+/// Every one of these is a rule from §E enforced in code. They are an enum
+/// rather than a message so the dashboard can say *which* rule stopped it, and
+/// so a test can assert the reason rather than a string.
+enum MakerStatus {
+  /// Quoting normally.
+  quoting
+  /// Off by default. Nothing has enabled it.
+  idle
+  /// The budget is spent. It stops quoting entirely — it does not widen, it stops.
+  budget_spent
+  /// Real depth arrived. Above the threshold the market does not need us.
+  depth_reached
+  /// One side holds too much. It stops adding to that side.
+  inventory_capped
+  /// The market is frozen, or close enough to it.
+  market_closing
+  /// Somebody pulled the switch — this market's, or the global one.
+  killed
+}
+
+/// One market's maker: its budget, its rules, and where it has got to.
+///
+/// One row per market and no history: the history is the ledger and
+/// `admin_audit`, both of which already record every quote and every change.
+/// A second copy here would be a second thing to reconcile.
+model MarketMaker {
+  marketId String @id
+
+  /// Off until somebody turns it on, per market. There is no global "on".
+  enabled Boolean       @default(false)
+  mode    LiquidityMode @default(test)
+
+  /// The hard ceiling. Never exceeded, and when it is reached the maker stops
+  /// quoting rather than quoting smaller — a maker that keeps trading at the
+  /// edge of its budget is a maker whose budget is a suggestion.
+  budget Decimal @db.Decimal(38, 18)
+  /// Committed so far: escrow locked behind open quotes plus everything that
+  /// has actually filled. Derived from the ledger on every cycle and stored
+  /// here only so the dashboard need not recompute it to draw a bar.
+  spent  Decimal @default(0) @db.Decimal(38, 18)
+
+  /// Shares per quote, before fading.
+  quoteSize    Decimal @db.Decimal(38, 18)
+  /// Half-width in kobo: quotes go out at mid ± this. Widens on its own when
+  /// volume is thin, so this is a floor rather than a fixed number.
+  spreadKobo   Int
+  /// Never quote outside these. The maker has no view; these are the bounds
+  /// beyond which it declines to have one.
+  minPriceKobo Int     @default(2)
+  maxPriceKobo Int     @default(98)
+  /// How often the cycle runs, in milliseconds.
+  refreshMs    Int     @default(60000)
+
+  /// Stop quoting entirely once real resting depth on a side reaches this.
+  depthStop    Decimal @db.Decimal(38, 18)
+  /// Stop adding to a side once the maker holds this much of it.
+  inventoryCap Decimal @db.Decimal(38, 18)
+
+  status      MakerStatus @default(idle)
+  /// Why it is in that status, in the words the dashboard shows.
+  statusNote  String?
+  lastQuoteAt DateTime?
+  lastCycleAt DateTime?
+
+  /// Set when a kill switch is pulled. A killed maker will not quote again
+  /// until somebody clears it deliberately — a kill that a scheduled cycle can
+  /// undo is not a kill switch.
+  killedAt   DateTime?
+  killedBy   String?
+  killReason String?
+
+  /// True once a seed has been placed on this market in the same admin
+  /// session. §E: stacking maker exposure on top of a fresh seed without
+  /// noticing is the failure this is here to make somebody confirm.
+  seededBy       String?
+  seededAt       DateTime?
+  stackConfirmed Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([enabled, status])
+  @@map("market_makers")
 }

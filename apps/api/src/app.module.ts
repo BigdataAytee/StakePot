@@ -12,6 +12,7 @@ import { CreatorModule } from './creator/creator.module';
 import { HardeningModule } from './hardening/hardening.module';
 import { HealthController, RootController } from './health/health.controller';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
+import { LiquidityModule } from './liquidity/liquidity.module';
 import { LedgerModule } from './ledger/ledger.module';
 import { IntelModule } from './intel/intel.module';
 import { MarketModule } from './market/market.module';
@@ -45,6 +46,7 @@ import { WalletModule } from './wallet/wallet.module';
     TradeModule,
     ResolutionModule,
     LeaderboardModule,
+    LiquidityModule,
     ApprovalsModule,
     AdminModule,
     NotificationsModule,

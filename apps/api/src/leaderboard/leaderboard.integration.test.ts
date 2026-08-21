@@ -9,7 +9,9 @@ import { AdminAuditService } from '../audit/admin-audit.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { AuthService } from '../auth/auth.service';
 import { TotpService } from '../auth/totp.service';
+import { SeedService } from '../community/seed.service';
 import { MarketVoidService } from '../community/void.service';
+import { CreatorService } from '../creator/creator.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { EmailSender } from '../notifications/email.sender';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -87,14 +89,34 @@ describe.skipIf(!TEST_DATABASE_URL)('leaderboards and prizes (integration)', () 
     payouts = new ResolutionService(prisma, ledger, config);
     leaderboards = new LeaderboardService(prisma, config, analytics);
     prizes = new PrizeService(prisma, config, wallet, notifications, audit, analytics);
+    const voids = new MarketVoidService(ledger);
     approvals = new ApprovalsService(
       prisma,
       ledger,
-      new MarketVoidService(ledger),
+      voids,
       config,
       audit,
       new TotpService(prisma),
       prizes,
+      // The approvals service executes a LIVE-mode platform seed through the
+      // one place a symmetric top-up happens. This board never proposes one;
+      // it is wired because the constructor is the contract.
+      new SeedService(
+        prisma,
+        config,
+        wallet,
+        voids,
+        new CreatorService(
+          prisma,
+          config,
+          new NotificationsService(
+            prisma,
+            new PushSender(prisma),
+            new EmailSender(),
+            new SmsSender(),
+          ),
+        ),
+      ),
     );
   });
 

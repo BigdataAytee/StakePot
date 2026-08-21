@@ -100,10 +100,11 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
       audit,
       new AnalyticsService(prisma),
     );
-    approvals = new ApprovalsService(prisma, ledger, voids, config, audit, totp, prizes);
     // §2.14's creator platform: the ladder, the analytics it reads, and
     // the autopsy that moves a creator's record when a market closes.
     const creators = new CreatorService(prisma, config, notifications);
+    seeds = new SeedService(prisma, config, wallet, voids, creators);
+    approvals = new ApprovalsService(prisma, ledger, voids, config, audit, totp, prizes, seeds);
     const creatorAnalytics = new CreatorAnalyticsService(prisma);
     const autopsies = new AutopsyService(
       prisma,
@@ -123,7 +124,6 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
       autopsies,
       analytics,
     );
-    seeds = new SeedService(prisma, config, wallet, voids, creators);
     trades = new TradeService(
       prisma,
       ledger,

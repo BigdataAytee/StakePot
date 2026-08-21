@@ -11,6 +11,7 @@ import { LeaderboardService } from '../leaderboard/leaderboard.service';
 import { ResearchService } from '../intel/research.service';
 import { MarketHealthService } from '../market/health.service';
 import { MarketFreezeService } from '../market/freeze.service';
+import { MarketMakerService } from '../liquidity/market-maker.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { ResolutionFlowService } from '../resolution/resolution-flow.service';
@@ -56,7 +57,8 @@ type CloseKind =
   | 'health-sweep'
   | 'research-sweep'
   | 'reconciliation'
-  | 'ledger-audit';
+  | 'ledger-audit'
+  | 'maker-sweep';
 
 interface CloseJob {
   readonly marketId: string;
@@ -93,6 +95,7 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
     private readonly research: ResearchService,
     private readonly reconciliation: ReconciliationService,
     private readonly ledgerAudit: LedgerAuditService,
+    private readonly makers: MarketMakerService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -192,6 +195,16 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
         // §2.12's "SLA timers with escalation". A breach is a state of the
         // queue, so it is swept rather than timed per ticket.
         return { escalated: await this.support.escalateOverdue() };
+      case 'maker-sweep':
+        // The platform's market maker, one cycle per enabled market. A standing
+        // job rather than a timer per market: the maker's own `refreshMs` is
+        // about how stale a quote may get, and a sweep that runs more often
+        // than the slowest market simply finds nothing to do on the others.
+        //
+        // It moves money — quotes lock escrow — so it is the one sweep here
+        // that is not detection-only. What bounds it is the per-market budget,
+        // checked inside every cycle, under the market's row lock.
+        return this.makers.sweep();
       case 'window':
         return this.community.closeWindow(marketId);
     }
@@ -277,6 +290,15 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       'freeze-sweep',
       { every: 300_000 },
       { name: 'close', data: { marketId: '', kind: 'freeze-sweep' } },
+    );
+    // Every thirty seconds. The kill switch's promise is "within one cycle",
+    // and a cycle somebody has to wait five minutes for is a promise nobody
+    // trusts in an incident — the sweep is cheap and does nothing on a market
+    // whose quotes are still fresh.
+    await this.queue?.upsertJobScheduler(
+      'maker-sweep',
+      { every: 30_000 },
+      { name: 'close', data: { marketId: '', kind: 'maker-sweep' } },
     );
     await this.queue?.upsertJobScheduler(
       'sla-sweep',

@@ -109,7 +109,6 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       autopsies,
       analytics,
     );
-    seeds = new SeedService(prisma, config, wallet, voids, creators);
     trades = new TradeService(
       prisma,
       ledger,
@@ -141,6 +140,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
     // §2.8's prize tool: drawn up here, and paid only when the approvals
     // workflow signs it — which is the path under test.
     const prizes = new PrizeService(prisma, config, wallet, notifications, audit, analytics);
+    seeds = new SeedService(prisma, config, wallet, voids, creators);
     approvals = new ApprovalsService(
       prisma,
       ledger,
@@ -149,6 +149,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       audit,
       new TotpService(prisma),
       prizes,
+      seeds,
     );
   });
 

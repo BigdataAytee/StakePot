@@ -17,6 +17,7 @@ import { FundingWindowWorker } from './funding-window.worker';
 import { CommunityQuestionModule } from './question-engine.module';
 import { SeedService } from './seed.service';
 import { TemplateLibraryService } from './template-library';
+import { LiquidityModule } from '../liquidity/liquidity.module';
 import { MarketFreezeModule } from '../market/freeze.module';
 import { MarketVoidService } from './void.service';
 
@@ -29,6 +30,7 @@ import { MarketVoidService } from './void.service';
     LeaderboardModule,
     IntelModule,
     LedgerModule,
+    LiquidityModule,
     MarketFreezeModule,
     MarketHealthModule,
     NotificationsModule,

@@ -174,6 +174,31 @@ export const CONFIG_SCHEMAS = {
   /** The nightly audit's allowance on cached aggregates. Never on the ledger. */
   audit_cache_tolerance_spc: z.number().nonnegative(),
 
+  // Platform liquidity (§2.16). Both tools read these; neither has its own copy.
+  /**
+   * The config half of the LIVE-mode guard.
+   *
+   * The other half is the `liquidity-live` feature flag, and both must be true.
+   * Two switches rather than one because this is the difference between a tool
+   * that spends points and a tool that spends naira, and a single boolean left
+   * on after a test is the whole failure mode.
+   */
+  liquidity_live_enabled: z.boolean(),
+  /** No single market's maker may be given more than this, whatever is typed. */
+  liquidity_bot_max_budget_spc: z.number().positive(),
+  /** Resting depth on a side above which the market does not need a maker. */
+  liquidity_bot_depth_stop_spc: z.number().positive(),
+  /** How close to the freeze the maker stops quoting, in minutes. */
+  liquidity_bot_stop_before_freeze_minutes: z.number().int().positive(),
+  /**
+   * How far one trade may move a pot price, in basis points.
+   *
+   * The max-impact ceiling. It applies to the pot leg of every trade — a
+   * market's price is a claim about what people believe, and a single stake
+   * large enough to reprice it on its own is not that claim.
+   */
+  max_impact_bps: z.number().int().positive(),
+
   // Financial controls (§2.10)
   reconciliation_tolerance_spc: z.number().nonnegative(),
   withdrawals_frozen: z.boolean(),
