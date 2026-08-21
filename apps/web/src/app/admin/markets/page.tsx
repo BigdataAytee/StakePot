@@ -65,7 +65,14 @@ export default function MarketStudio() {
         </p>
       </header>
 
-      <div role="tablist" aria-label="Market Studio" className="flex border-b border-border">
+      {/* Scrolls rather than overflows: five labels do not fit across a phone,
+          and a tab row that pushes the page wider takes every screen under it
+          with it. */}
+      <div
+        role="tablist"
+        aria-label="Market Studio"
+        className="-mx-4 flex overflow-x-auto border-b border-border px-4 sm:mx-0 sm:px-0"
+      >
         {TABS.map((name) => (
           <button
             key={name}
@@ -73,7 +80,7 @@ export default function MarketStudio() {
             type="button"
             aria-selected={tab === name}
             onClick={() => choose(name)}
-            className={`px-4 py-2.5 text-sm font-semibold transition-colors ${
+            className={`shrink-0 px-4 py-2.5 text-sm font-semibold transition-colors ${
               tab === name
                 ? 'border-b-2 border-brand text-text'
                 : 'border-b-2 border-transparent text-text-muted hover:text-text'

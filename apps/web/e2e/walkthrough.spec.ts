@@ -427,6 +427,95 @@ test.describe('the walkthrough', () => {
     await capture(page, 'create-wizard', testInfo);
   });
 
+  test('12b · the Studio opens a market in three steps, one screen each', async ({
+    page,
+  }, testInfo) => {
+    // The redesign's claim is that the form got shorter and the enforcement did
+    // not. `create-tab`'s unit suite proves the second half — every rule still
+    // has a field. This proves the first: three steps, each of which fits the
+    // phone without scrolling the page, and a review that will not publish
+    // while anything fails.
+    const staff = await staffAccount(`studio-${stamp}@stakeam.ng`, 'admin');
+    await page.addInitScript((value) => {
+      window.localStorage.setItem('stakeam.token', String(value));
+    }, staff);
+
+    await page.goto('/admin/markets?tab=create');
+    await expect(page.getByRole('heading', { name: 'What’s the question?' })).toBeVisible({
+      timeout: 20_000,
+    });
+
+    // Step 1 is one box. Not "mostly one box": the outcome builder is a line of
+    // text until somebody asks for a third answer.
+    await expect(page.locator('#question')).toBeVisible();
+    await expect(page.getByText('Two answers:')).toBeVisible();
+    await page.fill(
+      '#question',
+      'Will the official CBN closing rate print below N1,450 to the dollar on the stated date?',
+    );
+
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'How does it settle?' })).toBeVisible();
+
+    await page.fill('#source', 'Central Bank of Nigeria');
+    await page.fill('#sourceUrl', 'https://www.cbn.gov.ng/rates/exchratebycurrency.html');
+    const settle = new Date(Date.now() + 8 * 86_400_000);
+    settle.setHours(23, 59, 0, 0);
+    const pad = (value: number) => String(value).padStart(2, '0');
+    await page.fill(
+      '#eventDate',
+      `${settle.getFullYear()}-${pad(settle.getMonth() + 1)}-${pad(settle.getDate())}T23:59`,
+    );
+
+    // Rule 2 without a word about rule 2: the refund date arrives filled in,
+    // after the settle date, the moment the settle date is set.
+    await expect(page.locator('#voidDate')).not.toHaveValue('');
+
+    // And rule 26: the timezone is in the settlement wording, because the
+    // wording was composed from the field rather than typed by somebody who had
+    // just been told to remember it.
+    await expect(page.getByText(/23:59 WAT on/)).toBeVisible();
+
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Anything unusual?' })).toBeVisible();
+
+    // Rule 4's four cases, already answered. "The source publishes nothing" is
+    // the one the validator refuses a draft without, and the one a free-text
+    // box never got.
+    for (const label of [
+      'Postponed past the void date',
+      'Cancelled',
+      'The source publishes nothing',
+      'The figure is revised later',
+    ]) {
+      await expect(page.getByRole('checkbox', { name: label })).toBeChecked();
+    }
+    await page.locator('#attestation').check();
+
+    await page.getByRole('button', { name: 'Review it' }).click();
+    await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible();
+
+    // The market as a trader meets it, before any verdict about it.
+    await expect(page.getByText('HOW IT WILL LOOK')).toBeVisible();
+    await expect(page.getByText(/Will the official CBN closing rate/)).toBeVisible();
+
+    // Publish is refused while the judgement calls are unanswered — an `ask` is
+    // a block, or the questions would be decoration.
+    const publish = page.getByRole('button', { name: /Open the market/ });
+    await expect(publish).toBeDisabled();
+
+    await page.locator('#judgement-25').getByRole('button', { name: 'Yes', exact: true }).click();
+    await page.locator('#judgement-18').getByRole('button', { name: 'Yes', exact: true }).click();
+    await page.locator('#judgement-R3').getByRole('button', { name: 'No', exact: true }).click();
+
+    // The whole checklist is still there — collapsed to what needs attention,
+    // one click from every line of it. The number is the register's, not a
+    // literal, so this asserts the shape and not today's rule count.
+    await expect(page.getByRole('button', { name: /All \d+ rules/ })).toBeVisible();
+
+    await capture(page, 'studio-three-step-review', testInfo);
+  });
+
   test('13 · settling a market pays the winners and writes their receipt', async ({
     page,
   }, testInfo) => {

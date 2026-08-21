@@ -247,6 +247,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /** A market as the Studio's Manage tab sees it, flags and all. */
+/** A source a market may name and settle against (tier 1 in the registry). */
+export interface SettlingSource {
+  id: string;
+  name: string;
+  homeUrl: string;
+  tier: string;
+}
+
 export interface StudioMarketRow {
   id: string;
   question: string;
@@ -496,6 +504,25 @@ export const admin = {
       `/admin/studio/markets${state === undefined || state === '' ? '' : `?state=${state}`}`,
     ),
   /** Is the research pipeline actually finding anything? */
+  /**
+   * The bodies a market may be settled against.
+   *
+   * A list rather than a text box, which is what makes rule 1 unbreakable in
+   * the wizard rather than merely checked: "widely reported" is not on it.
+   */
+  /**
+   * Turn a rough idea into wording a stranger could settle.
+   *
+   * §2.14a's co-pilot, which the community wizard has used since step 11 and
+   * the Studio never did — staff were the ones expected to write it correctly
+   * by hand. Nothing is filed: this is somebody still thinking.
+   */
+  copilot: (text: string) =>
+    request<{ template: StudioDraft }>('/community/copilot', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }).then((body) => body.template),
+  settlingSources: () => request<SettlingSource[]>('/admin/studio/sources'),
   /** The starter templates, retired ones included. */
   studioTemplates: () => request<LibraryTemplate[]>('/admin/studio/templates'),
   /** Settled markets worth running again, with what happened last time. */

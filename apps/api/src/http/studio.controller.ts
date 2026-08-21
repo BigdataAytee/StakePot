@@ -443,6 +443,31 @@ export class StudioController {
   }
 
   /**
+   * The sources a market may be settled against.
+   *
+   * Fed to the wizard's source field so it is a list to pick from rather than
+   * a box to type into. Rule 1 — "never 'widely reported', 'the news', or
+   * 'confirmed sources'" — then has nothing left to catch: a picker cannot
+   * produce a vague name. Designing the rule out of reach beats printing it
+   * under the field and hoping.
+   *
+   * Resolver as well as admin: writing a market is a resolver's job, and the
+   * list is public information about who settles what.
+   */
+  @Get('sources')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async settlingSources() {
+    const rows = await this.sources.settlingSources();
+    return rows.map((source) => ({
+      id: source.id,
+      name: source.name,
+      homeUrl: source.homeUrl,
+      tier: source.tier,
+    }));
+  }
+
+  /**
    * Bulk-import sources.
    *
    * Upserts on (tier, homeUrl), so re-importing a list is safe and preserves
