@@ -20,6 +20,33 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   await prisma.$executeRawUnsafe('DELETE FROM admin_audit');
   await prisma.$executeRawUnsafe('ALTER TABLE admin_audit ENABLE TRIGGER admin_audit_append_only');
 
+  // The intelligence layer. Listed first among the cascading deletes because
+  // `market_source_items` keys a market that the block below removes, and a
+  // table missing from this function is not a loud failure — it is a suite
+  // where every test after the first sees the one before it, which is how the
+  // source registry's re-import test first reported seven conflicts on a
+  // source it had contradicted once.
+  await prisma.resolutionDossier.deleteMany();
+  await prisma.sourceConflict.deleteMany();
+  await prisma.marketSourceItem.deleteMany();
+  await prisma.sourceItem.deleteMany();
+  await prisma.source.deleteMany();
+
+  // The order book. First among the market-scoped deletes for the same reason
+  // the intelligence layer is: a table missing from this function is not a
+  // loud failure but a suite where every test sees the one before it. This one
+  // announced itself as a matched fill that reported 1,000 shares while the
+  // database held none of them — a *previous run's* `order_fills` row replayed
+  // through the idempotency check under the same request id.
+  await prisma.orderFill.deleteMany();
+  await prisma.order.deleteMany();
+  await prisma.matchedPosition.deleteMany();
+
+  // The platform's market makers. Same reason again, and the same class of
+  // symptom: a maker row surviving a reset is a market that quotes in the next
+  // test for reasons that test cannot see.
+  await prisma.marketMaker.deleteMany();
+
   await prisma.trade.deleteMany();
   await prisma.position.deleteMany();
   await prisma.resolution.deleteMany();
@@ -29,6 +56,7 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   await prisma.syndicateMember.deleteMany();
   await prisma.syndicate.deleteMany();
   await prisma.dispute.deleteMany();
+  await prisma.marketHealthFlag.deleteMany();
   await prisma.marketOutcomeLog.deleteMany();
   await prisma.marketAutopsy.deleteMany();
   await prisma.commentReport.deleteMany();
@@ -43,6 +71,7 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   await prisma.incidentUpdate.deleteMany();
   await prisma.statusIncident.deleteMany();
   await prisma.rgSettings.deleteMany();
+  await prisma.copilotRun.deleteMany();
   await prisma.marketDraft.deleteMany();
   await prisma.opportunity.deleteMany();
   await prisma.ticketTemplate.deleteMany();
@@ -72,6 +101,26 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   await prisma.deviceFingerprint.deleteMany();
   await prisma.prizeRun.deleteMany();
   await prisma.leaderboardSnapshot.deleteMany();
+
+  /*
+   * §2.18's two evidence tables, which cascade from `users`.
+   *
+   * They are append-only at the database level, so the cascade from the line
+   * below is a DELETE the trigger refuses — and it refuses it correctly: an
+   * access log a caller can erase is not a log. The fixture gets the same
+   * exception the ledger gets, and for the same reason.
+   *
+   * This did not surface when the rule landed, because no test had yet written
+   * a consent for a user to cascade into. It surfaced the moment a signup
+   * journey ran against this database, which is the honest lesson: a
+   * constraint on a table nothing writes to is a constraint nothing has
+   * tested.
+   */
+  for (const table of ['pii_access_log', 'consents']) {
+    await prisma.$executeRawUnsafe(`ALTER TABLE ${table} DISABLE TRIGGER ${table}_append_only`);
+    await prisma.$executeRawUnsafe(`DELETE FROM ${table}`);
+    await prisma.$executeRawUnsafe(`ALTER TABLE ${table} ENABLE TRIGGER ${table}_append_only`);
+  }
 
   await prisma.wallet.updateMany({ data: { available: 0, escrowed: 0 } });
   await prisma.user.deleteMany({ where: { status: { not: 'system' } } });

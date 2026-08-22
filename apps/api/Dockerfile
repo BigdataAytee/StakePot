@@ -20,6 +20,7 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc ./
 COPY apps/api/package.json apps/api/
 COPY apps/web/package.json apps/web/
 COPY packages/engine/package.json packages/engine/
+COPY packages/rules/package.json packages/rules/
 COPY packages/tokens/package.json packages/tokens/
 RUN pnpm install --frozen-lockfile
 
@@ -27,9 +28,11 @@ RUN pnpm install --frozen-lockfile
 FROM deps AS build
 COPY tsconfig.base.json ./
 COPY packages/engine packages/engine
+COPY packages/rules packages/rules
 COPY packages/tokens packages/tokens
 COPY apps/api apps/api
 RUN pnpm --filter @stakeam/engine build \
+ && pnpm --filter @stakeam/rules build \
  && pnpm --filter @stakeam/api exec prisma generate \
  && pnpm --filter @stakeam/api build
 

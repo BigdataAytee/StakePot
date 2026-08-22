@@ -2,9 +2,12 @@ import type { Metadata, Viewport } from 'next';
 import { NextIntlClientProvider } from 'next-intl';
 import { getMessages } from 'next-intl/server';
 
-import { archivo, spaceMono } from '@/lib/fonts';
+import { Suspense } from 'react';
+
+import { openSauce } from '@/lib/fonts';
 import { SITE_URL } from '@/lib/site';
 import { RealityCheck } from '@/components/reality-check';
+import { RouteProgress } from '@/components/route-progress';
 import './globals.css';
 
 const DESCRIPTION =
@@ -48,10 +51,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: [
-    { media: '(prefers-color-scheme: light)', color: '#FAFDF7' },
-    { media: '(prefers-color-scheme: dark)', color: '#0B1A13' },
-  ],
+  themeColor: [{ media: '(prefers-color-scheme: light)', color: '#ffffff' }],
 };
 
 /** The deployed commit, or an honest admission that nothing said. */
@@ -66,7 +66,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   const messages = await getMessages();
 
   return (
-    <html lang="en-NG" className={`${archivo.variable} ${spaceMono.variable}`}>
+    <html lang="en-NG" className={openSauce.variable}>
       <head>
         {/*
           The build this page came from, for anyone holding a phone rather than
@@ -78,6 +78,11 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       </head>
       <body>
         <NextIntlClientProvider messages={messages}>
+          {/* Suspended because it reads the query string, which a statically
+              rendered page has no answer for until it is asked for. */}
+          <Suspense fallback={null}>
+            <RouteProgress />
+          </Suspense>
           {/* §2.12's session reality check sits above everything, on every screen. */}
           <RealityCheck />
           {children}

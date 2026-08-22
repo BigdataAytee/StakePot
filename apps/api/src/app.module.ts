@@ -12,7 +12,9 @@ import { CreatorModule } from './creator/creator.module';
 import { HardeningModule } from './hardening/hardening.module';
 import { HealthController, RootController } from './health/health.controller';
 import { LeaderboardModule } from './leaderboard/leaderboard.module';
+import { LiquidityModule } from './liquidity/liquidity.module';
 import { LedgerModule } from './ledger/ledger.module';
+import { IntelModule } from './intel/intel.module';
 import { MarketModule } from './market/market.module';
 import { MetricsController } from './observability/metrics.controller';
 import { PlatformConfigModule } from './platform-config/platform-config.module';
@@ -20,6 +22,8 @@ import { PrismaModule } from './prisma/prisma.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { ReconciliationModule } from './reconciliation/reconciliation.module';
 import { RgModule } from './rg/rg.module';
+import { AccountModule } from './account/account.module';
+import { FlagsModule } from './flags/flags.module';
 import { StatusModule } from './status/status.module';
 import { SupportModule } from './support/support.module';
 import { ResolutionModule } from './resolution/resolution.module';
@@ -42,16 +46,20 @@ import { WalletModule } from './wallet/wallet.module';
     TradeModule,
     ResolutionModule,
     LeaderboardModule,
+    LiquidityModule,
     ApprovalsModule,
     AdminModule,
     NotificationsModule,
     RgModule,
     SupportModule,
     StatusModule,
+    FlagsModule,
+    AccountModule,
     CommunityModule,
     CommunityLayerModule,
     CreatorModule,
     HardeningModule,
+    IntelModule,
     MarketModule,
     RealtimeModule,
     HttpModule,

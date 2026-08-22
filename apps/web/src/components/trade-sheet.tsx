@@ -2,52 +2,63 @@
 
 import { AnimatePresence, motion } from 'framer-motion';
 import { ArrowUpDown, X } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
-import type { MarketDetail, OutcomeView } from '@/lib/api';
-import { API_URL } from '@/lib/api';
-import { exactMoney, kobo, percent } from '@/lib/format';
+import { useFreeze } from './market/freeze-notice';
+import type { OutcomeView } from '@/lib/api';
+
+import { exactMoney, kobo, money, percent } from '@/lib/format';
+import { placeTrade } from '@/lib/place-trade';
+import { FillBreakdown } from '@/components/market/fill-breakdown';
+import { rememberTrade, signInHref } from '@/lib/pending-trade';
+import { blockerFor, useTradeAllowance } from '@/lib/trade-allowance';
 import { usePublicConfig } from '@/lib/public-config';
-
-/**
- * Wait for a queued trade to be executed, or to be refused.
- *
- * §11's queue answers "accepted" the moment a busy market's trade is safely on
- * the stream, and the worker executes it a moment later. Somebody who has just
- * committed money is owed the outcome, not an optimistic screen: this polls the
- * status endpoint until the trade exists or the refusal does.
- *
- * It gives up after a minute and says so. Giving up is not the same as losing
- * the trade — the queue still holds it and the wallet will show it — so the
- * message says that rather than implying the money went nowhere.
- */
-async function waitForFill(requestId: string, token: string): Promise<void> {
-  const deadline = Date.now() + 60_000;
-  while (Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    const response = await fetch(`${API_URL}/trades/${requestId}/status`, {
-      headers: { authorization: `Bearer ${token}` },
-    }).catch(() => null);
-    if (response === null || !response.ok) continue;
-
-    const body = (await response.json().catch(() => null)) as {
-      status?: string;
-      reason?: string;
-    } | null;
-    if (body?.status === 'filled') return;
-    if (body?.status === 'rejected') throw new Error(body.reason ?? 'that trade was refused');
-  }
-  throw new Error('Still confirming — your trade is queued and will appear in your wallet.');
-}
+import { costOfShares, quote } from '@/lib/trade-quote';
 
 /** The quick chips §7.2d specifies for amount-first entry. */
 const AMOUNT_CHIPS = [500, 1000, 2000, 5000];
+
+/** §7.2d's shares-entry steppers, for the advanced mode. */
+const SHARE_STEPS = [-100, -10, 10, 100];
+
+/**
+ * What the sheet needs to quote a trade.
+ *
+ * Structural rather than `MarketDetail`, because the same sheet now opens from
+ * the grid — where a card holds a summary — as well as from the ticket. Both
+ * shapes carry these fields; asking for the detail would have meant fetching a
+ * whole market to price a button somebody has already pressed.
+ */
+export interface TradeMarket {
+  id: string;
+  question: string;
+  state: string;
+  pot: string;
+  liquidity: string;
+  /**
+   * Required, not optional. The sheet is the last screen between a person and
+   * a trade, so it is the one place that must not be able to open on a market
+   * it cannot answer the freeze question about — and an optional field would
+   * make that a runtime accident rather than a compile error.
+   */
+  eventDate: string;
+  freezeAt?: string | null;
+  freezeReason?: string | null;
+  outcomes: OutcomeView[];
+}
 
 export interface TradeIntent {
   outcome: OutcomeView;
   side: 'buy' | 'sell';
   /** Shares held, when selling. */
   held?: string;
+  /**
+   * Pre-filled amount, used to restore a trade somebody was composing before
+   * they were sent to sign in. Absent everywhere else, because a sheet that
+   * opens with a number already in it has made a decision on their behalf.
+   */
+  amount?: string;
 }
 
 /**
@@ -71,7 +82,7 @@ export function TradeSheet({
   onClose,
   onFilled,
 }: {
-  market: MarketDetail;
+  market: TradeMarket;
   intent: TradeIntent | null;
   livePrices: Record<string, string>;
   token: string | null;
@@ -79,23 +90,65 @@ export function TradeSheet({
   onFilled: () => void;
 }) {
   const config = usePublicConfig();
+  const router = useRouter();
   const [amount, setAmount] = useState('');
   const [reason, setReason] = useState('');
   const [side, setSide] = useState<'buy' | 'sell'>('buy');
+  /**
+   * §7.2d's advanced toggle. Amount-first is the default because "how much am
+   * I putting in" is the question this audience is actually answering; shares
+   * -first is for the reader who is pricing the position instead.
+   */
+  const [mode, setMode] = useState<'amount' | 'shares'>('amount');
+  /**
+   * The price the trader will not go above, in kobo, or null for "at the
+   * market price".
+   *
+   * Null by default and stays null unless somebody opens the control. A limit
+   * is a power feature: it is the difference between a trade that happens now
+   * and one that might happen later, and defaulting anybody into "later" would
+   * be the sheet quietly not doing what the button said.
+   */
+  const [limitKobo, setLimitKobo] = useState<number | null>(null);
+  const [limitOpen, setLimitOpen] = useState(false);
+  /**
+   * Whether the fill breakdown has a fuller answer than the summary below it.
+   *
+   * The summary was written when the pot was the only venue, so its "shares you
+   * get" is the pot leg alone — beside a breakdown reading ₦600 matched and
+   * ₦1,400 from the pot, it was a third number that agreed with neither.
+   */
+  const [split, setSplit] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   /** The queue took it but has not executed it yet — §11's "order placed". */
   const [queued, setQueued] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Bumped on every chip press so the field can acknowledge it.
+   *
+   * A counter rather than a boolean: two presses of the same chip are two
+   * events, and a boolean that is already true cannot restart an animation —
+   * which is exactly the case where the feedback matters most, because the
+   * amount changed by the same step twice and the digits are the only other
+   * evidence.
+   */
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     if (intent === null) return;
     setSide(intent.side);
-    setAmount('');
+    setMode('amount');
+    setAmount(intent.amount ?? '');
+    setLimitKobo(null);
+    setLimitOpen(false);
+    setSplit(false);
     setQueued(false);
     setError(null);
+    setTick(0);
   }, [intent]);
 
   const outcome = intent?.outcome ?? null;
+  const freeze = useFreeze(market);
   const price = outcome === null ? 0 : Number.parseFloat(livePrices[outcome.id] ?? outcome.price);
 
   /**
@@ -105,114 +158,81 @@ export function TradeSheet({
    */
   const preview = useMemo(() => {
     if (outcome === null) return null;
-    const entered = Number.parseFloat(amount);
-    if (!Number.isFinite(entered) || entered <= 0 || price <= 0 || price >= 1) return null;
+    // In shares mode the typed figure is a share count, so it is converted to
+    // its cost first and then priced by the same quote as everything else —
+    // one curve, read from whichever end the reader is holding.
+    const asMoney =
+      side === 'buy' && mode === 'shares'
+        ? (costOfShares({ market, outcome, shares: amount })?.toString() ?? '')
+        : amount;
 
-    const liquidity = Number.parseFloat(market.liquidity);
-    const pot = Number.parseFloat(market.pot);
-    const outstanding = Number.parseFloat(outcome.shares);
-    if (!Number.isFinite(liquidity) || liquidity <= 0) return null;
-
-    if (side === 'sell') {
-      // The same cost function the engine uses, so the sheet quotes what the
-      // fill will actually be worth: gross = C(q) − C(q with these shares
-      // returned. A linear shares × price is not the curve, and on a large exit
-      // it overstates the proceeds — which is the wrong direction to be wrong
-      // in on a screen somebody is about to act on.
-      const q = market.outcomes.map((row) => Number.parseFloat(row.shares));
-      const index = market.outcomes.findIndex((row) => row.id === outcome.id);
-      if (index === -1) return null;
-
-      const held = q[index] ?? 0;
-      if (entered > held) return null;
-
-      const after = [...q];
-      after[index] = held - entered;
-
-      const gross = costOf(q, liquidity) - costOf(after, liquidity);
-      if (!Number.isFinite(gross) || gross <= 0) return null;
-
-      // §2.3: the early-exit fee is withheld from the seller, never taken from
-      // the pot. Quoted here so the number on the button is the number that
-      // lands in the wallet.
-      const feeRate = config?.exitFeeRate ?? 0;
-      const fee = gross * feeRate;
-
-      return {
-        shares: entered,
-        total: gross - fee,
-        gross,
-        fee,
-        priceAfter: price,
-        estWin: null,
-      };
-    }
-
-    // The engine's closed form, run here only so the sheet can show the figures
-    // live: Δ = L·ln((e^(m/L) − 1 + p)/p). The API recomputes all of it — this
-    // never decides what a trade costs, only what the sheet says it will.
-    const shares = liquidity * Math.log((Math.exp(entered / liquidity) - 1 + price) / price);
-
-    // Price after this fill, from the same shifted exponentials.
-    const odds = (1 - price) / price;
-    const priceAfter = 1 / (1 + odds * Math.exp(-shares / liquidity));
-
-    // §2.3: the pre-resolution estimate is pot / q[w] per share. Labelled an
-    // estimate because it moves with every trade until the market freezes.
-    const potAfter = pot + entered;
-    const outstandingAfter = outstanding + shares;
-    const estWin = outstandingAfter > 0 ? (potAfter * shares) / outstandingAfter : 0;
-
-    return { shares, total: entered, gross: entered, fee: 0, priceAfter, estWin };
-  }, [amount, price, side, market.pot, market.liquidity, market.outcomes, outcome, config]);
+    return quote({
+      market,
+      outcome,
+      side,
+      amount: asMoney,
+      price,
+      exitFeeRate: config?.exitFeeRate ?? 0,
+    });
+  }, [amount, mode, price, side, market, outcome, config]);
 
   const closed = market.state !== 'active';
+
+  // §7.2d/§2.12: what the account may stake, read when the sheet opens so it
+  // can be said before they commit rather than after the API refuses.
+  const allowance = useTradeAllowance(intent === null ? 0 : 1);
+  // Selling reduces exposure, so no cap or stake limit can bind it.
+  const blocker = side === 'sell' ? null : blockerFor(allowance, amount, money);
+
+  // Yes is green, No is red, and anything else is the primary blue — the
+  // reference's three cases. A candidate in a multi-outcome market is the
+  // third: it is neither side of a yes/no question.
+  const tone =
+    outcome === null
+      ? 'bg-brand'
+      : /^yes$/i.test(outcome.label)
+        ? 'bg-rise'
+        : /^no$/i.test(outcome.label)
+          ? 'bg-fall'
+          : 'bg-brand';
+
+  /**
+   * Leave for the sign-in screen, and leave a note.
+   *
+   * Both the sentence above the button and the button itself come here when
+   * there is no session, because a signed-out person pressing "Place trade" has
+   * said exactly what they want and deserves the flow rather than a refusal.
+   */
+  function signIn(route: '/login' | '/signup'): void {
+    if (outcome === null) return;
+    const pending = { marketId: market.id, outcomeId: outcome.id, amount };
+    rememberTrade(pending);
+    router.push(signInHref(pending, route));
+  }
 
   async function submit(): Promise<void> {
     if (outcome === null || preview === null) return;
     if (token === null) {
-      setError('Sign in to trade.');
+      signIn('/login');
       return;
     }
-
-    // A retry must never double-fill (§11), and the id is also what the trade
-    // is polled by if the queue defers it.
-    const requestId = crypto.randomUUID();
 
     setSubmitting(true);
     setQueued(false);
     setError(null);
     try {
-      const response = await fetch(`${API_URL}/trades`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          marketId: market.id,
-          outcomeId: outcome.id,
-          side,
-          amount,
-          requestId,
-          // §2.15a's reason prompt. Optional, one line, and it lands on the
-          // thread carrying the position this trade just created.
-          ...(reason.trim().length === 0 ? {} : { reason: reason.trim() }),
-        }),
+      await placeTrade({
+        marketId: market.id,
+        outcomeId: outcome.id,
+        side,
+        amount,
+        token,
+        reason,
+        // Buys only: a pot sell returns shares to the curve at whatever it is
+        // paying, and there is no counterparty to name a price to.
+        ...(side === 'buy' && limitKobo !== null ? { limitKobo } : {}),
+        onQueued: () => setQueued(true),
       });
-      if (!response.ok) {
-        const body = (await response.json().catch(() => ({}))) as { message?: string };
-        throw new Error(body.message ?? `Trade failed (${response.status})`);
-      }
-
-      // §11: a busy market answers "accepted into queue", not "filled". That is
-      // a 2xx, so a client reading only the status code closes the sheet on a
-      // trade that has not happened yet — the balance does not move, the thread
-      // does not carry the take, and the only thing that changed is that the
-      // screen stopped saying anything. Wait for the confirmation instead.
-      const body = (await response.json().catch(() => ({}))) as { status?: string };
-      if (body.status === 'queued') {
-        setQueued(true);
-        await waitForFill(requestId, token);
-      }
-
       onFilled();
       onClose();
     } catch (caught) {
@@ -253,158 +273,415 @@ export function TradeSheet({
           >
             <div className="mx-auto mb-4 h-1 w-10 rounded-sm bg-border" aria-hidden />
 
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div>
-                <p className="text-sm text-text-muted">{market.question}</p>
-                <div className="mt-1 flex items-center gap-2">
-                  <span className="text-lg font-bold">
-                    {side === 'buy' ? 'Buy' : 'Sell'} {outcome.label}
-                  </span>
+            {/*
+              Frozen: the sheet opens and says why, rather than not opening.
+              A tap that produces nothing reads as a broken app, and the person
+              tapping has money on this market — they are owed the sentence.
+            */}
+            {freeze.frozen ? (
+              <div className="py-4 text-center">
+                <p className="text-md font-bold">{freeze.message}</p>
+                <p className="mt-1.5 text-sm text-text-muted">
+                  No new stakes and no exits. Your position stays visible and settles when the
+                  result is in.
+                </p>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="mt-4 w-full rounded-lg border border-border py-3 text-md font-bold"
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+              <>
+                <div className="mb-4 flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm text-text-muted">{market.question}</p>
+                    <div className="mt-1 flex items-center gap-2">
+                      <span className="text-lg font-bold">
+                        {side === 'buy' ? 'Buy' : 'Sell'} {outcome.label}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setSide(side === 'buy' ? 'sell' : 'buy')}
+                        className="grid size-11 shrink-0 place-items-center rounded-md border border-border text-text-muted hover:text-text"
+                        aria-label="Switch between buying and selling"
+                      >
+                        <ArrowUpDown size={14} />
+                      </button>
+                    </div>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setSide(side === 'buy' ? 'sell' : 'buy')}
-                    className="rounded-sm border border-border p-1 text-text-muted hover:text-text"
-                    aria-label="Switch between buying and selling"
+                    onClick={onClose}
+                    aria-label="Close"
+                    className="-mr-2 -mt-2 grid size-11 shrink-0 place-items-center rounded-md text-text-muted hover:text-text"
                   >
-                    <ArrowUpDown size={14} />
+                    <X size={18} />
                   </button>
                 </div>
-              </div>
-              <button
-                type="button"
-                onClick={onClose}
-                aria-label="Close"
-                className="text-text-muted hover:text-text"
-              >
-                <X size={18} />
-              </button>
-            </div>
 
-            <label className="block">
-              <span className="text-sm text-text-muted">
-                {side === 'buy' ? 'How much are you putting in?' : 'How many shares?'}
-              </span>
-              <input
-                inputMode="decimal"
-                value={amount}
-                onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
-                placeholder="0"
-                disabled={closed}
-                className="mt-1 w-full rounded-md border border-border bg-surface px-3 py-3 font-mono text-xl tabular-nums outline-none focus:border-rise focus-visible:ring-1 focus-visible:ring-rise"
-              />
-            </label>
-
-            {side === 'buy' && (
-              <div className="mt-2 flex gap-2">
-                {AMOUNT_CHIPS.map((chip) => (
-                  <button
-                    key={chip}
-                    type="button"
-                    disabled={closed}
-                    onClick={() => setAmount(String(chip))}
-                    className="flex-1 rounded-sm border border-border py-2 font-mono text-sm hover:border-rise"
-                  >
-                    ₦{chip >= 1000 ? `${chip / 1000}k` : chip}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {side === 'sell' && intent.held !== undefined && (
-              <div className="mt-2 flex gap-2">
-                {[0.25, 0.5, 1].map((fraction) => (
-                  <button
-                    key={fraction}
-                    type="button"
-                    onClick={() =>
-                      setAmount((Number.parseFloat(intent.held!) * fraction).toFixed(6))
-                    }
-                    className="flex-1 rounded-sm border border-border py-2 font-mono text-sm hover:border-rise"
-                  >
-                    {fraction === 1 ? 'All' : `${fraction * 100}%`}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <dl className="mt-4 space-y-2 border-t border-border pt-4 text-sm">
-              <Row
-                label="Price per share"
-                value={`${kobo(price)} · ${Math.round(percent(price))}%`}
-              />
-              {preview !== null && side === 'buy' && (
-                <>
-                  <Row label="Shares you get" value={preview.shares.toFixed(2)} />
-                  <Row label="Total" value={exactMoney(preview.total)} emphasis />
-                  {preview.estWin !== null && (
-                    <Row
-                      label="Est. to win"
-                      value={exactMoney(preview.estWin)}
-                      hint="estimate"
-                      emphasis
-                    />
+                <div className="flex items-baseline justify-between gap-3">
+                  <label className="text-sm text-text-muted" htmlFor="trade-amount">
+                    {side === 'sell'
+                      ? 'How many shares?'
+                      : mode === 'shares'
+                        ? 'How many shares?'
+                        : 'How much are you putting in?'}
+                  </label>
+                  {/* §7.2d's advanced toggle. Selling is already shares-first, so
+                  it has nothing to switch between. */}
+                  {side === 'buy' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode(mode === 'amount' ? 'shares' : 'amount');
+                        setAmount('');
+                      }}
+                      className="-mr-2 flex h-11 items-center px-2 text-xs font-semibold text-brand hover:underline"
+                    >
+                      {mode === 'amount' ? 'Enter shares' : 'Enter amount'}
+                    </button>
                   )}
-                </>
-              )}
-              {preview !== null && side === 'sell' && (
-                <>
-                  <Row label="Proceeds" value={exactMoney(preview.gross)} />
-                  <Row
-                    label={`Early-exit fee${
-                      config === null ? '' : ` (${(config.exitFeeRate * 100).toFixed(0)}%)`
+                </div>
+
+                <div className="relative mt-1">
+                  <input
+                    id="trade-amount"
+                    inputMode="decimal"
+                    value={amount}
+                    onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))}
+                    placeholder="0"
+                    disabled={closed}
+                    // `key` on the tick restarts the flash: an animation already
+                    // running does not replay, and the third tap of ₦500 is the
+                    // one that most needs to look like it landed.
+                    key={tick}
+                    className={`w-full rounded-md border bg-surface px-3 py-3 pr-12 font-mono text-xl tabular-nums focus:border-brand focus-visible:ring-1 focus-visible:ring-brand ${
+                      tick > 0 ? 'motion-safe:animate-chip-tick border-brand' : 'border-border'
                     }`}
-                    value={`−${exactMoney(preview.fee)}`}
                   />
-                  <Row label="You receive" value={exactMoney(preview.total)} emphasis />
-                </>
-              )}
-            </dl>
+                  {amount !== '' && !closed && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAmount('');
+                        setTick(0);
+                      }}
+                      aria-label="Clear the amount"
+                      className="absolute right-1 top-1/2 grid size-10 -translate-y-1/2 place-items-center rounded-md text-text-muted hover:bg-chip hover:text-text"
+                    >
+                      <X size={16} />
+                    </button>
+                  )}
+                </div>
 
-            {preview !== null && side === 'buy' && Math.abs(preview.priceAfter - price) > 0.005 && (
-              <p className="mt-3 text-sm text-text-muted">
-                This trade moves {outcome.label} to{' '}
-                <span className="font-mono">{Math.round(percent(preview.priceAfter))}%</span>.
-              </p>
-            )}
+                {side === 'buy' && mode === 'amount' && (
+                  <div className="mt-2 flex gap-2">
+                    {AMOUNT_CHIPS.map((chip) => (
+                      <button
+                        key={chip}
+                        type="button"
+                        disabled={closed}
+                        // Adds rather than replaces. A row of chips that each
+                        // overwrite the field can only ever express four amounts;
+                        // adding lets four chips reach any multiple of ₦500, which
+                        // is how people actually arrive at a number — ₦500 twice
+                        // and a ₦1k is ₦2,000, and nobody had to open a keyboard.
+                        onClick={() => {
+                          const current = Number.parseFloat(amount);
+                          const next = (Number.isFinite(current) ? current : 0) + chip;
+                          setAmount(String(Math.round(next * 100) / 100));
+                          setTick((count) => count + 1);
+                        }}
+                        className="h-11 flex-1 rounded-md border border-border bg-surface font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
+                      >
+                        +₦{chip >= 1000 ? `${chip / 1000}k` : chip}
+                      </button>
+                    ))}
+                  </div>
+                )}
 
-            {/* §2.15a's reason prompt: "optional one-line 'why?' at trade time,
+                {side === 'buy' && mode === 'shares' && (
+                  <div className="mt-2 flex gap-2">
+                    {SHARE_STEPS.map((step) => (
+                      <button
+                        key={step}
+                        type="button"
+                        disabled={closed}
+                        onClick={() => {
+                          const current = Number.parseFloat(amount);
+                          const next = (Number.isFinite(current) ? current : 0) + step;
+                          // A stepper cannot take you below nothing.
+                          setAmount(next <= 0 ? '' : String(Math.round(next * 100) / 100));
+                        }}
+                        className="h-11 flex-1 rounded-md border border-border bg-surface font-mono text-sm text-text-muted transition-colors hover:border-text hover:text-text active:scale-press"
+                      >
+                        {step > 0 ? `+${step}` : step}
+                      </button>
+                    ))}
+                  </div>
+                )}
+
+                {/*
+                  The limit price, folded away until it is wanted.
+
+                  A limit changes what the button means — from "buy this now"
+                  to "buy this if it gets there" — so it is a deliberate act
+                  rather than a field somebody tabs into by accident. Buys
+                  only: a pot sell returns shares to the curve at whatever it
+                  is paying, and there is nobody on the other side to name a
+                  price to.
+                */}
+                {side === 'buy' && !closed && (
+                  <div className="mt-3">
+                    {!limitOpen ? (
+                      <button
+                        type="button"
+                        onClick={() => setLimitOpen(true)}
+                        className="min-h-11 text-note font-semibold text-brand underline underline-offset-2 sm:min-h-0"
+                      >
+                        Set a price
+                      </button>
+                    ) : (
+                      <div className="rounded-md border border-border bg-surface p-3">
+                        <label
+                          className="flex flex-wrap items-center gap-2 text-note"
+                          htmlFor="trade-limit"
+                        >
+                          <span className="text-text-muted">Pay no more than</span>
+                          <span className="flex items-baseline">
+                            <input
+                              id="trade-limit"
+                              inputMode="numeric"
+                              value={limitKobo === null ? '' : String(limitKobo)}
+                              onChange={(event) => {
+                                const parsed = Number.parseInt(event.target.value, 10);
+                                setLimitKobo(
+                                  Number.isFinite(parsed) && parsed >= 1 && parsed <= 99
+                                    ? parsed
+                                    : null,
+                                );
+                              }}
+                              placeholder={String(Math.round(percent(price)))}
+                              className="w-14 rounded-sm border border-border bg-surface-raised px-2 py-1 text-right font-mono tabular-nums"
+                            />
+                            <span className="ml-0.5 font-mono">k</span>
+                          </span>
+                          <span className="text-text-muted">a share</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setLimitKobo(null);
+                              setLimitOpen(false);
+                            }}
+                            className="ml-auto min-h-11 text-fine text-text-muted underline underline-offset-2 sm:min-h-0"
+                          >
+                            At the market price
+                          </button>
+                        </label>
+                        <p className="mt-1.5 text-fine text-text-muted">
+                          Whatever cannot be filled at this price or better waits on the book until
+                          somebody takes the other side. Nothing fills above it.
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Where this trade would actually fill, and on what terms. */}
+                <FillBreakdown
+                  marketId={market.id}
+                  outcomeId={outcome.id}
+                  amount={mode === 'amount' ? amount : (money?.toString() ?? '')}
+                  limitKobo={limitKobo}
+                  active={side === 'buy'}
+                  onSplit={setSplit}
+                />
+
+                {/* §7.2d: "slider or chips for partial/full exit". A slider,
+                because a position is a continuous quantity and 25/50/100 are
+                three of the infinitely many exits somebody might want. */}
+                {side === 'sell' && intent.held !== undefined && (
+                  <div className="mt-3">
+                    <input
+                      type="range"
+                      min={0}
+                      max={Number.parseFloat(intent.held)}
+                      step={Number.parseFloat(intent.held) / 100}
+                      value={Number.parseFloat(amount) || 0}
+                      onChange={(event) => setAmount(event.target.value)}
+                      aria-label="How much of this position to sell"
+                      className="w-full accent-fall"
+                    />
+                    <div className="mt-1 flex justify-between text-xs text-text-muted">
+                      <span>0</span>
+                      <button
+                        type="button"
+                        onClick={() => setAmount(intent.held as string)}
+                        className="font-semibold text-brand hover:underline"
+                      >
+                        Sell all {Number.parseFloat(intent.held).toFixed(2)}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                <dl className="mt-4 space-y-2 border-t border-border pt-4 text-sm">
+                  <Row
+                    label="Price per share"
+                    value={`${kobo(price)} · ${Math.round(percent(price))}%`}
+                  />
+                  {preview !== null && side === 'buy' && (
+                    <>
+                      {/* Suppressed when the breakdown above is showing the
+                          trade leg by leg: these figures are the pot's alone,
+                          and a third number that agrees with neither of the
+                          two above it is worse than no number. `Total` stays —
+                          it is what leaves the balance either way. */}
+                      {!split && (
+                        <>
+                          <Row label="Shares you get" value={preview.shares.toFixed(2)} />
+                          <Row label="Total" value={exactMoney(preview.total)} emphasis />
+                          {preview.estWin !== null && (
+                            <Row
+                              label="Est. to win"
+                              value={exactMoney(preview.estWin)}
+                              hint="estimate"
+                              emphasis
+                            />
+                          )}
+                        </>
+                      )}
+                      {split && <Row label="Total" value={exactMoney(preview.total)} emphasis />}
+                    </>
+                  )}
+                  {preview !== null && side === 'sell' && (
+                    <>
+                      <Row label="Proceeds" value={exactMoney(preview.gross)} />
+                      <Row
+                        label={`Early-exit fee${
+                          config === null ? '' : ` (${(config.exitFeeRate * 100).toFixed(0)}%)`
+                        }`}
+                        value={`−${exactMoney(preview.fee)}`}
+                      />
+                      <Row label="You receive" value={exactMoney(preview.total)} emphasis />
+                    </>
+                  )}
+                </dl>
+
+                {preview !== null &&
+                  side === 'buy' &&
+                  Math.abs(preview.priceAfter - price) > 0.005 && (
+                    <p className="mt-3 text-sm text-text-muted">
+                      This trade moves {outcome.label} to{' '}
+                      <span className="font-mono">{Math.round(percent(preview.priceAfter))}%</span>.
+                    </p>
+                  )}
+
+                {/* §2.15a's reason prompt: "optional one-line 'why?' at trade time,
                 feeding the thread — the best forecasting education new users
                 can get." Optional and public, said plainly, because it posts
                 under their name with the position attached. */}
-            {side === 'buy' && !closed && (
-              <div className="mt-4">
-                <label className="block text-sm font-semibold" htmlFor="trade-reason">
-                  Why? <span className="font-normal text-text-muted">(optional)</span>
-                </label>
-                <input
-                  id="trade-reason"
-                  value={reason}
-                  onChange={(event) => setReason(event.target.value)}
-                  maxLength={500}
-                  placeholder="One line. It goes on the thread with your position."
-                  className="mt-1.5 w-full rounded-md border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-rise"
-                />
-              </div>
+                {side === 'buy' && !closed && (
+                  <div className="mt-4">
+                    <label className="block text-sm font-semibold" htmlFor="trade-reason">
+                      Why? <span className="font-normal text-text-muted">(optional)</span>
+                    </label>
+                    <input
+                      id="trade-reason"
+                      value={reason}
+                      onChange={(event) => setReason(event.target.value)}
+                      maxLength={500}
+                      placeholder="One line. It goes on the thread with your position."
+                      className="mt-1.5 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm focus:border-brand"
+                    />
+                  </div>
+                )}
+
+                {blocker !== null && (
+                  <p
+                    className={`mt-3 rounded-md px-3 py-2 text-sm ${
+                      blocker.hard ? 'bg-fall-bg text-fall' : 'bg-chip text-text-muted'
+                    }`}
+                  >
+                    {blocker.message}
+                  </p>
+                )}
+
+                {error !== null && <p className="mt-3 text-sm text-fall">{error}</p>}
+
+                {/*
+              The signed-out prompt. It was a red sentence set by a failed
+              submit — the colour of a refusal, the behaviour of nothing at
+              all — so it read as an error the person had caused and offered
+              no way out of it. It is now stated before they press anything,
+              and both routes out of it are one tap.
+            */}
+                {token === null && !closed && (
+                  <p className="mt-3 rounded-md bg-chip px-3 py-2.5 text-sm text-text-muted">
+                    You need an account to stake.{' '}
+                    <button
+                      type="button"
+                      onClick={() => signIn('/login')}
+                      className="font-bold text-brand underline"
+                    >
+                      Sign in
+                    </button>{' '}
+                    or{' '}
+                    <button
+                      type="button"
+                      onClick={() => signIn('/signup')}
+                      className="font-bold text-brand underline"
+                    >
+                      create one
+                    </button>
+                    . We&apos;ll bring you back here with this amount ready.
+                  </p>
+                )}
+
+                {/*
+              Said where the money is committed, not in a policy page.
+              §2.16's honesty rule, and the one line that has to survive every
+              future round of copy polish: a market position is not a deposit,
+              and the sentence that says so belongs directly above the button
+              that takes it.
+            */}
+                {!closed && (
+                  <p className="mt-3 text-xs leading-snug text-text-muted">
+                    Positions can lose their full value. Winners are paid from the pot.
+                  </p>
+                )}
+
+                <button
+                  type="button"
+                  onClick={() => void submit()}
+                  disabled={
+                    closed ||
+                    submitting ||
+                    // Signed out, the button is a sign-in link in disguise, so it
+                    // must not inherit the quote's disabled state: there is nothing
+                    // to quote until they have an account, and a greyed-out button
+                    // is how the old dead end looked.
+                    (token !== null && (preview === null || blocker?.hard === true))
+                  }
+                  className={`mt-4 h-12 w-full rounded-lg text-md font-bold text-paper transition-transform active:scale-press disabled:opacity-45 ${tone}`}
+                >
+                  {closed
+                    ? `Trading is ${market.state === 'resolved' ? 'over' : 'frozen'}`
+                    : token === null
+                      ? 'Sign in to stake'
+                      : queued
+                        ? 'Order placed — confirming…'
+                        : submitting
+                          ? 'Placing…'
+                          : side === 'buy'
+                            ? 'Place trade'
+                            : 'Sell shares'}
+                </button>
+              </>
             )}
-
-            {error !== null && <p className="mt-3 text-sm text-fall">{error}</p>}
-
-            <button
-              type="button"
-              onClick={() => void submit()}
-              disabled={closed || submitting || preview === null}
-              className="mt-4 w-full rounded-md bg-rise py-3.5 text-base font-bold text-paper transition-transform active:scale-press disabled:opacity-40"
-            >
-              {closed
-                ? `Trading is ${market.state === 'resolved' ? 'over' : 'frozen'}`
-                : queued
-                  ? 'Order placed — confirming…'
-                  : submitting
-                    ? 'Placing…'
-                    : side === 'buy'
-                      ? 'Stake am'
-                      : 'Sell shares'}
-            </button>
           </motion.div>
         </>
       )}
@@ -432,18 +709,4 @@ function Row({
       <dd className={`font-mono tabular-nums ${emphasis ? 'text-money' : ''}`}>{value}</dd>
     </div>
   );
-}
-
-/**
- * The LMSR cost function, C(q) = L·ln(Σ e^(qᵢ/L)).
- *
- * Shifted by the maximum before exponentiating: without that, a market with a
- * large outstanding position overflows to Infinity in a float and the sheet
- * quotes NaN at exactly the size where the quote matters most.
- */
-function costOf(q: readonly number[], liquidity: number): number {
-  const scaled = q.map((value) => value / liquidity);
-  const peak = Math.max(...scaled);
-  const sum = scaled.reduce((total, value) => total + Math.exp(value - peak), 0);
-  return liquidity * (peak + Math.log(sum));
 }

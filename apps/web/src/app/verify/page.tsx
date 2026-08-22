@@ -42,7 +42,7 @@ export default function VerifyPage() {
   // Already verified: nothing to do here, and leaving them staring at a code
   // box for an account that is past this step would just be confusing.
   useEffect(() => {
-    if (me !== null && me.contactVerified) router.replace('/markets');
+    if (me !== null && me.contactVerified) router.replace('/');
   }, [me, router]);
 
   const send = useCallback(
@@ -83,7 +83,7 @@ export default function VerifyPage() {
     try {
       await authed('/auth/verify/confirm', { code: code.trim() });
       await refresh();
-      router.push('/markets');
+      router.push('/');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'that code is not right');
       setBusy(false);
@@ -125,7 +125,7 @@ export default function VerifyPage() {
             inputMode="numeric"
             autoComplete="one-time-code"
             placeholder="000000"
-            className="rounded-md border border-border bg-surface-raised px-3 py-3 text-center font-mono text-xl tracking-[0.3em] tabular-nums outline-none focus-visible:border-rise"
+            className="rounded-md border border-border bg-surface-raised px-3 py-3 text-center font-mono text-xl tracking-[0.3em] tabular-nums focus-visible:border-rise"
           />
         </label>
 
@@ -160,7 +160,7 @@ export default function VerifyPage() {
 
       <p className="mt-6 text-sm text-text-muted">
         Not now?{' '}
-        <Link href="/markets" className="font-bold underline">
+        <Link href="/" className="font-bold underline">
           Go to the markets
         </Link>{' '}
         — your starter balance already works, on both shelves.

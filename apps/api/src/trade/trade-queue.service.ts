@@ -3,12 +3,21 @@ import type { Trade } from '@prisma/client';
 import Redis from 'ioredis';
 
 import { ThreadService } from '../community-layer/thread.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { env } from '../config/env';
 import { logger } from '../logger';
 import { PrismaService } from '../prisma/prisma.service';
 import { RgBlockedError } from '../rg/rg.service';
 import { InsufficientFundsError } from '../wallet/wallet.service';
-import { TradeError, TradeService, type BuyInput, type SellInput } from './trade.service';
+import {
+  TradeError,
+  TradeService,
+  type BuyInput,
+  type FillReport,
+  type SellInput,
+} from './trade.service';
+import { OrderBookError } from '../orderbook/orderbook.service';
+import { StakeCapError } from './stake-guards';
 import { EngineError } from '@stakeam/engine';
 
 /**
@@ -25,6 +34,8 @@ const isRefusal = (error: unknown): error is Error =>
   error instanceof TradeError ||
   error instanceof InsufficientFundsError ||
   error instanceof RgBlockedError ||
+  error instanceof OrderBookError ||
+  error instanceof StakeCapError ||
   error instanceof EngineError;
 
 /** One market's stream. All of its trades land here, in submission order. */
@@ -52,7 +63,16 @@ export type QueuedRequest = (({ kind: 'buy' } & BuyInput) | ({ kind: 'sell' } & 
 export interface QueueOutcome {
   readonly status: 'filled' | 'queued' | 'rejected';
   readonly requestId: string;
-  readonly trade?: Trade;
+  /**
+   * The pot leg, kept as its own field because a great deal already reads it.
+   *
+   * Null on a request that was entirely matched or entirely rested — which is
+   * a real outcome now, not an error, so a caller that treats a missing trade
+   * as a failure has to be corrected rather than accommodated.
+   */
+  readonly trade?: Trade | null;
+  /** Every leg: matched, pot, and whatever is now resting on the book. */
+  readonly report?: FillReport;
   readonly reason?: string;
 }
 
@@ -95,6 +115,7 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
     private readonly trades: TradeService,
     private readonly prisma: PrismaService,
     private readonly threads: ThreadService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -242,10 +263,11 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
 
   private async runInline(request: QueuedRequest): Promise<QueueOutcome> {
     try {
-      const trade =
+      const report =
         request.kind === 'buy' ? await this.trades.buy(request) : await this.trades.sell(request);
       await this.postReason(request);
-      return { status: 'filled', requestId: request.requestId, trade };
+      await this.confirm(request, report);
+      return { status: 'filled', requestId: request.requestId, trade: report.trade, report };
     } catch (error) {
       if (isRefusal(error)) {
         return { status: 'rejected', requestId: request.requestId, reason: error.message };
@@ -330,12 +352,13 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
-      if (request.kind === 'buy') await this.trades.buy(request);
-      else await this.trades.sell(request);
+      const report =
+        request.kind === 'buy' ? await this.trades.buy(request) : await this.trades.sell(request);
       // Before the announcement, not after: the announcement is what releases
       // the waiting caller, and a caller released ahead of its own take reloads
       // the market to find the thread without it.
       await this.postReason(request);
+      await this.confirm(request, report);
       // Announce the fill so waiters never have to poll the database for it.
       await redis.set(filledKey(request.requestId), '1', 'EX', 300).catch(() => undefined);
     } catch (error) {
@@ -388,6 +411,75 @@ export class TradeQueueService implements OnModuleInit, OnModuleDestroy {
         fromTrade: true,
       })
       .catch(() => undefined);
+  }
+
+  /**
+   * The receipt for a fill.
+   *
+   * `trade_confirmed` has been in the notification taxonomy since the service
+   * was written and nothing ever sent one — the type existed, the inbox never
+   * showed a trade. It reads as a broker's confirmation because that is what it
+   * is: side, size, instrument, price.
+   *
+   * Best-effort for the same reason the take is: a notification that fails must
+   * never unwind a trade that has already settled.
+   */
+  /**
+   * Tell the trader what actually happened, leg by leg.
+   *
+   * One notification, however many legs — a person who pressed one button
+   * expects one answer. But the legs are named separately inside it, because
+   * "matched" and "from the pot" are different promises: the first pays an
+   * exact ₦1 a share out of money already escrowed by a named counterparty,
+   * and the second pays a share of a pot that is still filling. Rolling them
+   * into one number would be the most expensive simplification on the platform.
+   */
+  private async confirm(request: QueuedRequest, report: FillReport): Promise<void> {
+    try {
+      const outcome = await this.prisma.outcome.findUnique({
+        where: { id: request.outcomeId },
+        select: { label: true, priceCurrent: true },
+      });
+      if (outcome === null) return;
+
+      const label = outcome.label.toUpperCase();
+      const parts: string[] = [];
+
+      if (report.matched !== null) {
+        const shares = Number(report.matched.shares).toFixed(2);
+        parts.push(
+          `matched ${shares} ${label} — pays ₦${Number(report.matched.shares).toFixed(2)} exactly`,
+        );
+      }
+      if (report.trade !== null) {
+        const shares = Number(String(report.trade.shares)).toFixed(2);
+        const kobo = Math.round(Number(String(outcome.priceCurrent)) * 100);
+        const verb = report.trade.side === 'buy' ? 'bought' : 'sold';
+        parts.push(`${verb} ${shares} ${label} from the pot @ ${kobo}k`);
+      }
+      if (report.resting !== null) {
+        const shares = Number(report.resting.shares).toFixed(2);
+        parts.push(`${shares} resting at ${report.resting.priceKobo}k`);
+      }
+      if (parts.length === 0) return;
+
+      // Sentence case with the first letter lifted, rather than a template per
+      // combination: there are seven combinations of three legs and six of them
+      // would never be read by anybody.
+      const body = `${parts.join(' · ')}.`;
+      await this.notifications.notify({
+        userId: request.userId,
+        type: 'trade_confirmed',
+        body: body.charAt(0).toUpperCase() + body.slice(1),
+        data: {
+          marketId: request.marketId,
+          ...(report.trade === null ? {} : { tradeId: report.trade.id }),
+          ...(report.resting === null ? {} : { orderId: report.resting.orderId }),
+        },
+      });
+    } catch {
+      // See above.
+    }
   }
 
   private async ensureGroup(marketId: string): Promise<void> {

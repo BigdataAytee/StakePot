@@ -23,6 +23,19 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ['lucide-react', 'date-fns'],
   },
+  /**
+   * `/markets` was a second, worse copy of the front page.
+   *
+   * The board of open questions is the landing page — that is the whole
+   * argument for not putting a brochure there — so a separate "all markets"
+   * screen listed the same cards with a different toolbar, and the footer link
+   * to it invited people to leave the page they were already on. 301 rather
+   * than a soft redirect because the URL is in the sitemap and has been linked:
+   * the move is permanent and search engines should be told so once.
+   */
+  async redirects() {
+    return [{ source: '/markets', destination: '/', statusCode: 301 }];
+  },
 };
 
 export default withSerwist(withNextIntl(nextConfig));

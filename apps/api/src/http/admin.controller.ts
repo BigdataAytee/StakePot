@@ -11,14 +11,29 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { UserRole } from '@prisma/client';
-import { IsBoolean, IsIn, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { subHours } from 'date-fns';
 
+import { signReserves } from '../admin/reserves-export';
+import { mask } from '../auth/pii';
+import { PiiAccessService } from '../audit/pii-access.service';
 import { SolvencyService } from '../admin/solvency.service';
 import { ApprovalError, ApprovalsService, type Actor } from '../approvals/approvals.service';
 import { APPROVAL_ACTIONS, APPROVAL_ACTION_TYPES } from '../approvals/approval-actions';
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { FundingWindowWorker } from '../community/funding-window.worker';
+import { DossierError, DossierService } from '../intel/dossier.service';
 import { Roles, RolesGuard, STAFF_ROLES } from '../auth/roles.guard';
 import { LedgerService } from '../ledger/ledger.service';
 import { AdminAuditService } from '../audit/admin-audit.service';
@@ -31,6 +46,11 @@ import { SupportError, SupportService } from '../support/support.service';
 import { TotpError } from '../auth/totp.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ResolutionFlowError, ResolutionFlowService } from '../resolution/resolution-flow.service';
+
+/** Whether the staff member who read the dossier agreed with its reading. */
+export class DossierDecisionDto {
+  @IsBoolean() accepted!: boolean;
+}
 
 export class ProposeApprovalDto {
   @IsString() actionType!: string;
@@ -51,6 +71,16 @@ export class OpenDraftDto {
   /** Liquidity constant L (§2.3). ~50× the typical stake for ~1-point moves. */
   @IsOptional() @IsString() liquidityParam?: string;
   @IsOptional() @IsString() seedPerOutcome?: string;
+  /**
+   * The review screen's answers to the checklist rules only a person can
+   * settle — the front-page test (18), the stranger test (25) and the conflict
+   * check (R3). Required in practice: `openFromDraft` re-runs the checklist and
+   * refuses while any of them is unanswered, so a client that omits them gets a
+   * refusal naming the questions rather than a silent publish.
+   */
+  @IsOptional() @IsObject() confirmations?: Record<string, boolean>;
+  /** Rules 5 and 16, attested by the staff member opening the market. */
+  @IsOptional() @IsBoolean() attestedNoInfluence?: boolean;
 }
 
 export class RejectDraftDto {
@@ -97,6 +127,38 @@ export class LedgerQueryDto {
  * are split so that the person who proposes a result is never the person who
  * confirms it.
  */
+/**
+ * Revealing PII is an action with a reason, not a query parameter.
+ *
+ * `fields` is explicit so that "I needed to check their email" cannot quietly
+ * also hand over a phone number — the log then records what was actually
+ * exposed rather than what the endpoint happened to return.
+ */
+export class RevealDto {
+  @IsArray()
+  @IsIn(['email', 'phone'], { each: true })
+  fields!: ('email' | 'phone')[];
+
+  @IsString() @MinLength(10) @MaxLength(300) reason!: string;
+}
+
+/**
+ * A platform seed on a live official market.
+ *
+ * Above the controller, like every other DTO here: a class declared below the
+ * controller that uses it compiles, typechecks and passes every test, then
+ * dies on boot with "Cannot access X before initialization" because
+ * `emitDecoratorMetadata` reads it while the module is still evaluating.
+ */
+class SeedMarketDto {
+  @Matches(/^\d+(\.\d+)?$/, { message: 'perOutcome must be a positive decimal string' })
+  perOutcome!: string;
+  /** Goes in the audit log beside the amount. */
+  @IsString() @IsNotEmpty() @MaxLength(300) reason!: string;
+  /** Idempotency: a retried click must not seed twice. */
+  @IsString() @IsNotEmpty() requestId!: string;
+}
+
 @Controller('admin')
 export class AdminController {
   constructor(
@@ -104,12 +166,14 @@ export class AdminController {
     private readonly solvency: SolvencyService,
     private readonly approvals: ApprovalsService,
     private readonly resolutions: ResolutionFlowService,
+    private readonly dossiers: DossierService,
     private readonly ledger: LedgerService,
     private readonly windows: FundingWindowWorker,
     private readonly support: SupportService,
     private readonly engine: QuestionEngineService,
     private readonly official: OfficialMarketService,
     private readonly audit: AdminAuditService,
+    private readonly pii: PiiAccessService,
   ) {}
 
   private actor(request: RequestWithUser): Actor {
@@ -193,7 +257,7 @@ export class AdminController {
     };
   }
 
-  /** §2.10's proof-of-reserves export: liabilities vs what backs them, stamped. */
+  /** §2.10's solvency position, as the money room's header reads it. */
   @Get('reserves')
   @UseGuards(JwtGuard, RolesGuard)
   @Roles('finance', 'admin')
@@ -208,6 +272,61 @@ export class AdminController {
       surplus: solvency.surplus.toString(),
       solvent: solvency.surplus.gte(0),
     };
+  }
+
+  /**
+   * §2.10's proof-of-reserves export: "one-click signed export ... feeds
+   * external attestations and regulator reports".
+   *
+   * Distinct from `/reserves` above, which renders a panel. This produces a
+   * document that leaves the building: every fund class, the account count the
+   * liabilities are spread over, the reconciliation run that makes them
+   * credible, and a signature over the lot. A solvency figure that only exists
+   * inside our own console is not evidence of anything.
+   *
+   * The export is itself an audited read — somebody asking for the platform's
+   * full financial position is exactly the event an audit log is for.
+   */
+  @Get('reserves/export')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('finance', 'admin')
+  async reservesExport(@Req() request: RequestWithUser) {
+    const [solvency, lastRun, accounts] = await Promise.all([
+      this.solvency.view(),
+      this.prisma.reconciliationRun.findFirst({ orderBy: { runDate: 'desc' } }),
+      this.prisma.wallet.count({ where: { currency: 'SPC' } }),
+    ]);
+
+    const document = signReserves(
+      {
+        currency: 'SPC',
+        userLiabilities: solvency.userLiabilities.toString(),
+        totalIssued: solvency.totalIssued.toString(),
+        platformFees: solvency.byFundClass.platform_fees.toString(),
+        surplus: solvency.surplus.toString(),
+        byFundClass: Object.fromEntries(
+          Object.entries(solvency.byFundClass).map(([name, total]) => [name, total.toString()]),
+        ),
+        accounts,
+        reconciliation: {
+          runDate: lastRun?.runDate.toISOString().slice(0, 10) ?? null,
+          status: lastRun?.status ?? 'never_run',
+          diff: lastRun?.diff.toString() ?? null,
+        },
+      },
+      new Date().toISOString(),
+    );
+
+    const actor = this.actor(request);
+    await this.audit.record({
+      staffId: actor.userId,
+      action: 'reserves.export',
+      targetRef: 'platform:reserves',
+      after: { generatedAt: document.generatedAt, signed: document.signature !== null },
+      ip: actor.ip,
+    });
+
+    return document;
   }
 
   /** §6.4's ledger explorer: drill from any balance to the entries behind it. */
@@ -383,8 +502,18 @@ export class AdminController {
       take: 50,
     });
 
+    // The dossiers for this page in one query. Read here rather than fetched
+    // per row by the screen: the Resolution Centre is a queue somebody works
+    // top to bottom, and a request per market is fifty requests to render one
+    // list.
+    const dossiers = await this.prisma.resolutionDossier.findMany({
+      where: { marketId: { in: markets.map((market) => market.id) } },
+    });
+    const dossierBy = new Map(dossiers.map((dossier) => [dossier.marketId, dossier]));
+
     return markets.map((market) => {
       const proposal = market.resolutions[0];
+      const dossier = dossierBy.get(market.id);
       return {
         id: market.id,
         question: market.question,
@@ -417,6 +546,23 @@ export class AdminController {
                 proposedAt: proposal.proposedAt.toISOString(),
                 finalizedAt: proposal.finalizedAt?.toISOString() ?? null,
               },
+        // Advisory only, and the screen says so. Nothing here can settle the
+        // market — the propose/confirm path below is still the only way, and it
+        // still takes two people.
+        dossier:
+          dossier === undefined
+            ? null
+            : {
+                proposedOutcomeId: dossier.proposedOutcomeId,
+                confidence: Number(dossier.confidence.toString()),
+                recommendVoid: dossier.recommendVoid,
+                reasoning: dossier.reasoning,
+                evidence: dossier.evidenceJson,
+                conflicts: dossier.conflictsJson,
+                builtAt: dossier.builtAt.toISOString(),
+                reviewedAt: dossier.reviewedAt?.toISOString() ?? null,
+                accepted: dossier.accepted,
+              },
         disputes: market.disputes.map((dispute) => ({
           id: dispute.id,
           userId: dispute.userId,
@@ -428,6 +574,66 @@ export class AdminController {
         })),
       };
     });
+  }
+
+  /**
+   * The dossier for one market: what the research layer makes of it.
+   *
+   * Advisory, and structurally incapable of being anything else. `build` writes
+   * one row in `resolution_dossiers` and nothing else — it cannot propose,
+   * cannot finalise, cannot move a naira. Settling still takes one staff member
+   * proposing with a source link and a second confirming, with the 48-hour
+   * window in between, exactly as before this existed.
+   *
+   * It was written weeks before it had an endpoint, which meant a dossier
+   * existed in the database and nowhere a person could look at it. A reading
+   * nobody can read is not a reading.
+   */
+  @Get('markets/:id/dossier')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async dossier(@Param('id') id: string) {
+    return this.dossiers.forMarket(id);
+  }
+
+  /** Assemble (or refresh) the dossier. Idempotent per market. */
+  @Post('markets/:id/dossier')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async buildDossier(@Param('id') id: string) {
+    try {
+      return await this.dossiers.build({ marketId: id });
+    } catch (error) {
+      if (error instanceof DossierError) throw new BadRequestException(error.message);
+      throw error;
+    }
+  }
+
+  /**
+   * Record that a human read it and whether they agreed.
+   *
+   * Not a settlement — the outcome is decided on the propose/confirm path
+   * below. This is the accountability trail: a reading nobody ever contradicted
+   * is indistinguishable from a reading nobody read.
+   */
+  @Post('markets/:id/dossier/decision')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('resolver', 'admin')
+  async recordDossierDecision(
+    @Req() request: RequestWithUser,
+    @Param('id') id: string,
+    @Body() body: DossierDecisionDto,
+  ) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+
+    await this.dossiers.recordDecision({
+      marketId: id,
+      staffId: user.userId,
+      accepted: body.accepted,
+      ip: request.ip ?? 'unknown',
+    });
+    return { recorded: true };
   }
 
   @Post('markets/:id/resolution/propose')
@@ -550,6 +756,37 @@ export class AdminController {
         ip: actor.ip,
         ...(body.liquidityParam === undefined ? {} : { liquidityParam: body.liquidityParam }),
         ...(body.seedPerOutcome === undefined ? {} : { seedPerOutcome: body.seedPerOutcome }),
+        ...(body.confirmations === undefined ? {} : { confirmations: body.confirmations }),
+        ...(body.attestedNoInfluence === undefined
+          ? {}
+          : { attestedNoInfluence: body.attestedNoInfluence }),
+      }),
+    );
+  }
+
+  /**
+   * Seed a live official market, equally across every outcome.
+   *
+   * Admin only, and deliberately not `resolver`: this mints platform money
+   * into a market, which is a different kind of decision from judging one.
+   */
+  @Post('markets/:id/seed')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('admin')
+  async seedMarket(
+    @Req() request: RequestWithUser,
+    @Param('id') marketId: string,
+    @Body() body: SeedMarketDto,
+  ) {
+    const actor = this.actor(request);
+    return this.run(() =>
+      this.official.topUpSeed({
+        marketId,
+        perOutcome: body.perOutcome,
+        reason: body.reason,
+        requestId: body.requestId,
+        staffId: actor.userId,
+        ip: actor.ip,
       }),
     );
   }
@@ -619,15 +856,31 @@ export class AdminController {
     return { id: ticket.id, state: ticket.state };
   }
 
+  /**
+   * A member's account, with their contact details masked (§2.11).
+   *
+   * This screen used to print everybody's email and phone number to everybody
+   * who opened it. Most PII exposure is not a stolen database — it is a
+   * support console that hands out contact details as a side effect of
+   * answering "is this the right account", which a masked value answers just
+   * as well. Revealing is a second, logged call.
+   */
   @Get('users/:id')
   @UseGuards(JwtGuard, RolesGuard)
   @Roles('trust_safety', 'finance', 'admin')
   async user(@Param('id') userId: string) {
-    const user = await this.prisma.user.findUnique({
+    const found = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, email: true, phone: true, tier: true, role: true, status: true },
     });
-    if (user === null) throw new NotFoundException('no such user');
+    if (found === null) throw new NotFoundException('no such user');
+
+    const user = {
+      ...found,
+      email: mask('email', found.email),
+      phone: mask('phone', found.phone),
+      masked: true,
+    };
 
     const derived = await this.ledger.deriveBalance(userId, 'SPC');
     const wallet = await this.prisma.wallet.findUnique({
@@ -645,6 +898,61 @@ export class AdminController {
         escrowed: wallet?.escrowed.toString() ?? '0',
       },
     };
+  }
+
+  /**
+   * Reveal a member's contact details, on the record (§2.11).
+   *
+   * The reason is mandatory and stored. Not because a determined insider
+   * cannot type a plausible one, but because it makes every access a
+   * deliberate act with a name attached — and because a review of one agent's
+   * reasons over a month is where the pattern shows up.
+   *
+   * The log is written before the value is returned. If the trail cannot be
+   * written, the access does not happen: a best-effort log is optional exactly
+   * when the database is unhealthy, which is when it matters most.
+   */
+  @Post('users/:id/reveal')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('trust_safety', 'admin')
+  async reveal(
+    @Req() request: RequestWithUser,
+    @Param('id') userId: string,
+    @Body() body: RevealDto,
+  ) {
+    const actor = this.actor(request);
+    const found = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { email: true, phone: true },
+    });
+    if (found === null) throw new NotFoundException('no such user');
+
+    await this.pii.record({
+      staffId: actor.userId,
+      subjectId: userId,
+      fields: body.fields,
+      reason: body.reason,
+      ip: actor.ip,
+    });
+
+    return {
+      email: body.fields.includes('email') ? found.email : undefined,
+      phone: body.fields.includes('phone') ? found.phone : undefined,
+    };
+  }
+
+  /** Who has looked at this account, and why. Shown beside the account. */
+  @Get('users/:id/access-log')
+  @UseGuards(JwtGuard, RolesGuard)
+  @Roles('trust_safety', 'admin')
+  async accessLog(@Param('id') userId: string) {
+    const rows = await this.pii.forSubject(userId);
+    return rows.map((row) => ({
+      staffId: row.staffId,
+      fields: row.fields,
+      reason: row.reason,
+      at: row.createdAt.toISOString(),
+    }));
   }
 
   /** Rulebook and workflow refusals are 400s with the sentence, not stack traces. */

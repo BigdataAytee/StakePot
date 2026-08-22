@@ -13,6 +13,7 @@ import { CommunityService } from '../community/community.service';
 import { SeedService } from '../community/seed.service';
 import { MarketVoidService } from '../community/void.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { MarketHealthService } from '../market/health.service';
 import { EmailSender } from '../notifications/email.sender';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PushSender } from '../notifications/push.sender';
@@ -22,11 +23,13 @@ import type { PrismaService } from '../prisma/prisma.service';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { StatusService } from '../status/status.service';
 import { SupportService } from '../support/support.service';
+import { testOrderBook } from '../testing/order-book';
 import { resetDatabase } from '../testing/reset';
 import { TradeService } from '../trade/trade.service';
 import { WalletService } from '../wallet/wallet.service';
 import { RgBlockedError, RgService } from './rg.service';
 import type { MarketTemplate } from '../community/market-template';
+import { approvalAnswers, compliantTemplate } from '../testing/templates';
 import { CreatorAnalyticsService } from '../creator/analytics.service';
 import { AutopsyService } from '../creator/autopsy.service';
 import { CreatorService } from '../creator/creator.service';
@@ -97,12 +100,19 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
       audit,
       new AnalyticsService(prisma),
     );
-    approvals = new ApprovalsService(prisma, ledger, voids, config, audit, totp, prizes);
     // §2.14's creator platform: the ladder, the analytics it reads, and
     // the autopsy that moves a creator's record when a market closes.
     const creators = new CreatorService(prisma, config, notifications);
+    seeds = new SeedService(prisma, config, wallet, voids, creators);
+    approvals = new ApprovalsService(prisma, ledger, voids, config, audit, totp, prizes, seeds);
     const creatorAnalytics = new CreatorAnalyticsService(prisma);
-    const autopsies = new AutopsyService(prisma, creatorAnalytics, creators, notifications);
+    const autopsies = new AutopsyService(
+      prisma,
+      creatorAnalytics,
+      creators,
+      notifications,
+      new MarketHealthService(prisma),
+    );
     const analytics = new AnalyticsService(prisma);
     community = new CommunityService(
       prisma,
@@ -114,7 +124,6 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
       autopsies,
       analytics,
     );
-    seeds = new SeedService(prisma, config, wallet, voids, creators);
     trades = new TradeService(
       prisma,
       ledger,
@@ -122,6 +131,7 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
       config,
       { publish: async () => undefined } as unknown as PriceCacheService,
       rg,
+      testOrderBook(prisma, ledger, wallet),
     );
   });
 
@@ -143,18 +153,27 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
     await config.refresh();
   });
 
-  const template: MarketTemplate = {
-    question: 'Will the Eagles name a new captain before the next window?',
+  const template: MarketTemplate = compliantTemplate({
+    question: 'Will the Eagles name a new captain before 23:59 WAT on the window deadline?',
     outcomes: [
-      { label: 'YES', criteria: 'The NFF announces a new captain.' },
-      { label: 'NO', criteria: 'No new captain is announced.' },
+      {
+        label: 'YES',
+        criteria: 'The NFF announces a new substantive captain before 23:59 WAT on that date.',
+      },
+      {
+        label: 'NO',
+        criteria: 'No new substantive captain has been announced by 23:59 WAT on that date.',
+      },
     ],
     sourceName: 'NFF official site',
-    sourceUrl: 'https://www.thenff.com/',
+    sourceUrl: 'https://www.thenff.com/news/super-eagles/',
     eventDate: new Date(Date.now() + 4 * 86_400_000).toISOString(),
     voidDate: new Date(Date.now() + 10 * 86_400_000).toISOString(),
-    edgeCases: { interim: 'An interim captain does not count.' },
-  };
+    edgeCases: {
+      interim: 'An interim captain does not count.',
+      'no publication': 'If the NFF announces nothing by the void date, the market voids.',
+    },
+  });
 
   async function person(email: string, role: UserRole = 'user') {
     const { userId } = await auth.signup({
@@ -171,6 +190,7 @@ describe.skipIf(!TEST_DATABASE_URL)('company layer (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
       activationPath: 'seeded',
     });

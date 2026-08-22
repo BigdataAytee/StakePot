@@ -75,9 +75,12 @@ export default function MoneyRoom() {
             <Figure label="platform fees" value={exactMoney(reserves.platformFees)} />
             <Figure label="surplus" value={exactMoney(reserves.surplus)} />
           </dl>
-          <p className="mt-2 font-mono text-xs text-text-muted">
-            generated {new Date(reserves.generatedAt).toLocaleString('en-NG')}
-          </p>
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
+            <p className="font-mono text-xs text-text-muted">
+              generated {new Date(reserves.generatedAt).toLocaleString('en-NG')}
+            </p>
+            <ExportButton />
+          </div>
         </section>
       )}
 
@@ -192,6 +195,62 @@ export default function MoneyRoom() {
           </tbody>
         </table>
       </section>
+    </div>
+  );
+}
+
+/**
+ * §2.10's "one-click signed export".
+ *
+ * Fetched and handed over as a blob rather than linked: the endpoint is
+ * role-guarded, and a plain `<a download>` carries no Authorization header, so
+ * a link would download a 401 page named like a reserves report — the single
+ * worst possible artefact to hand an auditor.
+ *
+ * The filename carries the date because these get filed, and the button says
+ * outright when the document came back unsigned rather than letting somebody
+ * discover it at the point of attestation.
+ */
+function ExportButton() {
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  async function download(): Promise<void> {
+    setBusy(true);
+    setNote(null);
+    try {
+      const document_ = await admin.reservesExport();
+      const url = URL.createObjectURL(
+        new Blob([JSON.stringify(document_, null, 2)], { type: 'application/json' }),
+      );
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `stakeam-reserves-${document_.generatedAt.slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      if (document_.signature === null) {
+        setNote('Exported unsigned — RESERVES_SIGNING_KEY is not set for this environment.');
+      }
+    } catch (caught) {
+      setNote(caught instanceof Error ? caught.message : 'export failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="text-right">
+      <button
+        type="button"
+        onClick={() => void download()}
+        disabled={busy}
+        className="rounded-sm border border-border px-3 py-1.5 text-xs font-semibold hover:border-text disabled:opacity-40"
+      >
+        {busy ? 'Preparing…' : 'Signed export'}
+      </button>
+      {note !== null && <p className="mt-1 max-w-xs text-xs text-fall">{note}</p>}
     </div>
   );
 }

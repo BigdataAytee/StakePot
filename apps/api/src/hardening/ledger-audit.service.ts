@@ -129,9 +129,14 @@ export class LedgerAuditService {
   /**
    * Escrow held per market matches what its pot says (§2.7's escrow mismatch).
    *
-   * Bonds live in escrow without being part of the pot, so they are subtracted
-   * before the comparison — the same asymmetry that once broke resolution for
-   * every community market with a bond.
+   * Bonds live in escrow without being part of the pot, so they are added to
+   * the expectation before the comparison — the same asymmetry that once broke
+   * resolution for every community market with a bond. The order book is the
+   * third such tenant: money locked behind a resting order, and the collateral
+   * behind a matched position, are both in `user_escrow` and neither is in any
+   * pot. Left out, this check would go red on every market the book is on —
+   * which is the worst possible failure for an alarm, because the fix would be
+   * to stop believing it.
    */
   private async escrowMatchesOpenMarkets(): Promise<AuditFinding[]> {
     const markets = await this.prisma.market.findMany({
@@ -142,7 +147,7 @@ export class LedgerAuditService {
     if (markets.length === 0) return [];
 
     const ids = markets.map((market) => market.id);
-    const [escrow, bonds] = await Promise.all([
+    const [escrow, bonds, book] = await Promise.all([
       this.prisma.ledgerEntry.groupBy({
         by: ['marketId'],
         where: { marketId: { in: ids }, fundClass: 'user_escrow' },
@@ -152,6 +157,19 @@ export class LedgerAuditService {
         where: { marketId: { in: ids }, state: 'held' },
         select: { marketId: true, amount: true },
       }),
+      // The order book's escrow: locked behind open orders, plus the collateral
+      // behind matched positions. Held in the same fund class as pot stake and
+      // no part of any pot, so it is the third asymmetry this check has to know
+      // about — the same shape as the bond, for the same reason.
+      this.prisma.ledgerEntry.groupBy({
+        by: ['marketId'],
+        where: {
+          marketId: { in: ids },
+          fundClass: 'user_escrow',
+          type: { in: ['order_lock', 'order_release'] },
+        },
+        _sum: { amount: true },
+      }),
     ]);
 
     const escrowed = new Map(
@@ -160,19 +178,26 @@ export class LedgerAuditService {
     const bondFor = new Map(
       bonds.map((bond) => [bond.marketId, new Decimal(bond.amount.toString())]),
     );
+    const bookFor = new Map(
+      book.map((row) => [row.marketId ?? '', new Decimal((row._sum.amount ?? 0).toString())]),
+    );
 
     const findings: AuditFinding[] = [];
     for (const market of markets) {
       const held = escrowed.get(market.id) ?? new Decimal(0);
       const bond = bondFor.get(market.id) ?? new Decimal(0);
+      const onTheBook = bookFor.get(market.id) ?? new Decimal(0);
       const pot = new Decimal(market.potTotal.toString());
 
-      const expected = pot.plus(bond);
+      const expected = pot.plus(bond).plus(onTheBook);
       if (!held.equals(expected)) {
         findings.push({
           check: 'escrow_matches_pot',
           severity: 'red',
-          detail: `market ${market.id} holds ${held.toString()} in escrow but its pot plus bond is ${expected.toString()}`,
+          detail:
+            `market ${market.id} holds ${held.toString()} in escrow but its pot ` +
+            `(${pot.toString()}) plus bond (${bond.toString()}) plus order book ` +
+            `(${onTheBook.toString()}) is ${expected.toString()}`,
         });
       }
     }

@@ -35,7 +35,7 @@ export default function NotFound() {
 
         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
           <Link
-            href="/markets"
+            href="/"
             className="flex min-h-11 items-center justify-center rounded-md bg-rise px-5 font-bold text-paper"
           >
             Open markets

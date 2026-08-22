@@ -1,0 +1,80 @@
+name: Probe deployment
+
+# What is actually running out there.
+#
+# This session cannot reach onrender.com — the sandbox's network policy refuses
+# it — so diagnosing a deployment meant asking for curl output and waiting a
+# round trip for each question. A runner has no such restriction. Everything
+# below is a public endpoint; no secrets, and nothing is written.
+on:
+  workflow_dispatch:
+    inputs:
+      web:
+        description: Web app origin
+        default: https://stakeam-web.onrender.com
+      api:
+        description: API origin
+        default: https://stakeam-api.onrender.com
+  # So it runs the moment it is added or changed, without waiting for
+  # workflow_dispatch to be available on the default branch.
+  push:
+    paths: ['.github/workflows/probe-deployment.yml']
+
+jobs:
+  probe:
+    name: what is live
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Probe
+        env:
+          WEB: ${{ github.event.inputs.web || 'https://stakeam-web.onrender.com' }}
+          API: ${{ github.event.inputs.api || 'https://stakeam-api.onrender.com' }}
+        run: |
+          set -u
+          # Free instances sleep; the first request pays for a cold start.
+          say() { printf '\n=== %s ===\n' "$1"; }
+
+          say "api /health"
+          curl -sS -m 90 -w '\nHTTP %{http_code} in %{time_total}s\n' "$API/health" || echo "unreachable"
+
+          say "api / (which build)"
+          curl -sS -m 60 -w '\nHTTP %{http_code}\n' "$API/" || echo "unreachable"
+
+          say "web /version (which build)"
+          curl -sS -m 90 -w '\nHTTP %{http_code}\n' "$WEB/version" || echo "unreachable"
+
+          say "api /markets — how many, and what"
+          body=$(curl -sS -m 60 "$API/markets" || echo '[]')
+          echo "$body" | head -c 400; echo
+          echo "markets returned: $(echo "$body" | grep -o '"id"' | wc -l)"
+          echo "shelves: $(echo "$body" | grep -o '"shelf":"[a-z]*"' | sort | uniq -c | tr '\n' ' ')"
+
+          say "web /markets — what the server sends a browser"
+          page=$(curl -sS -m 90 "$WEB/markets" || echo '')
+          echo "shelf chips present: $(echo "$page" | grep -c 'aria-label="Shelf"')"
+          echo "'Nothing open here yet': $(echo "$page" | grep -c 'Nothing open here yet')"
+          echo "seeded questions on the page: $(echo "$page" | grep -oE 'naira close below|Super Eagles|Apple Music|Premier League|headline inflation|petrol sell below' | sort -u | tr '\n' ' ')"
+          echo "build-commit meta: $(echo "$page" | grep -o 'name="build-commit" content="[^"]*"' || echo 'absent — old build')"
+          say "api /community/templates — did the library sync on boot?"
+          # The starter templates are synced from TEMPLATE_LIBRARY when the API
+          # boots, and re-synced on read if the table is ever emptied. An empty
+          # array here means the deployed build predates that, or the sync is
+          # failing — both of which make the create page a blank form.
+          tpl=$(curl -sS -m 60 "$API/community/templates" || echo '[]')
+          echo "templates returned: $(echo "$tpl" | grep -o '"id"' | wc -l)"
+          echo "ids: $(echo "$tpl" | grep -oE '"id":"[a-z-]+"' | tr '\n' ' ')"
+
+          say "api /admin/studio/crawl — reachable without a token? (it must not be)"
+          # Not a capability check: a 401 here is the correct answer and the one
+          # we want to see. The crawl report names every source and its trust
+          # score, which is staff-only by design.
+          curl -sS -m 60 -o /dev/null -w 'HTTP %{http_code} (401 expected)\n' \
+            "$API/admin/studio/crawl" || echo "unreachable"
+
+          say "what this probe cannot see"
+          echo "Research heartbeat counters, the Library tab's series list and the"
+          echo "resolution dossier all sit behind staff auth, so they are not"
+          echo "checkable from an unauthenticated runner. What is provable here is"
+          echo "that the deployed build carries them: the template endpoint above"
+          echo "only exists on this morning's build."

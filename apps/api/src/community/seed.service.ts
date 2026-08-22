@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Market, Outcome } from '@prisma/client';
-import { Decimal, seed as engineSeed } from '@stakeam/engine';
+import { Decimal, seed as engineSeed, topUpSymmetric } from '@stakeam/engine';
 
 import { type Tx } from '../ledger/ledger.service';
 import { toEngineState } from '../market/market-state';
@@ -11,6 +11,17 @@ import { WalletService } from '../wallet/wallet.service';
 import { SYSTEM_PLATFORM_ACCOUNT } from '../ledger/posting';
 import { CreatorService } from '../creator/creator.service';
 import { MarketVoidService } from './void.service';
+import { isTradingFrozen } from '@stakeam/rules';
+
+/**
+ * States a live official market may be topped up in.
+ *
+ * Not `frozen`, `pending_resolution`, `dispute_window`, `resolved` or
+ * `voided`: past the freeze the result may be knowable, and the platform does
+ * not stake on those. `isTradingFrozen` is checked as well, because the sweep
+ * that flips the state runs on a schedule and a schedule can be late.
+ */
+const TOPPABLE: readonly string[] = ['draft', 'seeding', 'funding', 'active'];
 
 export class SeedError extends Error {
   constructor(message: string) {
@@ -166,6 +177,137 @@ export class SeedService {
       });
 
       return applied;
+    });
+  }
+
+  /**
+   * Top a live official market's pot up, symmetrically, at any point before it
+   * freezes.
+   *
+   * The operator-facing counterpart of `seedOfficial`. That one *opens* a
+   * market and can only run once, from `draft`, before anything has traded;
+   * this one runs on a market that is already being traded, which is when a
+   * thin pot is actually visible and somebody wants to do something about it.
+   *
+   * Everything about it is the same symmetric seed: δ shares of every outcome
+   * for a cost of δ, so it takes no side and moves no price (§2.4). The
+   * platform ends up holding δ of every outcome, which means its money is at
+   * risk exactly like anybody else's — it recovers its share of the pot only
+   * on the outcome that wins.
+   *
+   * Three refusals, and each is load-bearing:
+   *
+   * **Official markets only.** A community market's seed is the creator's
+   * stake and the thing their conduct bond is posted against (Part 3 §5); the
+   * platform putting money in beside it would quietly change whose market it
+   * is.
+   *
+   * **Never past the freeze.** Checked with the same rules module the trade
+   * path uses, at execution time, inside the lock. A seed after the event has
+   * started is the platform staking on a market whose result may already be
+   * known — the precise thing the freeze exists to stop, and it must not have
+   * a staff-shaped exception.
+   *
+   * **Bounded.** A ceiling from config, so a mistyped amount cannot mint an
+   * arbitrary sum. It is a config change to raise, which is itself a four-eyes
+   * action with a delay (§6.8) — the slow door is the point.
+   */
+  async topUpOfficial(params: {
+    marketId: string;
+    perOutcome: string;
+    /** Idempotency: a retried click must not seed twice. */
+    requestId: string;
+  }): Promise<SeedApplied & { potAfter: Decimal }> {
+    const perOutcome = new Decimal(params.perOutcome);
+    if (perOutcome.lte(0)) throw new SeedError('a seed must be greater than zero');
+
+    const ceiling = new Decimal(
+      (await this.config.get('official_seed_max_per_outcome_spc')).toString(),
+    );
+    if (perOutcome.gt(ceiling)) {
+      throw new SeedError(
+        `a single top-up is capped at ${ceiling.toString()} SPC per outcome — ` +
+          'raise official_seed_max_per_outcome_spc in the config console if that is deliberate',
+      );
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM markets WHERE id = ${params.marketId} FOR UPDATE`;
+      const market = await this.loadMarket(tx, params.marketId);
+
+      if (market.shelf !== 'official') {
+        throw new SeedError(
+          'only official markets can be topped up by the platform — a community market’s seed is its creator’s',
+        );
+      }
+      if (!TOPPABLE.includes(market.state)) {
+        throw new SeedError(`market is ${market.state} — it cannot be seeded`);
+      }
+      if (
+        isTradingFrozen({
+          freezeAt: market.freezeAt,
+          eventDate: market.eventDate,
+          state: market.state,
+        })
+      ) {
+        throw new SeedError(
+          'this market has frozen — the platform does not stake on a market whose result may be known',
+        );
+      }
+
+      // Idempotent on the ledger's own ref, which is the only record that
+      // cannot be written twice by accident: a retried click finds the earlier
+      // postings and returns rather than seeding again.
+      const already = await tx.ledgerEntry.findFirst({
+        where: { ref: `official-topup:${params.requestId}` },
+      });
+      if (already !== null) {
+        return {
+          total: new Decimal(0),
+          perOutcome: new Decimal(0),
+          sharesPerOutcome: new Decimal(0),
+          potAfter: new Decimal(market.potTotal.toString()),
+        };
+      }
+
+      const total = perOutcome.times(market.outcomes.length);
+      const ref = `official-topup:${params.requestId}`;
+
+      await this.wallet.issue({
+        userId: SYSTEM_PLATFORM_ACCOUNT,
+        amount: total,
+        type: 'seed',
+        ref,
+        tx,
+      });
+      await this.wallet.escrow({
+        userId: SYSTEM_PLATFORM_ACCOUNT,
+        marketId: market.id,
+        amount: total,
+        type: 'seed',
+        ref,
+        tx,
+      });
+
+      const applied = await this.applySeed(
+        tx,
+        market,
+        [{ userId: SYSTEM_PLATFORM_ACCOUNT, amount: total }],
+        true,
+      );
+
+      await tx.marketAnnotation.create({
+        data: {
+          marketId: market.id,
+          type: 'seed',
+          label: `Platform seed — ${applied.total.toString()} added to the pot`,
+        },
+      });
+
+      return {
+        ...applied,
+        potAfter: new Decimal(market.potTotal.toString()).plus(applied.total),
+      };
     });
   }
 
@@ -438,6 +580,17 @@ export class SeedService {
     tx: Tx,
     market: MarketWithOutcomes,
     contributions: readonly Contribution[],
+    /**
+     * Allow a market that has already traded.
+     *
+     * Off everywhere except the admin top-up. The two engine functions differ
+     * only in a precondition — `seed` refuses an uneven share vector because a
+     * Path B seed is what *opens* a market — and this flag is how a caller says
+     * by name that it means the precondition not to apply. See
+     * `topUpSymmetric`: the arithmetic is identical and price-neutral at every
+     * share vector.
+     */
+    allowTraded = false,
   ): Promise<SeedApplied> {
     const total = contributions.reduce((acc, c) => acc.plus(c.amount), new Decimal(0));
     if (total.lte(0)) throw new SeedError('a seed must be greater than zero');
@@ -448,9 +601,12 @@ export class SeedService {
     const loaded = toEngineState(market, outcomes, exitFeeRate);
 
     // The engine refuses a seed on a market that has traded, which is the check
-    // that matters — "equal money in every pool" and "equal shares of every
-    // outcome" only coincide while prices are flat.
-    const result = engineSeed(loaded.state, total.div(n).toString());
+    // that matters on the opening paths — "equal money in every pool" and
+    // "equal shares of every outcome" only coincide while prices are flat.
+    // The top-up path is the one place that is deliberately not what is wanted.
+    const result = allowTraded
+      ? topUpSymmetric(loaded.state, total.div(n).toString())
+      : engineSeed(loaded.state, total.div(n).toString());
     const sharesPerOutcome = result.sharesPerOutcome;
 
     let stakedAllocated = new Decimal(0);

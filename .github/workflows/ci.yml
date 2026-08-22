@@ -138,6 +138,30 @@ jobs:
           fi
           echo "ledger rejected UPDATE and DELETE as expected"
 
+          # §2.18's two evidence tables get the same treatment, and the same
+          # proof. The first version of their migration revoked from PUBLIC
+          # rather than from the application role, which took nothing away
+          # from the only account that connects — the guarantee read as
+          # though it held while nothing enforced it. A comment cannot be
+          # trusted to say whether a grant binds; this can.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "
+            INSERT INTO pii_access_log (id, \"staffId\", \"subjectId\", fields, reason, ip)
+            VALUES ('ci_look', 'ci_user', 'ci_user', ARRAY['email'], 'support call', '10.0.0.1');
+            INSERT INTO consents (id, \"userId\", document, version, ip)
+            VALUES ('ci_consent', 'ci_user', 'terms', '2026-01', '10.0.0.1');
+          "
+          for probe in \
+            "UPDATE pii_access_log SET reason = 'x' WHERE id = 'ci_look'" \
+            "DELETE FROM pii_access_log WHERE id = 'ci_look'" \
+            "UPDATE consents SET version = 'x' WHERE id = 'ci_consent'" \
+            "DELETE FROM consents WHERE id = 'ci_consent'"; do
+            if psql "$DATABASE_URL" -c "$probe" 2>/dev/null; then
+              echo "::error::an append-only table accepted: $probe"
+              exit 1
+            fi
+          done
+          echo "pii_access_log and consents rejected UPDATE and DELETE as expected"
+
       - name: Build
         run: pnpm build
 

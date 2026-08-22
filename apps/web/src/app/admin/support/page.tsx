@@ -6,7 +6,7 @@ import { admin, type SupportQueueTicket } from '@/lib/admin-api';
 
 const SLA_TONE: Record<SupportQueueTicket['slaState'], string> = {
   ok: 'text-text-muted',
-  due_soon: 'text-money',
+  due_soon: 'text-caution',
   breached: 'text-fall',
   paused: 'text-text-muted',
 };

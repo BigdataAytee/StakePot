@@ -16,6 +16,10 @@ export interface PublicConfig {
   starterBalanceSpc: string;
   signupBonusSpc: string;
   exitFeeRate: number;
+  /** §7.2e's activation meters measure against these (§6.4b config). */
+  activationPoolSpc: string;
+  activationBackers: number;
+  activationMode: string;
 }
 
 export function usePublicConfig(): PublicConfig | null {

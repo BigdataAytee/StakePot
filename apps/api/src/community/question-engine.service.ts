@@ -3,10 +3,13 @@ import { Prisma } from '@prisma/client';
 import type { MarketDraft } from '@prisma/client';
 
 import { logger } from '../logger';
+import { BriefingService, type SlotBriefing } from '../intel/briefing.service';
+import { MarketHealthService } from '../market/health.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuestionEngineUnavailableError } from './anthropic-question-model';
 import {
+  byQueuePriority,
   CATALOGUE_SLOTS,
   CATALOGUE_SLOT_NAMES,
   draftScore,
@@ -16,10 +19,11 @@ import {
   type CatalogueSlot,
 } from './draft-ranking';
 import {
+  blockersOf,
   isBalanced,
   screenTemplate,
   type MarketTemplate,
-  type TemplateProblem,
+  type RuleReport,
 } from './market-template';
 import { templateOf, type Assessment, type Proposal, type QuestionModel } from './question-model';
 
@@ -44,13 +48,40 @@ export interface GeneratedDraft {
   readonly refusals: readonly string[];
 }
 
+/**
+ * How a community submission got here.
+ *
+ * Part 4 of the checklist: community creation runs the same rules as the
+ * Studio and is stricter in one way — a creator picks a template or works
+ * through the co-pilot, and cannot hand-write a market from nothing.
+ *
+ * The reason is not that free text produces bad questions; it is that free
+ * text produces questions nobody has *shaped*. A template arrives with its
+ * criteria already written by somebody who knew what settles it, and a
+ * co-pilot run arrives having been through the checklist once already. The
+ * creator edits either freely afterwards — every edit is re-screened — but
+ * the starting point is one of the two.
+ */
+/** A submission that did not come through a template or the co-pilot. */
+export class SubmissionOriginError extends Error {}
+
+export type SubmissionOrigin =
+  | { readonly kind: 'template'; readonly templateId: string }
+  | { readonly kind: 'copilot'; readonly runId: string };
+
 export interface CopilotResult {
+  /**
+   * The receipt. A submission cites it to prove the co-pilot shaped this, and
+   * without one — or without a template id — nothing may be submitted at all.
+   */
+  readonly runId: string;
   readonly template: MarketTemplate;
   readonly estimates: readonly number[];
   readonly balanced: boolean;
   readonly engagement: number;
   readonly rationale: string;
-  readonly problems: readonly TemplateProblem[];
+  /** The whole checklist, not just what failed — the wizard renders every line. */
+  readonly report: RuleReport;
 }
 
 /**
@@ -77,6 +108,8 @@ export class QuestionEngineService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: PlatformConfigService,
+    private readonly health: MarketHealthService,
+    private readonly briefings: BriefingService,
     @Inject(QUESTION_MODEL) model: QuestionModel | null,
   ) {
     this.model = model;
@@ -101,20 +134,42 @@ export class QuestionEngineService {
     isFirstMarket: boolean;
     /** The activation path the creator chose at creation (§2.4). */
     activationPath?: 'organic' | 'seeded';
+    /** Rules 5 and 16, attested by the creator on the way in. */
+    attestedNoInfluence?: boolean;
+    /** Which of the two doors this came through — see `checkOrigin`. */
+    origin: SubmissionOrigin;
     now?: Date;
   }): Promise<{
     draftId: string;
     state: 'suggested' | 'rejected';
-    problems: TemplateProblem[];
+    report: RuleReport;
     assessment: Assessment | null;
   }> {
     const now = params.now ?? new Date();
-    const problems = screenTemplate(params.template, { now });
 
-    // Rulebook §8 and the structural rules are decided here, not by the model.
-    if (problems.length > 0) {
-      const draft = await this.fileCommunityDraft(params, problems, null, 'rejected');
-      return { draftId: draft.id, state: 'rejected', problems, assessment: null };
+    // Before anything else, and before any model call is paid for: a community
+    // submission has to have come from a template or from the co-pilot.
+    await this.checkOrigin(params.origin, params.creatorId);
+    const report = screenTemplate(
+      params.template,
+      { now, attestedNoInfluence: params.attestedNoInfluence ?? false },
+      'community',
+    );
+
+    // The checklist is decided here, not by the model. A prohibition that only
+    // exists in a prompt is a preference.
+    //
+    // Failures only, not `blocked`. The checklist's two judgement questions —
+    // the front-page test and the stranger test — are answered by the staff
+    // member who approves the market, and that person is not in the room when a
+    // creator presses submit. Refusing the submission because they have not
+    // answered yet would refuse every community market ever made. The
+    // unanswered questions ride into the queue on the report instead, which is
+    // where they get asked.
+    if (report.failures.length > 0) {
+      const draft = await this.fileCommunityDraft(params, report, null, 'rejected');
+      await this.spendOrigin(params.origin, draft.id);
+      return { draftId: draft.id, state: 'rejected', report, assessment: null };
     }
 
     const assessment = await this.ask().assess(params.template);
@@ -124,13 +179,9 @@ export class QuestionEngineService {
         ? 'rejected'
         : 'suggested';
 
-    const draft = await this.fileCommunityDraft(
-      params,
-      problems,
-      { ...assessment, balanced },
-      state,
-    );
-    return { draftId: draft.id, state, problems, assessment };
+    const draft = await this.fileCommunityDraft(params, report, { ...assessment, balanced }, state);
+    await this.spendOrigin(params.origin, draft.id);
+    return { draftId: draft.id, state, report, assessment };
   }
 
   // ----------------------------------------------------------- generation mode
@@ -174,6 +225,16 @@ export class QuestionEngineService {
     const [exemplars, retune] = await Promise.all([this.exemplars(), this.lopsided()]);
 
     for (const slot of slots) {
+      // What the pipeline has actually read about this slot in the last
+      // fortnight. The same object goes into the prompt and onto the draft, so
+      // the evidence panel a reviewer reads is the evidence the model saw —
+      // rebuilding it at review time would show today's news beside a question
+      // written from last week's, which reads as a citation and is not one.
+      const evidence = await this.briefings.forSlot({
+        brief: CATALOGUE_SLOTS[slot].brief,
+        now,
+      });
+
       let proposal: Proposal;
       try {
         proposal = await model.propose({
@@ -182,6 +243,7 @@ export class QuestionEngineService {
           avoid,
           exemplars,
           retune,
+          evidence,
           now,
         });
       } catch (error) {
@@ -192,7 +254,7 @@ export class QuestionEngineService {
         continue;
       }
 
-      results.push(await this.fileProposal({ proposal, slot, live, now }));
+      results.push(await this.fileProposal({ proposal, slot, live, now, evidence }));
       avoid.push(proposal.question);
     }
 
@@ -212,13 +274,36 @@ export class QuestionEngineService {
     slot: CatalogueSlot;
     live: readonly { id: string; question: string }[];
     now: Date;
+    evidence?: SlotBriefing;
   }): Promise<GeneratedDraft> {
     const { proposal, slot, live, now } = input;
     const template = templateOf(proposal);
     const refusals: string[] = [];
 
-    const problems = screenTemplate(template, { now });
-    refusals.push(...problems.map((problem) => problem.message));
+    // The AI surface of the checklist. Rules 5 and 16 are carried by the
+    // model's own influence judgement rather than by an attestation nobody is
+    // present to give — the model is required to state it, and stating it
+    // wrongly is what the reviewer is there to catch.
+    const report = screenTemplate(
+      template,
+      {
+        now,
+        attestedNoInfluence: !proposal.influenceable,
+        expectedNewsFlow: proposal.newsExpected,
+      },
+      'ai',
+    );
+    refusals.push(...blockersOf(report));
+
+    // §2.9 and the checklist both ask the engine to throw its own work away
+    // rather than lower the bar. When it does, the reason it gives is the
+    // useful part: a draft it could not write is the cheapest signal there is
+    // about what the shelf is short of, and it is invisible unless logged.
+    if (proposal.rejected) {
+      refusals.push(
+        `the engine rejected its own draft — ${proposal.rejectionReason} (rules ${proposal.rejectedRules.join(', ')})`,
+      );
+    }
 
     if (!isCatalogueSlot(proposal.slot)) {
       refusals.push(`"${proposal.slot}" is not a slot on the shelf plan`);
@@ -256,9 +341,18 @@ export class QuestionEngineService {
           rationale: proposal.rationale,
           estimates: proposal.balanceEstimates,
           refusals,
-          problems: problems.map((problem) => ({ code: problem.code, message: problem.message })),
+          report: JSON.parse(JSON.stringify(report)) as object,
+          selfRejected: proposal.rejected,
           duplicateOf: duplicate?.id ?? null,
         } as Prisma.InputJsonValue,
+        // Written even on a refused draft. A draft the engine threw away is the
+        // cheapest signal there is about what the shelf is short of, and the
+        // reading behind it is what tells a reviewer whether the refusal was
+        // right — "nothing published about this in a fortnight" and "four
+        // sources disagree about the number" are very different refusals.
+        ...(input.evidence === undefined
+          ? {}
+          : { evidenceJson: JSON.parse(JSON.stringify(input.evidence)) as Prisma.InputJsonValue }),
         state,
       },
     });
@@ -282,7 +376,7 @@ export class QuestionEngineService {
    * estimate the wizard's meter shows. It files nothing — this is the creator
    * still typing, and a draft row per keystroke would be noise in the queue.
    */
-  async copilot(params: { text: string; now?: Date }): Promise<CopilotResult> {
+  async copilot(params: { text: string; creatorId: string; now?: Date }): Promise<CopilotResult> {
     const now = params.now ?? new Date();
     if (params.text.trim().length < 10) {
       throw new Error('say a bit more about what you want people to call');
@@ -291,23 +385,52 @@ export class QuestionEngineService {
     const proposal = await this.ask().restructure({ text: params.text.trim(), now });
     const template = templateOf(proposal);
 
+    // Recorded, where it used to be discarded. The reasoning for discarding it
+    // was good — somebody still thinking should not be filling a review queue
+    // — and it stopped holding the moment the co-pilot became one of only two
+    // doors into community creation: "the AI structured this" has to be a fact
+    // the service can check rather than a claim the client makes about itself.
+    // The run is not a draft and never reaches the queue; it is a receipt.
+    const run = await this.prisma.copilotRun.create({
+      data: {
+        creatorId: params.creatorId,
+        inputText: params.text.trim(),
+        proposalJson: JSON.parse(JSON.stringify(template)) as Prisma.InputJsonValue,
+      },
+    });
+
     return {
+      runId: run.id,
       template,
       estimates: proposal.balanceEstimates,
       balanced: isBalanced(proposal.balanceEstimates, await this.bounds()),
       engagement: proposal.engagementScore,
       rationale: proposal.rationale,
-      problems: screenTemplate(template, { now }),
+      report: screenTemplate(
+        template,
+        {
+          now,
+          attestedNoInfluence: !proposal.influenceable,
+          expectedNewsFlow: proposal.newsExpected,
+        },
+        'community',
+      ),
     };
   }
 
-  /** Re-check an edited template: the meter has to move while they type. */
+  /**
+   * Re-check an edited template: the meter has to move while they type.
+   *
+   * No `runId` in the return, unlike the co-pilot's. A re-check is the creator
+   * editing something a template or a co-pilot run already shaped, so it issues
+   * no new receipt — and reusing the co-pilot's whole return type here would
+   * have made it look like it did.
+   */
   async checkBalance(params: {
     template: MarketTemplate;
     now?: Date;
-  }): Promise<Omit<CopilotResult, 'template'>> {
+  }): Promise<Omit<CopilotResult, 'template' | 'runId'>> {
     const now = params.now ?? new Date();
-    const problems = screenTemplate(params.template, { now });
     const assessment = await this.ask().assess(params.template);
 
     return {
@@ -315,7 +438,11 @@ export class QuestionEngineService {
       balanced: isBalanced(assessment.balanceEstimates, await this.bounds()),
       engagement: assessment.engagementScore,
       rationale: assessment.reason,
-      problems,
+      report: screenTemplate(
+        params.template,
+        { now, attestedNoInfluence: !assessment.influenceable },
+        'community',
+      ),
     };
   }
 
@@ -345,13 +472,18 @@ export class QuestionEngineService {
     const pot = staked.reduce((sum, value) => sum + value, 0);
     const finalSplit = pot > 0 ? Math.max(...staked) / pot : 0;
 
-    const [volume, disputeCount] = await Promise.all([
+    const [volume, disputeCount, warnings] = await Promise.all([
       this.prisma.trade.aggregate({
         where: { marketId, side: { not: 'seed' } },
         _sum: { cost: true },
       }),
       this.prisma.dispute.count({ where: { marketId } }),
+      // Checklist rule 43: the post-mortem the engine trains on is "volume,
+      // final split, disputes, what you'd change". The first three were here
+      // already; the fourth is which Part 5 flags fired while it was live.
+      this.health.historyFor(marketId),
     ]);
+    const warningsFired = [...new Set(warnings.map((warning) => warning.rule))].sort();
 
     await this.prisma.marketOutcomeLog.upsert({
       where: { marketId },
@@ -363,11 +495,13 @@ export class QuestionEngineService {
         finalSplit: new Prisma.Decimal(finalSplit),
         volume: new Prisma.Decimal(volume._sum.cost?.toString() ?? '0'),
         disputeCount,
+        warningsFired,
       },
       update: {
         finalSplit: new Prisma.Decimal(finalSplit),
         volume: new Prisma.Decimal(volume._sum.cost?.toString() ?? '0'),
         disputeCount,
+        warningsFired,
       },
     });
   }
@@ -386,7 +520,17 @@ export class QuestionEngineService {
     });
 
     return logs
-      .filter((log) => Number(log.finalSplit) <= 0.65 && log.disputeCount === 0)
+      .filter(
+        (log) =>
+          Number(log.finalSplit) <= 0.65 &&
+          log.disputeCount === 0 &&
+          // A market that tripped a Part 5 flag is not a model answer, however
+          // well it ended. Handing the engine a question that ran 85/15 for a
+          // week as something to imitate is how the next batch inherits the
+          // same shape — checklist rule 43, whose whole point is that the
+          // post-mortem changes what gets generated next.
+          log.warningsFired.length === 0,
+      )
       .sort((a, b) => Number(b.volume) - Number(a.volume))
       .slice(0, limit)
       .map((log) => ({
@@ -427,12 +571,7 @@ export class QuestionEngineService {
       take: params.limit ?? 50,
     });
 
-    return drafts
-      .map((draft) => this.describeDraft(draft))
-      .sort((a, b) => {
-        if (a.state !== b.state) return a.state === 'suggested' ? -1 : 1;
-        return b.score - a.score;
-      });
+    return drafts.map((draft) => this.describeDraft(draft)).sort(byQueuePriority);
   }
 
   private describeDraft(draft: MarketDraft) {
@@ -473,11 +612,67 @@ export class QuestionEngineService {
       creatorId: flags.creatorId ?? null,
       firstMarket: flags.firstMarket ?? false,
       createdAt: draft.createdAt.toISOString(),
+      evidence: (draft.evidenceJson as SlotBriefing | null) ?? null,
       template,
     };
   }
 
   // ---------------------------------------------------------------- internals
+
+  /**
+   * Prove the submission came through one of the two doors.
+   *
+   * Checked at the service rather than the wizard, and this is the whole point
+   * of the rule existing in code: a client that skipped the template picker and
+   * posted straight to the endpoint has skipped the shaping, and a UI-only rule
+   * would let it. The error names the two doors, because "refused" without a
+   * way forward is how a creator concludes the platform is broken.
+   */
+  private async checkOrigin(origin: SubmissionOrigin, creatorId: string): Promise<void> {
+    if (origin.kind === 'template') {
+      const template = await this.prisma.ticketTemplate.findUnique({
+        where: { id: origin.templateId },
+      });
+      if (template === null || !template.active) {
+        throw new SubmissionOriginError(
+          'That template is no longer available. Pick one from the library, or describe the market and let the co-pilot structure it.',
+        );
+      }
+      return;
+    }
+
+    const run = await this.prisma.copilotRun.findUnique({ where: { id: origin.runId } });
+    if (run === null || run.creatorId !== creatorId) {
+      throw new SubmissionOriginError(
+        'Start from a template, or describe the market and let the co-pilot structure it — a market cannot be submitted from scratch.',
+      );
+    }
+    if (run.usedAt !== null) {
+      // One run, one submission. Otherwise a single co-pilot call becomes a
+      // season ticket for hand-written markets, which is the rule with extra
+      // steps rather than the rule.
+      throw new SubmissionOriginError(
+        'That co-pilot draft has already been submitted. Run it again for a new market.',
+      );
+    }
+  }
+
+  /**
+   * Burn a co-pilot run once it has produced a submission.
+   *
+   * After the draft is filed, not before: a submission that the screen refuses
+   * has still consumed the run, because the refusal is about the question
+   * rather than about the run, and re-posting the same rejected market on the
+   * same receipt is exactly what the one-use rule is for. Templates are a
+   * library and are not consumed.
+   */
+  private async spendOrigin(origin: SubmissionOrigin, draftId: string): Promise<void> {
+    if (origin.kind !== 'copilot') return;
+    await this.prisma.copilotRun.update({
+      where: { id: origin.runId },
+      data: { usedAt: new Date(), usedByDraft: draftId },
+    });
+  }
 
   private async bounds() {
     return {
@@ -507,17 +702,27 @@ export class QuestionEngineService {
       isFirstMarket: boolean;
       activationPath?: 'organic' | 'seeded';
     },
-    problems: TemplateProblem[],
+    report: RuleReport,
     assessment: (Assessment & { balanced: boolean }) | null,
     state: 'suggested' | 'rejected',
   ) {
     // §2.9: "First-time creators always route to human review."
-    const finalState = params.isFirstMarket && state === 'suggested' ? 'suggested' : state;
-
+    //
+    // Which every community submission already does — `suggested` means "in the
+    // queue", and staff open the market from there. The line that used to sit
+    // here read `isFirstMarket && state === 'suggested' ? 'suggested' : state`,
+    // which is `state` on both branches: it looked like it enforced the rule
+    // and enforced nothing. Deleting it changes no behaviour, which is exactly
+    // the point — the routing was never what was missing.
+    //
+    // What was missing is the second half of §6.2: "first-time creators always
+    // *flagged* for human review". The flag is filed below and the queue now
+    // sorts on it, so a reviewer sees whose first market this is instead of it
+    // sitting fourteenth by score behind a known creator's fourth.
     if (params.isFirstMarket) {
       logger.info(
         { creatorId: params.creatorId },
-        'first market from this creator — routed to human review regardless of score',
+        'first market from this creator — flagged at the top of the review queue',
       );
     }
 
@@ -528,13 +733,16 @@ export class QuestionEngineService {
         balanceEstimate: assessment === null ? 0 : Math.max(...assessment.balanceEstimates),
         engagementScore: assessment?.engagementScore ?? 0,
         blocklistFlags: {
-          problems: problems.map((problem) => ({ code: problem.code, message: problem.message })),
+          // The whole report, not the failures. A reviewer opening this draft
+          // needs to see which rules were checked and passed as much as which
+          // ones bit — "clean" is only meaningful against a list.
+          report: JSON.parse(JSON.stringify(report)) as object,
           concerns: assessment?.concerns ?? [],
           estimates: assessment?.balanceEstimates ?? [],
           balanced: assessment?.balanced ?? false,
           influenceable: assessment?.influenceable ?? false,
           duplicate: assessment?.duplicateOfLiveMarket ?? false,
-          reason: assessment?.reason ?? problems.map((problem) => problem.message).join(' '),
+          reason: assessment?.reason ?? blockersOf(report).join(' '),
           firstMarket: params.isFirstMarket,
           // Approval happens later and needs to know whose market this is, and
           // which activation path the creator picked (§2.4 — "the creator
@@ -542,7 +750,7 @@ export class QuestionEngineService {
           creatorId: params.creatorId,
           activationPath: params.activationPath ?? 'organic',
         } as Prisma.InputJsonValue,
-        state: finalState,
+        state,
       },
     });
   }

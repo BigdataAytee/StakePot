@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
+import { CHECKLIST_PROMPT, HARD_CONSTRAINTS, SCORING_CRITERIA } from '@stakeam/rules';
 
 import { env } from '../config/env';
 import type { MarketTemplate } from './market-template';
@@ -21,12 +22,22 @@ export class QuestionEngineUnavailableError extends Error {
 
 const MODEL = 'claude-opus-5';
 
-/** The house style, shared by every mode. §2.9's prime directive comes first. */
+/**
+ * The house style, shared by every mode.
+ *
+ * The prohibitions used to be a paragraph written here by hand, beside a rule
+ * table in `market-template.ts` that said much the same thing in code. Two
+ * copies of a law is one copy plus a bug waiting to be found in production, so
+ * the constraints now come out of `@stakeam/rules` — the same register the
+ * validators read, rendered for a model instead of for a review screen.
+ */
 const HOUSE = `You work on StakeAm, a Nigerian prediction market.
 
 Your prime directive is genuine disagreement: a good market is one the audience splits close to 50/50 on. An obvious answer produces a dead market and negligible fees, so treat a lopsided estimate as a real problem, not a quibble.
 
-Never touch questions about death, injury, illness, crime, violence, security incidents, private individuals, anything a participant could influence, or an outcome with no checkable public source.
+Every market you touch is governed by StakeAm's ticket-creation checklist. It is not advice.
+
+${HARD_CONSTRAINTS}
 
 Write in plain Nigerian English. Be specific. Do not apologise.`;
 
@@ -39,17 +50,19 @@ You are screening a submission somebody else wrote. Judge it on:
 4. Engagement — Nigerian mass interest: the naira and cost of living, football, elections, BBNaija and entertainment, fuel.
 5. Duplication — whether this restates a market already trading.
 
-You advise; a human decides.`;
+${SCORING_CRITERIA}
+
+You advise; a human decides. Say what is wrong plainly — a submission waved through because the concerns felt minor costs the creator their bond and the platform a market nobody argues about.`;
 
 const GENERATION_SYSTEM = `${HOUSE}
 
-You are drafting a question for one slot on the official shelf. Rules, all mandatory:
-1. Emit the complete template — question, every outcome with its settlement criteria, one named source with a URL, event date, void date, and edge cases. A question without them is not a suggestion.
-2. For anything numeric — inflation, FX, fuel — set the threshold at the current consensus or market forecast, never at a level with an obvious answer. Say what consensus you are pitching against in the rationale.
-3. Estimate the probabilities honestly. If your own estimate is lopsided, propose a different threshold or a different question rather than a market nobody will argue about.
-4. The outcome must be settled by exactly one named public source, by a stated date, with no participant able to influence it, and with news likely between opening and settlement.
-5. Prefer a multi-outcome list to Yes/No wherever the story allows ("who wins X?") — it is naturally closer to balanced and pulls in more than one fanbase. Add an "Any other" bucket when the field is genuinely open.
-6. Suggest a replacement for the slot you are given, not an addition to the shelf.`;
+You are drafting a question for one slot on the official shelf, and you are drafting it to the checklist below rather than to your own taste.
+
+${CHECKLIST_PROMPT}
+
+Two further house rules for this mode:
+- For anything numeric — inflation, FX, fuel — say in the rationale what consensus or published forecast you pitched the threshold against. A threshold with no stated reference is a guess wearing a number.
+- Suggest a replacement for the slot you are given, not an addition to the shelf.`;
 
 const COPILOT_SYSTEM = `${HOUSE}
 
@@ -57,7 +70,11 @@ Somebody has typed a question the way they would say it out loud. Turn it into a
 
 Where the field is open, list the real contenders and add an "Any other" bucket. If their idea cannot be settled by a public source, or has an obvious answer, say so in the rationale rather than inventing a source or a threshold.
 
-Estimate the probabilities honestly — the creator is about to be shown them, and a flattering estimate costs them money.`;
+Estimate the probabilities honestly — the creator is about to be shown them, and a flattering estimate costs them money.
+
+The result has to satisfy the same checklist a staff draft does. The creator will be shown, rule by rule, what passed and what did not, so a template that quietly skips the timezone or the edge cases wastes their time rather than saving it.
+
+${CHECKLIST_PROMPT}`;
 
 /**
  * The Anthropic implementation of the question model (§2.9's "Implementation:
@@ -138,6 +155,7 @@ export class AnthropicQuestionModel implements QuestionModel {
                       })`,
                   )
                   .join('\n')}`,
+            briefing(request),
           ]
             .filter((line) => line.length > 0)
             .join('\n\n'),
@@ -172,6 +190,77 @@ export class AnthropicQuestionModel implements QuestionModel {
     }
     return response.parsed_output;
   }
+}
+
+/**
+ * What the research pipeline read about this slot, as the model sees it.
+ *
+ * Three sections, because they license three different things. The stories are
+ * what a question can be *about* — checklist rule 12 wants expected news flow,
+ * and a slot with nine outlets on one story has it. The figures are what a
+ * threshold can be set *against*, so the model can pitch at the number rather
+ * than guess at it. The disagreements are the warning: where two sources
+ * published different numbers, the settlement criteria have to name which one
+ * settles, and a question drafted without noticing is a dispute waiting.
+ *
+ * Silence is stated rather than omitted. A prompt that simply leaves the
+ * section out when nothing was read invites the model to fill the gap from
+ * memory — which is exactly the failure this whole layer exists to prevent.
+ */
+function briefing(request: GenerationRequest): string {
+  const evidence = request.evidence;
+  if (evidence === undefined) return '';
+
+  if (evidence.itemsRead === 0) {
+    return [
+      `RESEARCH: nothing relevant has been published about this slot in the last ${evidence.windowDays} days that our sources carry.`,
+      'Do not invent recent developments. Draft from a scheduled event with a known date, or state in `rejectionReason` that there is nothing to hang a question on.',
+    ].join(' ');
+  }
+
+  const lines = [
+    `RESEARCH — what our sources have actually published in the last ${evidence.windowDays} days (${evidence.itemsRead} items read).`,
+    'Ground the question in this. Do not cite anything that is not here.',
+  ];
+
+  if (evidence.stories.length > 0) {
+    lines.push(
+      `Stories:\n${evidence.stories
+        .map(
+          (story) =>
+            `- ${story.headline} (${story.sourceName}, ${story.publishedAt.slice(0, 10)}${
+              story.sourceCount > 1 ? `, carried by ${story.sourceCount} outlets` : ''
+            })`,
+        )
+        .join('\n')}`,
+    );
+  }
+
+  if (evidence.figures.length > 0) {
+    lines.push(
+      `Figures published:\n${evidence.figures
+        .map(
+          (figure) =>
+            `- ${figure.key}: ${figure.value} (${figure.sourceName}, ${figure.publishedAt.slice(0, 10)})`,
+        )
+        .join('\n')}`,
+    );
+  }
+
+  if (evidence.conflicts.length > 0) {
+    lines.push(
+      `Sources DISAGREE on these. If your question turns on one of them, the criteria must name which source settles it:\n${evidence.conflicts
+        .map(
+          (conflict) =>
+            `- ${conflict.factKey}: ${conflict.claims
+              .map((claim) => `${claim.sourceName} says ${String(claim.value)}`)
+              .join('; ')}`,
+        )
+        .join('\n')}`,
+    );
+  }
+
+  return lines.join('\n\n');
 }
 
 function describe(template: MarketTemplate): string {

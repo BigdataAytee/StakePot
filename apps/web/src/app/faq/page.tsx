@@ -1,6 +1,7 @@
 import Link from 'next/link';
 
 import { SiteFooter } from '@/components/site-footer';
+import { PageShell } from '@/components/market/page-shell';
 
 /**
  * The questions people actually ask before they stake.
@@ -24,7 +25,7 @@ export const metadata = {
 const FAQS = [
   {
     q: 'Is this gambling?',
-    a: "It is a prediction market. You are not betting against a house — there is no house on the other side of your trade and no edge built into the price. Everyone stakes into one pot, and when the event resolves the pot is split among whoever was right. StakeAm's income is a fee on the pot, stated on every market before you trade.",
+    a: "It is a prediction market. You are not trading against a house — there is no house on the other side of your trade and no edge built into the price. Everyone stakes into one pot, and when the event settles the pot is split among whoever was right. StakeAm's income is a fee on the pot, stated on every market before you trade.",
   },
   {
     q: 'Is the money real?',
@@ -80,7 +81,7 @@ export default function FaqPage() {
   };
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-10">
+    <PageShell width="narrow">
       {/* Same source as the visible list below, so the two cannot disagree. */}
       <script
         type="application/ld+json"
@@ -124,6 +125,6 @@ export default function FaqPage() {
       </p>
 
       <SiteFooter />
-    </main>
+    </PageShell>
   );
 }

@@ -9,7 +9,9 @@ import { AdminAuditService } from '../audit/admin-audit.service';
 import { ApprovalsService } from '../approvals/approvals.service';
 import { AuthService } from '../auth/auth.service';
 import { TotpService } from '../auth/totp.service';
+import { SeedService } from '../community/seed.service';
 import { MarketVoidService } from '../community/void.service';
+import { CreatorService } from '../creator/creator.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { EmailSender } from '../notifications/email.sender';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -19,6 +21,7 @@ import { PlatformConfigService } from '../platform-config/platform-config.servic
 import type { PrismaService } from '../prisma/prisma.service';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { RgService } from '../rg/rg.service';
+import { testOrderBook } from '../testing/order-book';
 import { resetDatabase } from '../testing/reset';
 import { ResolutionService } from '../trade/resolution.service';
 import { TradeService } from '../trade/trade.service';
@@ -81,18 +84,39 @@ describe.skipIf(!TEST_DATABASE_URL)('leaderboards and prizes (integration)', () 
       config,
       { publish: async () => undefined } as unknown as PriceCacheService,
       new RgService(prisma, config),
+      testOrderBook(prisma, ledger, wallet),
     );
     payouts = new ResolutionService(prisma, ledger, config);
     leaderboards = new LeaderboardService(prisma, config, analytics);
     prizes = new PrizeService(prisma, config, wallet, notifications, audit, analytics);
+    const voids = new MarketVoidService(ledger);
     approvals = new ApprovalsService(
       prisma,
       ledger,
-      new MarketVoidService(ledger),
+      voids,
       config,
       audit,
       new TotpService(prisma),
       prizes,
+      // The approvals service executes a LIVE-mode platform seed through the
+      // one place a symmetric top-up happens. This board never proposes one;
+      // it is wired because the constructor is the contract.
+      new SeedService(
+        prisma,
+        config,
+        wallet,
+        voids,
+        new CreatorService(
+          prisma,
+          config,
+          new NotificationsService(
+            prisma,
+            new PushSender(prisma),
+            new EmailSender(),
+            new SmsSender(),
+          ),
+        ),
+      ),
     );
   });
 
@@ -273,7 +297,12 @@ describe.skipIf(!TEST_DATABASE_URL)('leaderboards and prizes (integration)', () 
     await settledMarket({
       label: 'a tiered thing',
       stakes: [
-        { userId: unverified, outcome: 0, amount: '20000' },
+        // Inside §2.1's Tier 0 exposure cap, because that is now enforced and
+        // an unverified account cannot hold 20,000 across open markets. The
+        // amount does not weaken the assertion: `beforeEach` drops
+        // `leaderboard_min_staked_profit` to 1, so tier is the only thing
+        // keeping this account off the board — which is what the test is for.
+        { userId: unverified, outcome: 0, amount: '4000' },
         { userId: verified, outcome: 1, amount: '20000' },
       ],
       winner: 0,

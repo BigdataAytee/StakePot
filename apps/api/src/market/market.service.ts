@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { freezeAtFor } from '@stakeam/rules';
 import type { Market, MarketShelf, Outcome } from '@prisma/client';
 
 import { PlatformConfigService } from '../platform-config/platform-config.service';
@@ -72,6 +73,10 @@ export class MarketService {
         criteriaJson: input.criteria,
         edgeCasesJson: input.edgeCases,
         eventDate: input.eventDate,
+        // Rule 22, on every creation path. A market whose freeze time is only
+        // implied by its event date is a market whose countdown and money path
+        // can disagree by the width of the buffer.
+        freezeAt: freezeAtFor(input.eventDate, await this.config.get('freeze_buffer_seconds')),
         voidDate: input.voidDate,
         liquidityParam: new Prisma.Decimal(input.liquidityParam),
         feeBps,

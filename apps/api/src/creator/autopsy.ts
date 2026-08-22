@@ -34,6 +34,21 @@ export interface AutopsyFacts {
   /** Why it voided, when it did — the void reason already on the record. */
   readonly voidReason: string | null;
   readonly creatorFeeEarned: number;
+  /**
+   * Part 5 monitoring flags that fired while the market was live, cleared ones
+   * included (see `MarketHealthFlag`).
+   *
+   * Rule 43 asks the post-mortem for "volume, final split, disputes, what
+   * you'd change", and the fourth of those is the one the other three cannot
+   * supply. A market that settled 55/45 looks healthy on its final split even
+   * if it sat at 85/15 for a week and only converged on the day — the flag that
+   * fired and cleared is the whole difference, and it is the part a creator can
+   * actually act on next time.
+   *
+   * Optional because it is a later addition and the older callers computing an
+   * autopsy from facts alone are still correct without it.
+   */
+  readonly warnings?: readonly { readonly rule: string; readonly message: string }[];
 }
 
 export interface AutopsyRules {
@@ -67,6 +82,8 @@ export interface Autopsy {
     readonly thin: boolean;
     readonly poorConversion: boolean;
     readonly disputed: boolean;
+    /** Checklist rule numbers whose Part 5 flag fired at any point. */
+    readonly flaggedRules: readonly string[];
   };
 }
 
@@ -101,8 +118,17 @@ export function autopsyFor(facts: AutopsyFacts, rules: AutopsyRules): Autopsy {
     worked.push('It settled with no dispute — that is a clean resolution on your record.');
   }
 
+  const warnings = facts.warnings ?? [];
+  const flaggedRules = warnings.map((warning) => warning.rule);
+
   // One tip, most-important first. Order matters more than the wording: the
   // thing that killed the market is the thing to say.
+  //
+  // The monitoring flags sit between "it was disputed" and "it was lopsided",
+  // and they are checked before the final split for a reason: a market that was
+  // flagged at 48 hours and settled balanced anyway has already had its problem
+  // named while it was still fixable, and repeating the split verdict would
+  // teach the creator nothing they were not told at the time.
   let tip: string | null = null;
   if (facts.kind === 'voided') {
     tip =
@@ -112,6 +138,12 @@ export function autopsyFor(facts: AutopsyFacts, rules: AutopsyRules): Autopsy {
   } else if (facts.disputed) {
     tip =
       'This one was disputed, which means the settlement criteria left room to argue. Name the exact field on the source page — the figure, the table, the announcement — not just the site.';
+  } else if (flaggedRules.includes('36')) {
+    tip =
+      'One account held most of this market early on, which sets the price instead of discovering it. Seed both sides, or open it where the other side of the argument already is — a price one person made is a price nobody else wants to take.';
+  } else if (flaggedRules.includes('39')) {
+    tip =
+      'The result was out well before this was proposed. Have the source page open on the day and settle within hours — slow settlement costs more trust than a wrong-looking question does.';
   } else if (lopsided) {
     tip = `The winning side ended on ${Math.round(
       (split ?? 0) * 100,
@@ -140,6 +172,13 @@ export function autopsyFor(facts: AutopsyFacts, rules: AutopsyRules): Autopsy {
     summary,
     worked,
     tip,
-    signals: { balanced, lopsided, thin, poorConversion, disputed: facts.disputed },
+    signals: {
+      balanced,
+      lopsided,
+      thin,
+      poorConversion,
+      disputed: facts.disputed,
+      flaggedRules,
+    },
   };
 }

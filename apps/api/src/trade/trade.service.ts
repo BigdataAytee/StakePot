@@ -1,15 +1,21 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { Trade } from '@prisma/client';
-import { Decimal, buy, sell, type TradeResult } from '@stakeam/engine';
+import { Decimal, buy, priceOf, sell, type TradeResult } from '@stakeam/engine';
+import { frozenMessage, isTradingFrozen } from '@stakeam/rules';
 
 import { LedgerService, type Tx } from '../ledger/ledger.service';
+import { OrderBookService } from '../orderbook/orderbook.service';
+import { averageKobo, routeFor, tightenToPot, withinLimit } from '../orderbook/routing';
+import { isValidPrice, sharesFor, KOBO_PER_SHARE } from '../orderbook/matching';
 import { release } from '../ledger/posting';
 import { indexOf, outcomeAt, toEngineState } from '../market/market-state';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
+import { impactOf, largestWithinImpact } from './max-impact';
 import { PrismaService } from '../prisma/prisma.service';
 import { PriceCacheService } from '../realtime/price-cache.service';
 import { RgService } from '../rg/rg.service';
+import { checkTierCap } from './tier-cap';
 import { WalletService } from '../wallet/wallet.service';
 
 export class TradeError extends Error {
@@ -27,6 +33,44 @@ export interface BuyInput {
   readonly amount: string;
   /** Client-generated idempotency key (§11). A retry must never double-fill. */
   readonly requestId: string;
+  /**
+   * The most this trader will pay per share, in kobo, or absent for "whatever
+   * it costs".
+   *
+   * A limit is a promise the platform keeps in both directions: no leg fills
+   * above it — not the book, and not the pot — and whatever cannot be filled
+   * inside it rests on the book rather than being quietly filled outside it.
+   */
+  readonly limitKobo?: number | null;
+}
+
+/**
+ * What one request actually did.
+ *
+ * A single trade can now be three things at once: part matched against people,
+ * part filled from the pot, part left resting. The caller is told about all
+ * three because the trader has to be — a matched share pays an exact ₦1 and a
+ * pot share pays a share of a pot, and a screen that reported one number for
+ * both would be describing neither.
+ */
+export interface FillReport {
+  /** The pot leg, if any. Null when the request was fully matched or rested. */
+  readonly trade: Trade | null;
+  /** The matched leg, if any. */
+  readonly matched: {
+    readonly shares: string;
+    readonly cost: string;
+    readonly fills: number;
+    /** ₦1 a share, known now — not an estimate. */
+    readonly exactPayout: string;
+  } | null;
+  /** What is now resting on the book, if anything. */
+  readonly resting: {
+    readonly orderId: string;
+    readonly shares: string;
+    readonly priceKobo: number;
+    readonly locked: string;
+  } | null;
 }
 
 export interface SellInput {
@@ -53,6 +97,9 @@ const dec = (v: Decimal | Decimal): Prisma.Decimal => new Prisma.Decimal(v.toStr
  * which serialises writers per market while leaving different markets fully
  * parallel — the same property, enforced one layer down.
  */
+/** A probability as the percentage a trader reads on the button. */
+const asPercent = (price: Decimal): string => `${price.times(100).toDecimalPlaces(1).toString()}%`;
+
 @Injectable()
 export class TradeService {
   constructor(
@@ -62,6 +109,7 @@ export class TradeService {
     private readonly config: PlatformConfigService,
     private readonly prices: PriceCacheService,
     private readonly rg: RgService,
+    private readonly book: OrderBookService,
   ) {}
 
   /**
@@ -87,44 +135,314 @@ export class TradeService {
       .catch(() => undefined);
   }
 
-  async buy(input: BuyInput): Promise<Trade> {
+  /**
+   * How much an unverified account is allowed to have at risk.
+   *
+   * Measured against escrow rather than against this one trade: the cap is on
+   * exposure, not on ticket size, or ten trades of a tenth the size would walk
+   * straight through it. Tier 1 and above are uncapped — proving a contact is
+   * exactly what lifts it, which is the incentive §2.1 is built around.
+   */
+  private async assertWithinTierCap(tx: Tx, userId: string, amount: Decimal): Promise<void> {
+    const user = await tx.user.findUnique({ where: { id: userId }, select: { tier: true } });
+    if (user === null) return;
+    const cap = new Decimal((await this.config.get('tier0_stake_cap_spc')).toString());
+
+    // Read through the transaction, not through the wallet service: this runs
+    // inside the per-market lock, and a balance fetched outside it could be
+    // stale by the time the cap is compared against it.
+    const wallets = await tx.wallet.findMany({ where: { userId }, select: { escrowed: true } });
+    const escrowed = wallets.reduce(
+      (total, row) => total.plus(new Decimal(row.escrowed.toString())),
+      new Decimal(0),
+    );
+
+    if (!checkTierCap({ tier: user.tier, escrowed, amount, cap }).allowed) {
+      throw new TradeError(
+        `unverified accounts can hold up to ${cap.toString()} SPC across open markets — ` +
+          `you have ${escrowed.toString()} at stake. Verify your email or phone to lift this.`,
+      );
+    }
+  }
+
+  /**
+   * A buy, routed through whatever will fill it (§2.3 plus the matching layer).
+   *
+   * The order is deliberate and the spec's:
+   *
+   *   1. **The book**, at or better than the trader's price. A peer-to-peer
+   *      fill escrows ₦1 a share between two people and pays it to whichever
+   *      of them is right — the platform holds neither capital nor risk, and
+   *      the payout is exact and known the moment it fills.
+   *   2. **The pot**, at the formula price, for whatever the book could not
+   *      cover. Unchanged from before this layer existed: same engine, same
+   *      identity, same estimate-not-promise payout.
+   *   3. **The book again**, resting the rest — but only when the trader named
+   *      a price. Without a limit there is nothing to rest *at*; with one, the
+   *      remainder waits at it rather than being filled outside it.
+   *
+   * A limit binds both legs. A pot fill whose *average* price exceeds the limit
+   * is refused and rested instead — average and not marginal, because a size
+   * that walks the curve pays more than the number on the button, and a limit
+   * that only checked the button would let a fill land above its own limit.
+   *
+   * All three legs are one transaction under one row lock. Matching did not get
+   * a concurrency path of its own: it runs where trades already run, inside the
+   * per-market queue, under the same idempotency key.
+   */
+  async buy(input: BuyInput): Promise<FillReport> {
     const amount = new Decimal(input.amount);
     if (amount.lte(0)) throw new TradeError('amount must be greater than zero');
 
+    const limit = input.limitKobo ?? null;
+    if (limit !== null && !isValidPrice(limit)) {
+      throw new TradeError('a limit price is a whole number of kobo between 1 and 99');
+    }
+
+    // Read before the transaction opens: a flag is a cached read and holding
+    // the market's row lock while it happens would put an operator's kill
+    // switch on the critical path of every trade.
+    const routed = await this.book.enabledFor(input.marketId);
+
     const committed = await this.prisma.$transaction(async (tx) => {
-      const existing = await this.replay(tx, input.requestId);
-      if (existing) return existing;
+      const replayed = await this.replayReport(tx, input.requestId);
+      if (replayed !== null) return { report: replayed, broadcast: null };
 
       const loaded = await this.lockAndLoad(tx, input.marketId, input.userId);
       const index = indexOf(loaded, input.outcomeId);
 
-      // §2.12's limits are checked here rather than at the edge: this is the one
-      // path money can leave a user's balance through, so a self-exclusion that
-      // holds here holds everywhere, including on any endpoint added later.
+      // §2.12's limits and §2.1's Tier 0 cap, applied once to the whole amount
+      // before any leg runs. Both are limits on *exposure*, and a request that
+      // matches half and rests half has added all of it — checking each leg
+      // separately would count the same money twice and refuse a trade that is
+      // inside the limit.
       await this.rg.assertMayStake(input.userId, amount);
+      await this.assertWithinTierCap(tx, input.userId, amount);
 
-      // Escrow first: a trade the user cannot fund must not move the market.
-      await this.wallet.escrow({
-        userId: input.userId,
-        marketId: input.marketId,
-        amount,
-        type: 'trade_buy',
-        ref: input.requestId,
-        tx,
-      });
+      const route = routed
+        ? routeFor({ outcomes: loaded.outcomes, outcomeId: input.outcomeId, limitKobo: limit })
+        : null;
 
-      const result = buy(loaded.state, index, amount.toString());
-      await this.persist(tx, input, loaded, index, result, 'buy', amount, new Decimal(0));
-      const trade = await this.recordTrade(tx, input, index, result, 'buy', amount, new Decimal(0));
+      let budget = amount;
+      let matched: FillReport['matched'] = null;
 
-      return { trade, loaded, result };
+      if (route !== null) {
+        /*
+          The pot's current price is a ceiling on what the book may charge.
+
+          Without it, "book first" fills a taker at a resting price that is
+          worse than the curve sitting right beside it — the pot quotes both
+          sides with no spread, so a level above its price is strictly worse
+          for the taker and strictly better for whoever rested it. See
+          `tightenToPot`: this one line is what stops the new venue being a
+          worse deal than the old one.
+        */
+        // From the engine's own state, not from `outcomes.priceCurrent`.
+        //
+        // The column is a cache the trade path writes after every fill, so
+        // normally the two agree — but this number decides what the book is
+        // allowed to charge, and a cache that is stale for any reason (a
+        // restored backup, a fixture, a migration that touched prices) would
+        // silently move that ceiling. The share vector is the truth.
+        const potKobo = priceOf(
+          loaded.state.q,
+          loaded.state.liquidity,
+          indexOf(loaded, route.bookOutcomeId),
+        )
+          .times(KOBO_PER_SHARE)
+          .toNumber();
+
+        const result = await this.book.match(tx, {
+          marketId: input.marketId,
+          outcomeId: route.bookOutcomeId,
+          userId: input.userId,
+          side: route.side,
+          limitKobo: tightenToPot(route.side, route.limitKobo, potKobo),
+          budget,
+          requestId: input.requestId,
+        });
+        if (result.fills.length > 0) {
+          matched = {
+            shares: result.shares.toString(),
+            cost: result.spent.toString(),
+            fills: result.fills.length,
+            // ₦1 a share. Not a projection of a pot that has not finished
+            // filling — the money is already escrowed, by two people.
+            exactPayout: result.shares.toString(),
+          };
+        }
+        budget = result.remainingBudget;
+      }
+
+      let trade: Trade | null = null;
+      let potResult: TradeResult | null = null;
+
+      if (budget.gt(0)) {
+        const trial = buy(loaded.state, index, budget.toString());
+        if (withinLimit(averageKobo(budget, new Decimal(trial.shares.toString())), limit)) {
+          // Escrow first: a trade the user cannot fund must not move the market.
+          //
+          // And before the impact ceiling below, deliberately. Both refuse the
+          // same trade, but only one of them is about the person doing it: told
+          // "that would move the price too far" when the real problem is an
+          // empty wallet, somebody goes looking for a smaller stake that will
+          // also fail.
+          await this.wallet.escrow({
+            userId: input.userId,
+            marketId: input.marketId,
+            amount: budget,
+            type: 'trade_buy',
+            ref: input.requestId,
+            tx,
+          });
+
+          /*
+            The max-impact ceiling (§E, and the other half of checklist rule 24).
+
+            A price is a claim about what a crowd believes, and a single stake
+            large enough to reprice the market on its own is not that claim —
+            it is one person's cheque wearing the crowd's clothes, and everyone
+            who trades on the number afterwards is reading something that was
+            bought rather than agreed.
+
+            Only the pot leg. A matched fill moves no formula price at all, and
+            a resting order moves nothing until somebody agrees with it — which
+            is exactly the remedy offered below: the same money, at a price a
+            counterparty has to accept.
+
+            The throw rolls the escrow back with the rest of the transaction.
+          */
+          const impact = impactOf({
+            state: loaded.state,
+            index,
+            amount: budget,
+            ceilingBps: Math.round(Number(await this.config.get('max_impact_bps'))),
+          });
+          if (!impact.allowed) {
+            const most = largestWithinImpact({
+              state: loaded.state,
+              index,
+              ceilingBps: impact.ceilingBps,
+              upperBound: budget,
+            });
+            throw new TradeError(
+              `that would move the price from ${asPercent(impact.priceBefore)} to ` +
+                `${asPercent(impact.priceAfter)} on its own. The most this market takes in ` +
+                `one trade is ${most.toDecimalPlaces(0, Decimal.ROUND_DOWN).toString()} — ` +
+                'stake that, or set a limit price and let somebody meet you there.',
+            );
+          }
+
+          await this.persist(tx, input, loaded, index, trial, 'buy', budget, new Decimal(0));
+          trade = await this.recordTrade(tx, input, index, trial, 'buy', budget, new Decimal(0));
+          potResult = trial;
+          budget = new Decimal(0);
+        }
+      }
+
+      let resting: FillReport['resting'] = null;
+      if (budget.gt(0) && route !== null && route.limitKobo !== null) {
+        const shares = sharesFor(budget, route.side, route.limitKobo);
+        if (shares.gt(0)) {
+          const order = await this.book.place(tx, {
+            marketId: input.marketId,
+            outcomeId: route.bookOutcomeId,
+            userId: input.userId,
+            side: route.side,
+            priceKobo: route.limitKobo,
+            shares,
+            requestId: input.requestId,
+          });
+          resting = {
+            orderId: order.id,
+            shares: order.shares.toString(),
+            priceKobo: order.priceKobo,
+            locked: order.locked.toString(),
+          };
+        }
+      }
+
+      if (matched === null && trade === null && resting === null) {
+        // Every route refused. Saying nothing and returning an empty fill would
+        // leave somebody staring at an unchanged balance wondering whether the
+        // button worked.
+        throw new TradeError(
+          limit === null
+            ? 'nothing could be filled right now — try again in a moment'
+            : `nothing filled at ${limit}k or better, and the remainder was too small to rest`,
+        );
+      }
+
+      return {
+        report: { trade, matched, resting },
+        // Only a pot fill moves the formula price, so only a pot fill has a
+        // tick to publish. A purely matched trade changes what people hold and
+        // not what the curve says — the book's own price is broadcast from the
+        // depth endpoint's own refresh, not down the price feed, because a tick
+        // on that channel means "the pot moved".
+        broadcast: potResult === null ? null : { loaded, result: potResult },
+      };
     });
 
-    if ('loaded' in committed) {
-      await this.broadcast(input.marketId, committed.loaded, committed.result);
-      return committed.trade;
+    if (committed.broadcast !== null) {
+      await this.broadcast(input.marketId, committed.broadcast.loaded, committed.broadcast.result);
     }
-    return committed;
+    return committed.report;
+  }
+
+  /**
+   * What a repeated request already did, across all three legs.
+   *
+   * Idempotency used to be one unique column on one table, because a request
+   * was one row. It is now up to three — a pot trade, a set of matched fills,
+   * and a resting order — and a retry has to return the same answer as the
+   * first attempt for all of them. Reconstructed rather than cached: a cached
+   * report is a fourth thing that can be wrong.
+   */
+  private async replayReport(tx: Tx, requestId: string): Promise<FillReport | null> {
+    const [trade, fills, order] = await Promise.all([
+      tx.trade.findUnique({ where: { requestId } }),
+      tx.orderFill.findMany({ where: { requestId } }),
+      tx.order.findUnique({ where: { requestId } }),
+    ]);
+
+    if (trade === null && fills.length === 0 && order === null) return null;
+
+    const shares = fills.reduce(
+      (total, fill) => total.plus(new Decimal(fill.shares.toString())),
+      new Decimal(0),
+    );
+
+    return {
+      trade,
+      matched:
+        fills.length === 0
+          ? null
+          : {
+              shares: shares.toString(),
+              // Recomputed from the fills rather than stored: each fill knows
+              // its own price and size, and a total column would be a second
+              // place for the same fact to be wrong.
+              cost: fills
+                .reduce((total, fill) => {
+                  const size = new Decimal(fill.shares.toString());
+                  const long = size.times(fill.priceKobo).div(KOBO_PER_SHARE);
+                  return total.plus(fill.takerSide === 'buy' ? long : size.minus(long));
+                }, new Decimal(0))
+                .toString(),
+              fills: fills.length,
+              exactPayout: shares.toString(),
+            },
+      resting:
+        order === null || order.state !== 'open'
+          ? null
+          : {
+              orderId: order.id,
+              shares: order.shares.toString(),
+              priceKobo: order.priceKobo,
+              locked: order.locked.toString(),
+            },
+    };
   }
 
   /**
@@ -134,7 +452,7 @@ export class TradeService {
    * and credited to `platform_fees`. Taking it out of the pot instead would
    * break `pot === C(q) − C(q0)`.
    */
-  async sell(input: SellInput): Promise<Trade> {
+  async sell(input: SellInput): Promise<FillReport> {
     const shares = new Decimal(input.shares);
     if (shares.lte(0)) throw new TradeError('shares must be greater than zero');
 
@@ -213,9 +531,11 @@ export class TradeService {
 
     if ('loaded' in committed) {
       await this.broadcast(input.marketId, committed.loaded, committed.result);
-      return committed.trade;
+      return { trade: committed.trade, matched: null, resting: null };
     }
-    return committed;
+    // A replay. Reported in the same shape as a fresh fill so the caller has
+    // one thing to read rather than two.
+    return { trade: committed, matched: null, resting: null };
   }
 
   /** A repeated request_id returns the original fill rather than trading again. */
@@ -237,17 +557,31 @@ export class TradeService {
       where: { id: marketId },
       include: { outcomes: { orderBy: { ordinal: 'asc' } } },
     });
+    // §2.3 and checklist rule 22, checked here and not only in the job that
+    // flips the state.
+    //
+    // Two things make this the load-bearing check rather than a second opinion.
+    // The sweep runs on a schedule and a schedule can be late, so a market can
+    // be past its freeze time and still read `active`. And this runs *inside*
+    // the transaction, after the row lock, at execution time — so a trade that
+    // was submitted before the freeze and waited its turn behind other trades
+    // is refused on the way out, which is the case a check at the endpoint
+    // would wave through.
+    //
+    // It blocks sells as well as buys because `lockAndLoad` is the one path
+    // into both. A half-freeze would be worse than none: it would let somebody
+    // who has seen the score dump a losing position onto somebody who has not.
+    if (
+      isTradingFrozen({
+        freezeAt: market.freezeAt,
+        eventDate: market.eventDate,
+        state: market.state,
+      })
+    ) {
+      throw new TradeError(frozenMessage(market.freezeReason));
+    }
     if (market.state !== 'active') {
       throw new TradeError(`market is ${market.state} — trading is closed`);
-    }
-
-    // §7.2's countdown is a promise: trading freezes when the event starts. The
-    // job that flips the market's state runs on a sweep and can be late, so the
-    // money path checks the clock itself rather than trusting the flag — a trade
-    // placed after kick-off by someone watching the match is the exact abuse
-    // this closes.
-    if (market.eventDate.getTime() <= Date.now()) {
-      throw new TradeError('this market froze when the event started');
     }
 
     // §2.5: "Creator cannot place directional stakes in own market (enforced at

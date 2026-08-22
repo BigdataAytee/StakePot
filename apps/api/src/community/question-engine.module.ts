@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 
+import { IntelModule } from '../intel/intel.module';
+import { MarketHealthModule } from '../market/health.module';
 import { AnthropicQuestionModel } from './anthropic-question-model';
 import { QUESTION_MODEL, QuestionEngineService } from './question-engine.service';
 
@@ -14,6 +16,7 @@ import { QUESTION_MODEL, QuestionEngineService } from './question-engine.service
  * keeps working.
  */
 @Module({
+  imports: [IntelModule, MarketHealthModule],
   providers: [
     QuestionEngineService,
     { provide: QUESTION_MODEL, useFactory: () => AnthropicQuestionModel.create() },

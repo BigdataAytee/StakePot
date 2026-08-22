@@ -11,8 +11,20 @@ import { z } from 'zod';
 export const CONFIG_SCHEMAS = {
   // Tiering and onboarding (§2.1)
   starter_balance_spc: z.number().nonnegative(),
+  /**
+   * §2.17's referral reward, paid to the referrer once the referred account
+   * verifies and stakes. Zero turns the programme off without removing it,
+   * which is what you want the moment a farm is discovered.
+   */
+  referral_reward_spc: z.number().nonnegative(),
   signup_bonus_spc: z.number().nonnegative(),
   tier0_expiry_days: z.number().int().positive(),
+  /**
+   * The most an unverified (Tier 0) account may hold at risk across all open
+   * markets — §2.1's "starter-balance trading capped at Tier 0". Verifying a
+   * contact lifts it entirely.
+   */
+  tier0_stake_cap_spc: z.number().nonnegative(),
   kyc_required_at: z.enum(['deposit', 'withdrawal']),
 
   // Contact verification (§2.1)
@@ -50,6 +62,16 @@ export const CONFIG_SCHEMAS = {
   syndicate_max_sponsors: z.number().int().positive(),
   syndicate_round_hours: z.number().int().positive(),
 
+  /**
+   * How far before the event trading stops (§2.3, checklist rule 22).
+   *
+   * Not zero, and the reason is mechanical rather than cautious: a trade takes
+   * time to travel, queue behind the market's row lock and execute, so freezing
+   * exactly at kick-off lets a request sent a moment before execute a moment
+   * after — with the whistle already blown.
+   */
+  freeze_buffer_seconds: z.number().int().nonnegative(),
+
   // Resolution, disputes and config governance (§2.6, §6.4b)
   /** How long participants have to dispute a proposed resolution. */
   dispute_window_hours: z.number().int().positive(),
@@ -68,6 +90,10 @@ export const CONFIG_SCHEMAS = {
   official_shelf_slots: z.number().int().positive(),
   /** What the platform puts into each pool when it opens an official market. */
   official_seed_per_outcome_spc: z.number().positive(),
+  /// The most one admin top-up may add per outcome. A ceiling rather than an
+  /// approval: raising it is itself a config change, which is four-eyed and
+  /// delayed (§6.8), so the slow door is where the real control sits.
+  official_seed_max_per_outcome_spc: z.number().positive(),
 
   // Support desk and responsible gambling (§2.12, §6.7)
   /** Hours until a ticket is late, per category. */
@@ -147,6 +173,31 @@ export const CONFIG_SCHEMAS = {
   abuse_cluster_accounts: z.number().int().positive(),
   /** The nightly audit's allowance on cached aggregates. Never on the ledger. */
   audit_cache_tolerance_spc: z.number().nonnegative(),
+
+  // Platform liquidity (§2.16). Both tools read these; neither has its own copy.
+  /**
+   * The config half of the LIVE-mode guard.
+   *
+   * The other half is the `liquidity-live` feature flag, and both must be true.
+   * Two switches rather than one because this is the difference between a tool
+   * that spends points and a tool that spends naira, and a single boolean left
+   * on after a test is the whole failure mode.
+   */
+  liquidity_live_enabled: z.boolean(),
+  /** No single market's maker may be given more than this, whatever is typed. */
+  liquidity_bot_max_budget_spc: z.number().positive(),
+  /** Resting depth on a side above which the market does not need a maker. */
+  liquidity_bot_depth_stop_spc: z.number().positive(),
+  /** How close to the freeze the maker stops quoting, in minutes. */
+  liquidity_bot_stop_before_freeze_minutes: z.number().int().positive(),
+  /**
+   * How far one trade may move a pot price, in basis points.
+   *
+   * The max-impact ceiling. It applies to the pot leg of every trade — a
+   * market's price is a claim about what people believe, and a single stake
+   * large enough to reprice it on its own is not that claim.
+   */
+  max_impact_bps: z.number().int().positive(),
 
   // Financial controls (§2.10)
   reconciliation_tolerance_spc: z.number().nonnegative(),

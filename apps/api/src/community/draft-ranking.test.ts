@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  byQueuePriority,
   CATALOGUE_SLOT_NAMES,
   OFFICIAL_SHELF_SIZE,
   balanceQuality,
@@ -101,5 +102,43 @@ describe('duplicate detection', () => {
         'Will the CBN hold the rate at the next meeting?',
       ),
     ).toBeLessThan(0.2);
+  });
+});
+
+describe('queue order (§6.2)', () => {
+  const row = (over: Partial<Parameters<typeof byQueuePriority>[0]>) => ({
+    state: 'suggested',
+    firstMarket: false,
+    score: 0.5,
+    ...over,
+  });
+
+  it('puts a first-time creator ahead of a better-scored regular', () => {
+    const queue = [
+      row({ score: 0.95 }),
+      row({ firstMarket: true, score: 0.2 }),
+      row({ score: 0.7 }),
+    ].sort(byQueuePriority);
+
+    expect(queue[0]?.firstMarket).toBe(true);
+    expect(queue[1]?.score).toBe(0.95);
+  });
+
+  it('still ranks first markets among themselves by score', () => {
+    const queue = [
+      row({ firstMarket: true, score: 0.3 }),
+      row({ firstMarket: true, score: 0.8 }),
+    ].sort(byQueuePriority);
+
+    expect(queue.map((entry) => entry.score)).toEqual([0.8, 0.3]);
+  });
+
+  it('keeps refusals last, even a first-timer one', () => {
+    const queue = [
+      row({ state: 'rejected', firstMarket: true, score: 1 }),
+      row({ score: 0.1 }),
+    ].sort(byQueuePriority);
+
+    expect(queue[0]?.state).toBe('suggested');
   });
 });

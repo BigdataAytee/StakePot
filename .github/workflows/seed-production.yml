@@ -1,0 +1,109 @@
+name: Seed production catalogue
+
+# Run scripts/deploy/seed-markets.sql against the deployed database.
+#
+# This session cannot reach the database — the sandbox refuses outbound 5432 —
+# and the credential cannot live in this file, because the repository is public.
+# So it comes from an encrypted repository secret, which GitHub masks in the
+# logs, and this workflow is the only thing that reads it.
+#
+#   Settings → Secrets and variables → Actions → New repository secret
+#   Name:  PROD_DATABASE_URL
+#   Value: the external connection string for the Render database
+#
+# The script is idempotent and wrapped in a transaction: it inserts the six
+# launch markets if they are absent, leaves them alone if present, and rolls
+# back entirely if any statement fails. Nothing here deletes or updates.
+on:
+  workflow_dispatch:
+  # Runs when this file itself changes, which is a deliberate act — there is no
+  # path by which an unrelated commit triggers a write to production.
+  push:
+    paths: ['.github/workflows/seed-production.yml']
+
+jobs:
+  seed:
+    name: open the launch catalogue
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the secret is set
+        id: guard
+        env:
+          URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          if [ -z "${URL:-}" ]; then
+            echo "PROD_DATABASE_URL is not set."
+            echo "Settings → Secrets and variables → Actions → New repository secret"
+            echo "Name it PROD_DATABASE_URL and paste the external connection string."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Before
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          PGPASSWORD_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          psql "$PGPASSWORD_URL" -v ON_ERROR_STOP=1 \
+            -c "select current_database() as db, count(*) as markets_before from markets;"
+
+      # Not piped anywhere: psql exits 3 when ON_ERROR_STOP trips, and a pipe
+      # would hand the step the exit code of `tail` instead — which is how a
+      # failing seed reports success.
+      - name: Seed
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          PGPASSWORD_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: psql "$PGPASSWORD_URL" -f scripts/deploy/seed-markets.sql
+
+      - name: After
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          PGPASSWORD_URL: ${{ secrets.PROD_DATABASE_URL }}
+        run: |
+          psql "$PGPASSWORD_URL" -v ON_ERROR_STOP=1 -c \
+            "select shelf, state, count(*) from markets group by shelf, state order by shelf;"
+          psql "$PGPASSWORD_URL" -v ON_ERROR_STOP=1 -tAc \
+            "select count(*) from markets" | tee /tmp/count
+          test "$(cat /tmp/count)" -ge 6 || { echo "::error::fewer than six markets after seeding"; exit 1; }
+
+      # Promotes an existing account to staff. Optional: skipped when the secret
+      # is absent, so the seed does not depend on it.
+      #
+      # The address is a secret rather than a literal because this repository is
+      # public and it is somebody's personal email. It promotes an account, it
+      # does not create one — sign up through the app first, and the script says
+      # so plainly if it finds nobody.
+      #
+      # The emptiness check is in the shell rather than in `if:`, because the
+      # `secrets` context is not available to a step conditional — a workflow
+      # using it there fails to parse, and only GitHub validates expressions, so
+      # a local YAML check passes it happily.
+      - name: Promote the first admin
+        if: steps.guard.outputs.ready == 'true'
+        env:
+          PGPASSWORD_URL: ${{ secrets.PROD_DATABASE_URL }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+        run: |
+          if [ -z "${ADMIN_EMAIL:-}" ]; then
+            echo "ADMIN_EMAIL is not set — skipping the promotion."
+            exit 0
+          fi
+          psql "$PGPASSWORD_URL" -v ON_ERROR_STOP=1 \
+            -v email="$ADMIN_EMAIL" -v role=admin \
+            -f scripts/deploy/promote-admin.sql
+
+      - name: What the live API returns
+        if: steps.guard.outputs.ready == 'true'
+        run: |
+          body=$(curl -sS -m 90 https://stakeam-api.onrender.com/markets)
+          # Count markets, not every `id` in the payload: each market carries its
+          # outcomes, so counting `"id"` reported eighteen for six markets and
+          # would have been believed next time.
+          echo "markets from the API: $(echo "$body" | grep -o '"shelf":' | wc -l)"
+          echo "questions:"
+          echo "$body" | grep -o '"question":"[^"]*"' | sed 's/"question":"/  · /; s/"$//'

@@ -1,9 +1,18 @@
-import { Controller, Get, NotFoundException, Param, Query } from '@nestjs/common';
+import { Controller, Get, NotFoundException, Param, Query, Req, UseGuards } from '@nestjs/common';
+import { Decimal } from '@stakeam/engine';
+
+import { OptionalJwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { Prisma } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import { subHours } from 'date-fns';
 
+import { sourceWatchOf } from '../intel/source-watch';
 import { PriceCacheService } from '../realtime/price-cache.service';
+import { PriceWindowService } from '../market/price-window.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { PULSE_WINDOW_MINUTES, pulseOf } from './pulse';
+import { newestFirst, readMatchedFills } from '../orderbook/activity';
+import { KOBO_PER_SHARE } from '../orderbook/matching';
 
 /** Timeframes the §7.2 chart offers: 1H · 6H · 1D · 1W · ALL. */
 const TIMEFRAME_HOURS: Record<string, number | null> = {
@@ -15,14 +24,34 @@ const TIMEFRAME_HOURS: Record<string, number | null> = {
 };
 
 /**
+ * How wide an activity bar is, per timeframe.
+ *
+ * The same grid the chart's candles use, so the bars underneath the line queue
+ * up with it rather than sitting at their own offsets. Kept here rather than
+ * imported from the web app because the bucketing is done in SQL: a market
+ * with fifty thousand trades in a week must not send fifty thousand rows to a
+ * browser so the browser can count them.
+ */
+const FLOW_BUCKET_SECONDS: Record<string, number> = {
+  '1H': 60,
+  '6H': 5 * 60,
+  '1D': 15 * 60,
+  '1W': 2 * 60 * 60,
+  ALL: 12 * 60 * 60,
+};
+
+/**
  * The read path (§11): served from Redis and replicas, never the primary's
  * write path. Nothing here takes a lock or opens a transaction.
  */
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 @Controller('markets')
 export class MarketsController {
   constructor(
     private readonly prisma: PrismaService,
     private readonly prices: PriceCacheService,
+    private readonly window: PriceWindowService,
   ) {}
 
   /** The two shelves on the markets home (§7.1). */
@@ -50,13 +79,52 @@ export class MarketsController {
       take: 50,
     });
 
-    return Promise.all(
-      markets.map(async (market) => ({
-        ...this.serialiseMarket(market),
-        // The card's mini sparkline: last 24h of the headline outcome (§7.1).
-        sparkline: await this.sparklineFor(market.id, market.outcomes[0]?.id),
-      })),
+    // How busy each market has been today, in one grouped pass rather than a
+    // query per card. The shelf sorts by this, so it has to be the real
+    // figure — a "trending" order computed from the total pot would just be
+    // the volume order wearing a different name, and would rank a market that
+    // filled up last month above one that is filling up now.
+    const traded = await this.prisma.trade.groupBy({
+      by: ['marketId'],
+      where: {
+        marketId: { in: markets.map((market) => market.id) },
+        // A seed takes no side and moves no price (§2.4), so it is liquidity
+        // rather than activity and must not read as a busy market.
+        side: { not: 'seed' },
+        createdAt: { gte: subHours(new Date(), 24) },
+      },
+      _sum: { cost: true },
+    });
+    const volume24h = new Map(traded.map((row) => [row.marketId, (row._sum.cost ?? 0).toString()]));
+
+    /*
+     * A day of price for every card's headline outcome, in one query.
+     *
+     * This used to be `await this.sparklineFor(...)` inside a `Promise.all` over
+     * the markets — fifty cards, fifty round trips, each scanning the same
+     * index. One batched read replaces them, and it carries the 24h change the
+     * card now shows beside the dial as well, so the badge and the line are
+     * computed from the same points and cannot contradict each other.
+     */
+    const windows = await this.window.forOutcomes(
+      markets
+        .map((market) => market.outcomes[0]?.id)
+        .filter((id): id is string => id !== undefined),
+      DAY_MS,
     );
+
+    return markets.map((market) => {
+      const headline = market.outcomes[0]?.id;
+      const window = headline === undefined ? undefined : windows.get(headline);
+      return {
+        ...this.serialiseMarket(market),
+        volume24h: volume24h.get(market.id) ?? '0',
+        // The card's mini sparkline: last 24h of the headline outcome (§7.1).
+        sparkline: (window?.series ?? []).map((point) => String(point.p)),
+        /** The move over the same 24h, as a fraction. Null on a young market. */
+        change24h: window?.change ?? null,
+      };
+    });
   }
 
   @Get(':id')
@@ -72,7 +140,7 @@ export class MarketsController {
     });
     if (market === null) throw new NotFoundException('market not found');
 
-    const [annotations, traders, volume, cached] = await Promise.all([
+    const [annotations, traders, volume, cached, proposal, windows] = await Promise.all([
       this.prisma.marketAnnotation.findMany({
         where: { marketId: id },
         orderBy: { ts: 'asc' },
@@ -94,6 +162,16 @@ export class MarketsController {
         _sum: { cost: true },
       }),
       this.prices.read(id),
+      // §7.2f: the ticket has to show what has been proposed and how long is
+      // left to argue with it. The newest row wins — a re-proposal after a
+      // successful dispute supersedes the one it replaced.
+      this.prisma.resolution.findFirst({
+        where: { marketId: id },
+        orderBy: { proposedAt: 'desc' },
+      }),
+      // The same day of price the card badge uses, so the ticket's header and
+      // the card a reader arrived from cannot disagree about which way it went.
+      this.window.forMarket(id, DAY_MS),
     ]);
 
     const creatorProfile =
@@ -115,15 +193,51 @@ export class MarketsController {
 
     return {
       ...this.serialiseMarket(market),
+      /*
+        Disclosure: does the platform itself quote on this market?
+
+        Read from the book — an order tagged `maker` — rather than from a flag
+        somebody sets alongside turning the maker on. Two switches for one fact
+        is one switch that gets forgotten, and the direction it fails in
+        matters: a market where the platform is quoting and the badge is off is
+        a market whose traders were not told who is on the other side.
+
+        True while any maker order rests, and also once the maker has stopped
+        but its filled positions are still open, because the platform is still
+        a counterparty on those.
+      */
+      platformLiquidity:
+        (await this.prisma.order.count({ where: { marketId: id, maker: true } })) > 0,
       // Live prices come from Redis when they are there; the row is the fallback.
       livePrices: cached?.prices ?? null,
       annotations: annotations.map((a) => ({
         id: a.id,
         type: a.type,
         label: a.label,
+        // Only `news` carries these: the rest are events this platform
+        // generated itself and has no outside source to cite for.
+        url: a.url,
+        pinnedBy: a.pinnedBy,
         ts: a.ts.toISOString(),
       })),
       traderCount: traders.length,
+      /**
+       * The headline outcome's 24h move, for the ticket's quote row. Same
+       * window and same maths as the card, from the same service.
+       */
+      change24h: windows.find((w) => w.outcomeId === market.outcomes[0]?.id)?.change ?? null,
+      /** §2.6's proposed resolution, and §7.2f's dispute-window countdown. */
+      resolution:
+        proposal === null
+          ? null
+          : {
+              proposedOutcomeId: proposal.proposedOutcomeId,
+              evidenceUrl: proposal.evidenceUrl,
+              proposedAt: proposal.proposedAt.toISOString(),
+              finalOutcomeId: proposal.finalOutcomeId,
+              finalizedAt: proposal.finalizedAt?.toISOString() ?? null,
+            },
+      disputeClosesAt: market.disputeClosesAt?.toISOString() ?? null,
       volume24h: (volume._sum.cost ?? 0).toString(),
       /** Null while a market is open; what the winners split once it settled. */
       distributed:
@@ -142,6 +256,82 @@ export class MarketsController {
               followerCount: creatorProfile?.followerCount ?? 0,
               cleanResolutions: creatorProfile?.cleanResolutions ?? 0,
             },
+    };
+  }
+
+  /**
+   * §7.2g's receipt: what the pot became, and what it became for you.
+   *
+   * Built from the ledger rather than recomputed, which is the whole point.
+   * The receipt is the artifact a winner screenshots, so the number on it has
+   * to be the number that actually landed in their balance — a second
+   * calculation of the payout is a second chance to disagree with the books.
+   *
+   * The market half is public: anyone reading a resolved market should see the
+   * pot, the fee and the per-share value. Only `you` needs a session, and it
+   * is null without one.
+   */
+  @Get(':id/receipt')
+  @UseGuards(OptionalJwtGuard)
+  async receipt(@Param('id') id: string, @Req() request: RequestWithUser) {
+    const market = await this.prisma.market.findUnique({
+      where: { id },
+      include: { outcomes: { orderBy: { ordinal: 'asc' } } },
+    });
+    if (market === null) throw new NotFoundException('market not found');
+    if (market.state !== 'resolved') return null;
+
+    const [paid, fees] = await Promise.all([
+      this.prisma.ledgerEntry.aggregate({
+        where: { marketId: id, type: 'payout', fundClass: 'user_available' },
+        _sum: { amount: true },
+      }),
+      this.prisma.ledgerEntry.aggregate({
+        where: { marketId: id, type: { in: ['fee_platform', 'fee_creator'] } },
+        _sum: { amount: true },
+      }),
+    ]);
+
+    const distributed = new Decimal((paid._sum.amount ?? 0).toString());
+    const fee = new Decimal((fees._sum.amount ?? 0).toString()).abs();
+    const won = market.outcomes.find((row) => row.id === market.resolvedOutcomeId);
+    const winningShares = new Decimal((won?.sharesOutstanding ?? 0).toString());
+
+    const userId = request.user?.userId;
+    let you = null;
+    if (userId !== undefined) {
+      const [position, received] = await Promise.all([
+        // A resolved market always names a winning outcome; the guard is for
+        // the type, not for a case that happens.
+        market.resolvedOutcomeId === null
+          ? null
+          : this.prisma.position.findFirst({
+              where: { userId, marketId: id, outcomeId: market.resolvedOutcomeId },
+            }),
+        this.prisma.ledgerEntry.aggregate({
+          where: { userId, marketId: id, type: 'payout', fundClass: 'user_available' },
+          _sum: { amount: true },
+        }),
+      ]);
+      const payout = new Decimal((received._sum.amount ?? 0).toString());
+      // Someone who held nothing on the winning side still gets a line — "you
+      // were on the other side of this" is information, and a blank space is
+      // not.
+      you = {
+        shares: (position?.shares ?? 0).toString(),
+        payout: payout.toString(),
+        won: payout.gt(0),
+      };
+    }
+
+    return {
+      outcomeLabel: won?.label ?? null,
+      distributed: distributed.toString(),
+      fee: fee.toString(),
+      // What one winning share turned out to be worth — §2.3's pot/q_win.
+      perShare: winningShares.gt(0) ? distributed.div(winningShares).toString() : '0',
+      winningShares: winningShares.toString(),
+      you,
     };
   }
 
@@ -171,15 +361,468 @@ export class MarketsController {
     }));
   }
 
-  private async sparklineFor(marketId: string, outcomeId?: string): Promise<string[]> {
-    if (outcomeId === undefined) return [];
-    const points = await this.prisma.priceHistory.findMany({
-      where: { marketId, outcomeId, ts: { gte: subHours(new Date(), 24) } },
-      orderBy: { ts: 'asc' },
-      select: { price: true },
-      take: 60,
+  /**
+   * Trading activity over the chart's window, bucketed to its grid.
+   *
+   * The bars under the price line. They exist because of a specific failure:
+   * a market sized for ₦2,000 stakes (rule 24 — L is about 25× a typical
+   * stake) moves about half a point on a ₦500 trade, and half a point is
+   * invisible on a button that has to round to whole kobo so the two sides
+   * still read 100. Somebody trades, the price genuinely moves, and every
+   * number they can see says nothing happened.
+   *
+   * Volume is the honest answer to that. It does not touch the price, it does
+   * not stand in for one, and it does not need a whole point of movement to
+   * have something to say — a bar is a bar. A flat line above a row of bars is
+   * a market being argued over at a stable price, which is a completely
+   * different thing from a market nobody is trading, and until now the screen
+   * drew them identically.
+   *
+   * Aggregated in SQL rather than in Node. The alternative is shipping every
+   * trade in the window to a phone so the phone can add them up.
+   */
+  @Get(':id/flow')
+  async flow(@Param('id') id: string, @Query('tf') timeframe = '1D') {
+    const hours = TIMEFRAME_HOURS[timeframe] ?? null;
+    const bucket = FLOW_BUCKET_SECONDS[timeframe] ?? FLOW_BUCKET_SECONDS['1D'] ?? 900;
+    const since = hours === null ? new Date(0) : subHours(new Date(), hours);
+
+    const rows = await this.prisma.$queryRaw<
+      { ts: bigint; buys: bigint; sells: bigint; volume: Prisma.Decimal | null }[]
+    >`
+      WITH events AS (
+        SELECT "createdAt", side::text AS side, cost AS naira
+        FROM trades
+        WHERE "marketId" = ${id}
+          -- §2.4: a seed takes no side and moves no price. A bar for it would
+          -- draw the market's opening liquidity as if somebody had taken a view.
+          AND side <> 'seed'
+          AND "createdAt" >= ${since}
+        UNION ALL
+        -- Matched fills, counted once from the taker's side and valued at the
+        -- pair's whole stake — ₦1 a share, which is the money the trade moved.
+        -- See orderbook/activity.ts. Every matched fill opens a position, so it
+        -- is a buy in the sense this bar is coloured by: enter, not exit.
+        SELECT "createdAt", 'buy' AS side, shares AS naira
+        FROM order_fills
+        WHERE "marketId" = ${id} AND "createdAt" >= ${since}
+      )
+      SELECT (floor(extract(epoch FROM "createdAt") / ${bucket}) * ${bucket})::bigint AS ts,
+             count(*) FILTER (WHERE side = 'buy')::bigint  AS buys,
+             count(*) FILTER (WHERE side = 'sell')::bigint AS sells,
+             sum(naira) AS volume
+      FROM events
+      GROUP BY 1
+      ORDER BY 1
+      LIMIT 500
+    `;
+
+    return {
+      bucketSeconds: bucket,
+      buckets: rows.map((row) => ({
+        ts: Number(row.ts),
+        buys: Number(row.buys),
+        sells: Number(row.sells),
+        volume: (row.volume ?? 0).toString(),
+      })),
+    };
+  }
+
+  /**
+   * A market's pulse — how busy it is, right now.
+   *
+   * Separate from `context` because it answers a different question on a
+   * different clock. Context is what this market is about and changes when the
+   * world does; the pulse is what the room is doing and changes every time
+   * somebody trades. Folding it into the context response would mean either
+   * refetching sixty news items to learn that one trade landed, or letting the
+   * activity feed go stale to avoid it.
+   *
+   * Everything below is counted from executed trades. Nothing here is a price,
+   * nothing here is derived from a price, and nothing here can move one — see
+   * the note at the top of `pulse.ts`. Seeds are excluded throughout: a seed
+   * takes no side and moves no price (§2.4), so counting it as activity would
+   * report a busy market to somebody looking at one where nobody has traded.
+   */
+  @Get(':id/pulse')
+  async pulse(@Param('id') id: string) {
+    const now = new Date();
+    const since = new Date(now.getTime() - PULSE_WINDOW_MINUTES * 60_000);
+
+    const [outcomes, recent, potTicker, fillWindow, fillTicker] = await Promise.all([
+      this.prisma.outcome.findMany({
+        where: { marketId: id },
+        select: { id: true, label: true, ordinal: true },
+      }),
+      // The window plus one row for the last trade however old it is, in one
+      // query: the ticker's own rows are the tail, and `pulseOf` takes the
+      // latest `createdAt` it can see. An hour of trades on a busy market is a
+      // few hundred rows on an index this query is already covered by.
+      this.prisma.trade.findMany({
+        where: { marketId: id, side: { not: 'seed' }, createdAt: { gte: since } },
+        select: { userId: true, side: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+        take: 1000,
+      }),
+      this.prisma.trade.findMany({
+        where: { marketId: id, side: { not: 'seed' } },
+        orderBy: { createdAt: 'desc' },
+        take: 15,
+        select: {
+          id: true,
+          userId: true,
+          outcomeId: true,
+          side: true,
+          shares: true,
+          cost: true,
+          priceAfter: true,
+          createdAt: true,
+        },
+      }),
+      /*
+        And the same two reads against the book.
+
+        A market that matches peer-to-peer was reporting the pot's traffic and
+        calling it the market's: somebody could watch a fill land and see
+        "2 trades/hr" underneath it. The pulse is a claim about how busy a
+        market is, and a claim that counts one of its two venues is false in
+        the direction that makes a busy market look dead.
+      */
+      this.prisma.orderFill.findMany({
+        where: { marketId: id, createdAt: { gte: since } },
+        select: {
+          id: true,
+          takerUserId: true,
+          takerSide: true,
+          outcomeId: true,
+          priceKobo: true,
+          shares: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 1000,
+      }),
+      this.prisma.orderFill.findMany({
+        where: { marketId: id },
+        select: {
+          id: true,
+          takerUserId: true,
+          takerSide: true,
+          outcomeId: true,
+          priceKobo: true,
+          shares: true,
+          createdAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 15,
+      }),
+    ]);
+
+    const labels = new Map(outcomes.map((outcome) => [outcome.id, outcome.label]));
+    const asFill = (row: (typeof fillWindow)[number]) => ({
+      id: row.id,
+      takerUserId: row.takerUserId,
+      takerSide: row.takerSide as 'buy' | 'sell',
+      outcomeId: row.outcomeId,
+      priceKobo: row.priceKobo,
+      shares: new Decimal(row.shares.toString()),
+      createdAt: row.createdAt,
     });
-    return points.map((p) => p.price.toString());
+
+    const matchedWindow = readMatchedFills(fillWindow.map(asFill), outcomes);
+    const matchedTicker = readMatchedFills(fillTicker.map(asFill), outcomes);
+
+    // A market whose last trade was yesterday has an empty window, and "when
+    // did anything last happen" is the one figure a quiet market most needs to
+    // be able to answer. The ticker rows carry it — but only the ones the
+    // window did not already return: a trade counted twice is a market
+    // reporting twice the activity it has, which on the pressure bar is a
+    // crowd that does not exist.
+    const cutoff = since.getTime();
+    const seen = [
+      ...recent,
+      ...potTicker
+        .filter((trade) => trade.createdAt.getTime() < cutoff)
+        .map((trade) => ({ userId: trade.userId, side: trade.side, createdAt: trade.createdAt })),
+      ...matchedWindow.map((row) => ({
+        userId: row.userId,
+        side: row.side,
+        createdAt: row.createdAt,
+      })),
+      ...matchedTicker
+        .filter((row) => row.createdAt.getTime() < cutoff)
+        .map((row) => ({ userId: row.userId, side: row.side, createdAt: row.createdAt })),
+    ];
+
+    /*
+      One feed, two venues, labelled.
+
+      `venue` is not decoration. A matched row is a claim on an exact ₦1 a
+      share and a pot row is a claim on a share of a pot, and the whole product
+      keeps those apart everywhere else — a ticker that quietly mixed them
+      would be the one place it did not.
+    */
+    const ticker = [
+      ...potTicker.map((trade) => ({
+        id: trade.id,
+        // The same per-market alias the activity feed uses, for the same
+        // reason: a trade is not a post, and nobody signed up to have their
+        // positions read off a public stream under a name.
+        actor: pseudonym(id, trade.userId),
+        venue: 'pot' as const,
+        side: trade.side,
+        outcomeId: trade.outcomeId,
+        label: labels.get(trade.outcomeId) ?? '',
+        shares: trade.shares.toString(),
+        cost: trade.cost.toString(),
+        price: trade.priceAfter.toString(),
+        ts: trade.createdAt,
+      })),
+      ...matchedTicker.map((row) => ({
+        id: row.id,
+        actor: pseudonym(id, row.userId),
+        venue: 'matched' as const,
+        side: row.side,
+        outcomeId: row.outcomeId,
+        label: row.label,
+        shares: row.shares.toString(),
+        cost: row.naira.toString(),
+        price: new Decimal(row.priceKobo).div(KOBO_PER_SHARE).toString(),
+        ts: row.createdAt,
+      })),
+    ];
+
+    return {
+      ...pulseOf(seen, now),
+      ticker: newestFirst(ticker, (row) => row.ts, 15).map((row) => ({
+        ...row,
+        ts: row.ts.toISOString(),
+      })),
+    };
+  }
+
+  /**
+   * The ticket's context panel (§7.2f, extended): what the price has done since
+   * it opened, how the room is positioned, and what has just happened.
+   *
+   * Separate from `detail` on purpose. The detail response is server-rendered
+   * into the page and has to be fast; this is everything below the fold, it
+   * refreshes after a fill, and none of it is needed to decide whether to
+   * trade — only to understand what you are trading into.
+   */
+  @Get(':id/context')
+  async context(@Param('id') id: string) {
+    const market = await this.prisma.market.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        createdAt: true,
+        // The source watch needs both: the body that settles it, and the
+        // wording the threshold has to be recovered from.
+        question: true,
+        sourceName: true,
+        outcomes: {
+          orderBy: { ordinal: 'asc' },
+          select: { id: true, label: true, ordinal: true },
+        },
+      },
+    });
+    if (market === null) throw new NotFoundException('market not found');
+
+    const labels = new Map(market.outcomes.map((o) => [o.id, o.label]));
+
+    const [windows, biggest, holders, activity, fills, coverage] = await Promise.all([
+      // Since it opened, not since yesterday: "high" on a quote page means the
+      // highest it has ever been, and a 24h high labelled "High" would be a
+      // different number every morning for a price that had not moved.
+      //
+      // Windowed from the epoch rather than from `createdAt`. They are the same
+      // window for any real market, and the epoch is the one that cannot be
+      // wrong: a row whose `createdAt` was written after its first price — a
+      // restored backup, a fixture — would otherwise report "no opening price"
+      // beneath a chart visibly drawing one.
+      this.window.forMarket(id, Date.now()),
+      this.biggestMove(id),
+      // Only live holders. A position closed back to zero is a row that stays
+      // behind, and counting it would report a crowd that has already left.
+      this.prisma.position.groupBy({
+        by: ['outcomeId'],
+        where: { marketId: id, shares: { gt: 0 } },
+        _count: { userId: true },
+      }),
+      this.prisma.trade.findMany({
+        where: { marketId: id, side: { not: 'seed' } },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: {
+          id: true,
+          userId: true,
+          outcomeId: true,
+          side: true,
+          shares: true,
+          cost: true,
+          priceAfter: true,
+          createdAt: true,
+        },
+      }),
+      // And the book's side of the same feed. Read the same way the pulse
+      // reads it — once, from the taker — so the two lists cannot disagree
+      // about what happened on the same market.
+      this.prisma.orderFill.findMany({
+        where: { marketId: id },
+        orderBy: { createdAt: 'desc' },
+        take: 12,
+        select: {
+          id: true,
+          takerUserId: true,
+          takerSide: true,
+          outcomeId: true,
+          priceKobo: true,
+          shares: true,
+          createdAt: true,
+        },
+      }),
+      // Everything the research pipeline has linked to this market. Pinned
+      // first, then relevance — a staff member who put their name to an item
+      // has said it matters more than a score can.
+      this.prisma.marketSourceItem.findMany({
+        where: { marketId: id },
+        orderBy: [{ pinnedAt: { sort: 'desc', nulls: 'last' } }, { relevance: 'desc' }],
+        take: 60,
+        include: { item: { include: { source: { select: { name: true, tier: true } } } } },
+      }),
+    ]);
+
+    const holdersBy = new Map(holders.map((row) => [row.outcomeId, row._count.userId]));
+
+    return {
+      openedAt: market.createdAt.toISOString(),
+      stats: market.outcomes.map((outcome) => {
+        const window = windows.find((w) => w.outcomeId === outcome.id);
+        return {
+          outcomeId: outcome.id,
+          label: outcome.label,
+          opened: window?.opened ?? null,
+          latest: window?.latest ?? null,
+          high: window?.high ?? null,
+          low: window?.low ?? null,
+          change: window?.change ?? null,
+          holders: holdersBy.get(outcome.id) ?? 0,
+        };
+      }),
+      /** The single tick that moved the price most, and which side it moved. */
+      biggestMove:
+        biggest === null
+          ? null
+          : {
+              outcomeId: biggest.outcomeId,
+              label: labels.get(biggest.outcomeId) ?? '',
+              from: biggest.prev,
+              to: biggest.price,
+              ts: biggest.ts.toISOString(),
+            },
+      /**
+       * The clustered news stream.
+       *
+       * One line per story rather than one per outlet: forty papers running
+       * the same wire copy is one thing that happened, and listing it forty
+       * times buries everything else under the loudest story of the day. The
+       * source count is what a reader actually wants from the other
+       * thirty-nine.
+       */
+      news: clusterView(coverage),
+      /**
+       * The named source's latest figure against the market's own threshold.
+       *
+       * Absent — not zeroed — when either half is missing. The threshold is
+       * recovered from the question's wording, and a parse that failed should
+       * produce no strip rather than a wrong line on a price chart.
+       */
+      sourceWatch: sourceWatchOf({
+        sourceName: market.sourceName,
+        question: market.question,
+        latest: latestOfficialFigure(coverage),
+        readings: officialSeries(coverage),
+      }),
+      activity: newestFirst(
+        [
+          ...activity.map((trade) => ({
+            id: trade.id,
+            // Pseudonymous, and per-market. A trade is not a post: somebody who
+            // has said nothing in the thread has not agreed to have their
+            // positions read off a public feed. Salting with the market id stops
+            // the same handle being followed from one market to the next.
+            actor: pseudonym(id, trade.userId),
+            venue: 'pot' as const,
+            side: trade.side,
+            outcomeId: trade.outcomeId,
+            label: labels.get(trade.outcomeId) ?? '',
+            shares: trade.shares.toString(),
+            cost: trade.cost.toString(),
+            price: trade.priceAfter.toString(),
+            ts: trade.createdAt,
+          })),
+          ...readMatchedFills(
+            fills.map((fill) => ({
+              id: fill.id,
+              takerUserId: fill.takerUserId,
+              takerSide: fill.takerSide as 'buy' | 'sell',
+              outcomeId: fill.outcomeId,
+              priceKobo: fill.priceKobo,
+              shares: new Decimal(fill.shares.toString()),
+              createdAt: fill.createdAt,
+            })),
+            market.outcomes,
+          ).map((row) => ({
+            id: row.id,
+            actor: pseudonym(id, row.userId),
+            venue: 'matched' as const,
+            side: row.side as string,
+            outcomeId: row.outcomeId,
+            label: row.label,
+            shares: row.shares.toString(),
+            cost: row.naira.toString(),
+            price: new Decimal(row.priceKobo).div(KOBO_PER_SHARE).toString(),
+            ts: row.createdAt,
+          })),
+        ],
+        (row) => row.ts,
+        12,
+      ).map((row) => ({ ...row, ts: row.ts.toISOString() })),
+    };
+  }
+
+  /**
+   * The largest single move in this market's price, across every outcome.
+   *
+   * A window function rather than a scan in Node: price history is one row per
+   * outcome per trade, so a busy market has tens of thousands of them and the
+   * answer is one row. Reading them all back to subtract pairs would make the
+   * cheapest fact on the panel the most expensive query on the page.
+   */
+  private async biggestMove(marketId: string) {
+    const rows = await this.prisma.$queryRaw<
+      { outcomeId: string; ts: Date; price: Prisma.Decimal; prev: Prisma.Decimal }[]
+    >`
+      SELECT "outcomeId", ts, price, prev
+      FROM (
+        SELECT "outcomeId", ts, price,
+               lag(price) OVER (PARTITION BY "outcomeId" ORDER BY ts) AS prev
+        FROM price_history
+        WHERE "marketId" = ${marketId}
+      ) moves
+      WHERE prev IS NOT NULL
+      ORDER BY abs(price - prev) DESC
+      LIMIT 1
+    `;
+    const row = rows[0];
+    if (row === undefined) return null;
+    return {
+      outcomeId: row.outcomeId,
+      ts: row.ts,
+      price: Number(row.price.toString()),
+      prev: Number(row.prev.toString()),
+    };
   }
 
   private serialiseMarket(market: {
@@ -192,12 +835,16 @@ export class MarketsController {
     activationPath: string;
     fundingClosesAt: Date | null;
     eventDate: Date;
+    freezeAt: Date | null;
+    frozenAt: Date | null;
+    freezeReason: string | null;
     voidDate: Date;
     potTotal: { toString(): string };
     liquidityParam: { toString(): string };
     feeBps: number;
     criteriaJson: unknown;
     resolvedOutcomeId: string | null;
+    createdAt: Date;
     outcomes: {
       id: string;
       label: string;
@@ -211,6 +858,7 @@ export class MarketsController {
     return {
       id: market.id,
       shelf: market.shelf,
+      createdAt: market.createdAt.toISOString(),
       question: market.question,
       sourceName: market.sourceName,
       sourceUrl: market.sourceUrl,
@@ -220,6 +868,12 @@ export class MarketsController {
       activationPath: market.activationPath,
       fundingClosesAt: market.fundingClosesAt?.toISOString() ?? null,
       eventDate: market.eventDate.toISOString(),
+      // §2.3, checklist rule 22. Sent as data rather than as a rendered
+      // sentence so the countdown ticks client-side and the badge, the
+      // disabled button and the sheet's refusal all derive from one fact.
+      freezeAt: market.freezeAt?.toISOString() ?? null,
+      frozenAt: market.frozenAt?.toISOString() ?? null,
+      freezeReason: market.freezeReason,
       voidDate: market.voidDate.toISOString(),
       pot: market.potTotal.toString(),
       // The Trade Ticket needs L and shares outstanding to quote the §2.3
@@ -247,4 +901,140 @@ function badgeFor(level: number): string | null {
   if (level >= 3) return 'Pro';
   if (level === 2) return 'Verified';
   return null;
+}
+
+/**
+ * A stable, market-local alias for a trader.
+ *
+ * Six hex characters rather than four: at four, a market with a few hundred
+ * traders is likelier than not to show two different people under one name,
+ * and a feed that silently merges two traders into one is worse than no feed.
+ */
+function pseudonym(marketId: string, userId: string): string {
+  return createHash('sha256').update(`${marketId}:${userId}`).digest('hex').slice(0, 6);
+}
+
+/** One row per cluster, carrying how many outlets ran it. */
+function clusterView(
+  coverage: readonly {
+    relevance: { toString(): string };
+    pinnedAt: Date | null;
+    pinnedBy: string | null;
+    item: {
+      id: string;
+      headline: string;
+      url: string;
+      publishedAt: Date;
+      clusterId: string | null;
+      source: { name: string; tier: string };
+    };
+  }[],
+) {
+  const seen = new Map<string, { row: (typeof coverage)[number]; outlets: Set<string> }>();
+
+  for (const row of coverage) {
+    // An item the pipeline has not clustered yet stands alone under its own id
+    // rather than being dropped — a reader should see a story the minute it
+    // lands, not once a later pass has grouped it.
+    const key = row.item.clusterId ?? row.item.id;
+    const existing = seen.get(key);
+    if (existing === undefined) {
+      seen.set(key, { row, outlets: new Set([row.item.source.name]) });
+      continue;
+    }
+
+    existing.outlets.add(row.item.source.name);
+
+    // Whose byline the line carries.
+    //
+    // The clusterer seeds each group with its earliest member, on the
+    // principle that the outlet which broke a story is the one worth citing —
+    // and the first version of this kept whichever row the *query* returned
+    // first instead, which for three papers of equal relevance is arbitrary.
+    // Three outlets running one wire story were credited to whichever one the
+    // database happened to hand back, and it was not the one that broke it.
+    const seedIsHere = row.item.id === row.item.clusterId;
+    const earlier = row.item.publishedAt < existing.row.item.publishedAt;
+    if (seedIsHere || (existing.row.item.id !== existing.row.item.clusterId && earlier)) {
+      existing.row = row;
+    }
+  }
+
+  return [...seen.values()].map(({ row, outlets }) => ({
+    id: row.item.id,
+    headline: row.item.headline,
+    url: row.item.url,
+    outlet: row.item.source.name,
+    tier: row.item.source.tier,
+    sourceCount: outlets.size,
+    publishedAt: row.item.publishedAt.toISOString(),
+    relevance: Number(row.relevance.toString()),
+    pinnedAt: row.pinnedAt?.toISOString() ?? null,
+    pinnedBy: row.pinnedBy,
+  }));
+}
+
+/**
+ * The most recent figure published by a source that could settle this market.
+ *
+ * Tier 1 only. A newspaper reporting what the CBN published is not the CBN
+ * publishing it, and a source-watch strip that quoted the newspaper would be
+ * putting a second-hand number where a reader expects the official one.
+ */
+function latestOfficialFigure(
+  coverage: readonly {
+    item: {
+      publishedAt: Date;
+      factsJson: unknown;
+      source: { tier: string };
+    };
+  }[],
+): { value: string | number; publishedAt: Date } | null {
+  const official = coverage
+    .filter((row) => row.item.source.tier === 'resolution')
+    .sort((a, b) => b.item.publishedAt.getTime() - a.item.publishedAt.getTime());
+
+  for (const row of official) {
+    const facts = row.item.factsJson;
+    if (facts === null || typeof facts !== 'object' || Array.isArray(facts)) continue;
+    const [value] = Object.values(facts as Record<string, string | number>);
+    if (value !== undefined) return { value, publishedAt: row.item.publishedAt };
+  }
+  return null;
+}
+
+/**
+ * Every figure the resolving body has published for this market, for plotting
+ * against the threshold.
+ *
+ * Tier 1 only, for the same reason as the latest figure: a newspaper reporting
+ * a CBN print is not the CBN, and a line built from second-hand numbers would
+ * be a chart of what the press said rather than of what happened.
+ *
+ * The first value of `factsJson` is the reading, which is the convention the
+ * extraction rules write to. An item with no facts extracted is skipped rather
+ * than guessed at — an absent point leaves a gap, and a guessed one puts a
+ * wrong number on a money screen.
+ */
+function officialSeries(
+  coverage: readonly {
+    item: {
+      publishedAt: Date;
+      factsJson: unknown;
+      source: { name: string; tier: string };
+    };
+  }[],
+): { value: string | number; publishedAt: Date; outlet: string }[] {
+  const points: { value: string | number; publishedAt: Date; outlet: string }[] = [];
+
+  for (const row of coverage) {
+    if (row.item.source.tier !== 'resolution') continue;
+    const facts = row.item.factsJson;
+    if (facts === null || typeof facts !== 'object' || Array.isArray(facts)) continue;
+    const [value] = Object.values(facts as Record<string, string | number>);
+    if (value === undefined) continue;
+    points.push({ value, publishedAt: row.item.publishedAt, outlet: row.item.source.name });
+  }
+
+  return points;
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
+import { useFreeze } from './market/freeze-notice';
 import type { MarketDetail, OutcomeView } from '@/lib/api';
 import { exactMoney, kobo } from '@/lib/format';
 import { authed, getToken } from '@/lib/session';
@@ -40,6 +41,7 @@ export function PositionPanel({
   onSell: (outcome: OutcomeView, held: string) => void;
 }) {
   const [positions, setPositions] = useState<PositionRow[] | null>(null);
+  const freeze = useFreeze(market);
 
   const load = useCallback(async () => {
     if (getToken() === null) {
@@ -61,13 +63,27 @@ export function PositionPanel({
     void load();
   }, [load, refreshKey]);
 
+  // Before the early return, not after it. A hook called on the far side of a
+  // `return null` runs on some renders and not others, which React reports as
+  // "rendered more hooks than during the previous render" — and in a production
+  // build that is minified error #310 and a blank page where the ticket was.
+  // It surfaced the moment the panel had a position to show: the first render
+  // returned early, the second did not.
   if (positions === null || positions.length === 0) return null;
-
-  const tradable = market.state === 'active';
+  const tradable = market.state === 'active' && !freeze.frozen;
+  // Frozen but not settled. The distinction matters to whoever is looking:
+  // "locked" is a state their money comes back out of, and a panel that simply
+  // dropped the Sell button without saying so reads as the button being broken.
+  const locked = freeze.frozen && market.state !== 'resolved' && market.state !== 'voided';
 
   return (
     <section className="mt-5 rounded-lg border border-border bg-surface-raised p-4">
       <h2 className="font-mono text-xs uppercase tracking-widest text-text-muted">Your position</h2>
+      {locked && (
+        <p className="mt-1 text-xs text-text-muted">
+          Locked until settlement — the value below still moves with the last traded price.
+        </p>
+      )}
 
       <ul className="mt-3 flex flex-col gap-3">
         {positions.map((row) => {

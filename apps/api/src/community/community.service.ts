@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { Decimal } from '@stakeam/engine';
+import { freezeAtFor } from '@stakeam/rules';
 
 import { type Tx } from '../ledger/ledger.service';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -11,7 +12,7 @@ import { AutopsyService } from '../creator/autopsy.service';
 import { CreatorService } from '../creator/creator.service';
 import { WalletService } from '../wallet/wallet.service';
 import { decideActivation, type ActivationRules, type OutcomeFunding } from './activation';
-import { screenTemplate, type MarketTemplate } from './market-template';
+import { blockersOf, screenTemplate, type MarketTemplate } from './market-template';
 import { MarketVoidService } from './void.service';
 
 export class CommunityMarketError extends Error {
@@ -59,12 +60,35 @@ export class CommunityService {
      * symmetric seed or a seeding round, and opens the moment one lands (§2.4).
      */
     activationPath?: 'organic' | 'seeded';
+    /** Rules 5 and 16. The creator's own attestation, recorded with the market. */
+    attestedNoInfluence?: boolean;
+    /**
+     * The approving staff member's answers to the rules only a person can
+     * settle — the front-page test, the stranger test, the conflict check.
+     *
+     * They belong here rather than at submission because this method *is* the
+     * approval: a creator pressing submit cannot answer the front-page test on
+     * the platform's behalf, and the reviewer who can is not in the room yet.
+     */
+    confirmations?: Record<string, boolean>;
     now?: Date;
   }): Promise<{ marketId: string; fundingClosesAt: Date | null }> {
     const now = params.now ?? new Date();
-    const problems = screenTemplate(params.template, { now });
-    if (problems.length > 0) {
-      throw new CommunityMarketError(problems.map((p) => p.message).join(' '));
+    // The checklist, scoped to what binds a community creator. Stricter than the
+    // staff path in the one way that matters: rule 16's attestation is not a
+    // box the wizard ticks on their behalf — a submission arriving without it
+    // is refused here, at the service, so no client can skip it.
+    const report = screenTemplate(
+      params.template,
+      {
+        now,
+        attestedNoInfluence: params.attestedNoInfluence ?? false,
+        confirmations: params.confirmations ?? {},
+      },
+      'community',
+    );
+    if (report.blocked) {
+      throw new CommunityMarketError(blockersOf(report).join(' '));
     }
 
     // §2.14c's ladder, applied where it costs something. A level is only worth
@@ -97,6 +121,7 @@ export class CommunityService {
     const feeBps = await this.config.get('community_fee_bps');
     const windowHours =
       params.fundingWindowHours ?? (await this.config.get('funding_window_hours'));
+    const freezeBuffer = await this.config.get('freeze_buffer_seconds');
 
     const labels = [
       ...params.template.outcomes.map((o) => ({ label: o.label, isOther: false })),
@@ -125,6 +150,10 @@ export class CommunityService {
           criteriaJson: criteria,
           edgeCasesJson: params.template.edgeCases as Prisma.InputJsonValue,
           eventDate: new Date(params.template.eventDate),
+          // Rule 22, the same for both shelves: trading stops before the event,
+          // by the buffer. A community market that froze on a different rule
+          // from an official one would be two promises on one ticket layout.
+          freezeAt: freezeAtFor(new Date(params.template.eventDate), freezeBuffer),
           voidDate: new Date(params.template.voidDate),
           liquidityParam: new Prisma.Decimal(params.liquidityParam),
           feeBps,

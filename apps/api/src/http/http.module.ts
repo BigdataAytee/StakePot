@@ -14,6 +14,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { env } from '../config/env';
 import { LeaderboardModule } from '../leaderboard/leaderboard.module';
 import { LedgerModule } from '../ledger/ledger.module';
+import { IntelModule } from '../intel/intel.module';
 import { MarketModule } from '../market/market.module';
 import { NotificationsModule } from '../notifications/notifications.module';
 import { RgModule } from '../rg/rg.module';
@@ -25,6 +26,13 @@ import { WalletModule } from '../wallet/wallet.module';
 import { AccountController } from './account.controller';
 import { AbuseController, DeviceController } from './abuse.controller';
 import { AdminController } from './admin.controller';
+import {
+  ConfigConsoleController,
+  CreatorsDeskController,
+  GrowthController,
+  LifecycleController,
+  SystemRoomController,
+} from './admin-ops.controller';
 import { AuthController } from './auth.controller';
 import { PublicConfigController } from './public-config.controller';
 import { StatusController } from './status.controller';
@@ -36,8 +44,14 @@ import {
   PrizeController,
 } from './leaderboard.controller';
 import { MarketsController } from './markets.controller';
+import { LiquidityModule } from '../liquidity/liquidity.module';
+import { SeedToolModule } from '../liquidity/seed-tool.module';
+import { LiquidityController } from './liquidity.controller';
+import { StudioController } from './studio.controller';
+import { ReputationController, TopCallsAdminController } from './reputation.controller';
 import { ModerationController, ThreadsController } from './threads.controller';
 import { TradesController } from './trades.controller';
+import { OrderBookController } from './orderbook.controller';
 
 @Module({
   imports: [
@@ -49,8 +63,11 @@ import { TradesController } from './trades.controller';
     CommunityModule,
     CreatorModule,
     HardeningModule,
+    IntelModule,
     LeaderboardModule,
     LedgerModule,
+    LiquidityModule,
+    SeedToolModule,
     MarketModule,
     NotificationsModule,
     ResolutionModule,
@@ -65,10 +82,16 @@ import { TradesController } from './trades.controller';
     }),
   ],
   controllers: [
+    OrderBookController,
     AbuseController,
     AccountController,
     AdminController,
+    ConfigConsoleController,
+    CreatorsDeskController,
     DeviceController,
+    GrowthController,
+    LifecycleController,
+    SystemRoomController,
     AuthController,
     PublicConfigController,
     StatusController,
@@ -79,8 +102,12 @@ import { TradesController } from './trades.controller';
     PrizeController,
     MarketSignalsController,
     MarketsController,
+    LiquidityController,
+    StudioController,
     ModerationController,
+    ReputationController,
     ThreadsController,
+    TopCallsAdminController,
     TradesController,
   ],
   providers: [JwtGuard, OptionalJwtGuard, RolesGuard],

@@ -50,7 +50,7 @@ export function PasswordField({
           autoComplete={autoComplete}
           {...(minLength === undefined ? {} : { minLength })}
           {...(hint === undefined ? {} : { 'aria-describedby': hintId })}
-          className="w-full rounded-md border border-border bg-surface-raised py-3 pl-3 pr-16 text-md outline-none focus-visible:border-rise"
+          className="w-full rounded-md border border-border bg-surface-raised py-3 pl-3 pr-16 text-md focus-visible:border-rise"
         />
         <button
           type="button"

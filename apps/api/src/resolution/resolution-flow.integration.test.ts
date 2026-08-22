@@ -13,7 +13,9 @@ import { generateSync } from 'otplib';
 import { CommunityService } from '../community/community.service';
 import { SeedService } from '../community/seed.service';
 import { MarketVoidService } from '../community/void.service';
+import { BriefingService } from '../intel/briefing.service';
 import { LedgerService } from '../ledger/ledger.service';
+import { MarketHealthService } from '../market/health.service';
 import { EmailSender } from '../notifications/email.sender';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PushSender } from '../notifications/push.sender';
@@ -22,12 +24,14 @@ import { PlatformConfigService } from '../platform-config/platform-config.servic
 import type { PrismaService } from '../prisma/prisma.service';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { RgService } from '../rg/rg.service';
+import { testOrderBook } from '../testing/order-book';
 import { resetDatabase } from '../testing/reset';
 import { ResolutionService } from '../trade/resolution.service';
 import { TradeService } from '../trade/trade.service';
 import { WalletService } from '../wallet/wallet.service';
 import { ResolutionFlowService } from './resolution-flow.service';
 import type { MarketTemplate } from '../community/market-template';
+import { approvalAnswers, compliantTemplate } from '../testing/templates';
 import { CreatorAnalyticsService } from '../creator/analytics.service';
 import { AutopsyService } from '../creator/autopsy.service';
 import { CreatorService } from '../creator/creator.service';
@@ -88,7 +92,13 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
     // the autopsy that moves a creator's record when a market closes.
     const creators = new CreatorService(prisma, config, notifications);
     const creatorAnalytics = new CreatorAnalyticsService(prisma);
-    const autopsies = new AutopsyService(prisma, creatorAnalytics, creators, notifications);
+    const autopsies = new AutopsyService(
+      prisma,
+      creatorAnalytics,
+      creators,
+      notifications,
+      new MarketHealthService(prisma),
+    );
     community = new CommunityService(
       prisma,
       config,
@@ -99,7 +109,6 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       autopsies,
       analytics,
     );
-    seeds = new SeedService(prisma, config, wallet, voids, creators);
     trades = new TradeService(
       prisma,
       ledger,
@@ -107,6 +116,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       config,
       { publish: async () => undefined } as unknown as PriceCacheService,
       new RgService(prisma, config),
+      testOrderBook(prisma, ledger, wallet),
     );
     flow = new ResolutionFlowService(
       prisma,
@@ -116,7 +126,13 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       notifications,
       // No API key in tests: the engine's model seam is null, and the parts that
       // matter here — §2.9's outcome log — do not need one.
-      new QuestionEngineService(prisma, config, null),
+      new QuestionEngineService(
+        prisma,
+        config,
+        new MarketHealthService(prisma),
+        new BriefingService(prisma),
+        null,
+      ),
       autopsies,
       new ThreadService(prisma, config),
       analytics,
@@ -124,6 +140,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
     // §2.8's prize tool: drawn up here, and paid only when the approvals
     // workflow signs it — which is the path under test.
     const prizes = new PrizeService(prisma, config, wallet, notifications, audit, analytics);
+    seeds = new SeedService(prisma, config, wallet, voids, creators);
     approvals = new ApprovalsService(
       prisma,
       ledger,
@@ -132,6 +149,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       audit,
       new TotpService(prisma),
       prizes,
+      seeds,
     );
   });
 
@@ -152,18 +170,29 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
     await config.refresh();
   });
 
-  const template: MarketTemplate = {
-    question: 'Will the CBN hold the benchmark rate at its next meeting?',
+  const template: MarketTemplate = compliantTemplate({
+    question: 'Will the CBN hold the benchmark rate at its next MPC meeting?',
     outcomes: [
-      { label: 'HOLD', criteria: 'The MPC communique states the rate is unchanged.' },
-      { label: 'CHANGE', criteria: 'The MPC communique states a new rate.' },
+      {
+        label: 'HOLD',
+        criteria:
+          'The MPC communique, as first published, states the benchmark rate is unchanged. Read at 23:59 WAT on the day it is issued.',
+      },
+      {
+        label: 'CHANGE',
+        criteria:
+          'That same first published communique states a new benchmark rate, read at 23:59 WAT.',
+      },
     ],
     sourceName: 'CBN MPC communique',
-    sourceUrl: 'https://www.cbn.gov.ng/',
+    sourceUrl: 'https://www.cbn.gov.ng/documents/mpc-communique/',
     eventDate: new Date(Date.now() + 4 * 86_400_000).toISOString(),
     voidDate: new Date(Date.now() + 10 * 86_400_000).toISOString(),
-    edgeCases: { postponed: 'Voids if the meeting does not sit before the void date.' },
-  };
+    edgeCases: {
+      postponed: 'Voids if the meeting does not sit before the void date.',
+      'no publication': 'If the CBN publishes no communique by the void date, the market voids.',
+    },
+  });
 
   async function person(email: string, role: UserRole = 'user') {
     const { userId } = await auth.signup({
@@ -197,6 +226,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
       activationPath: 'seeded',
     });
@@ -246,7 +276,7 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
         amount: '100',
         requestId: 'after-proposal',
       }),
-    ).rejects.toThrow(/trading is closed/);
+    ).rejects.toThrow(/Trading closed/);
 
     // 2. The window is real: nobody can finalise inside it.
     await expect(
@@ -444,11 +474,14 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
         amount: '500',
         requestId: 'late-trade',
       }),
-    ).rejects.toThrow(/froze when the event started/);
+    ).rejects.toThrow(/Trading closed/);
 
-    expect(await flow.freezeDueMarkets()).toBe(1);
-    const frozen = await prisma.market.findUniqueOrThrow({ where: { id: marketId } });
-    expect(frozen.state).toBe('pending_resolution');
+    // The sweep that flips the state is `MarketFreezeService`, exercised in
+    // `market/freeze.integration.test.ts`. What matters here is that the money
+    // path does not wait for it: the market still reads `active` above, and the
+    // trade is refused anyway.
+    const still = await prisma.market.findUniqueOrThrow({ where: { id: marketId } });
+    expect(still.state).toBe('active');
   });
 
   describe('four-eyes approvals', () => {
@@ -528,6 +561,73 @@ describe.skipIf(!TEST_DATABASE_URL)('resolution, disputes and approvals (integra
       const stuck = await prisma.approval.findUniqueOrThrow({ where: { id: again.id } });
       expect(stuck.state).toBe('pending');
       expect(stuck.executedAt).toBeNull();
+    });
+
+    it('reopens a frozen market only on a second signature, and only pre-settlement', async () => {
+      const finance = await person('u-finance@example.ng', 'finance');
+      const boss = await staffWith2fa('u-admin@example.ng', 'admin');
+      const creator = await person('u-creator@example.ng');
+      const { marketId } = await liveMarket(creator.userId);
+
+      await prisma.market.update({
+        where: { id: marketId },
+        data: { state: 'frozen', frozenAt: new Date(), freezeReason: 'the event started' },
+      });
+      const reopensAt = new Date(Date.now() + 6 * 3_600_000);
+
+      const approval = await approvals.propose({
+        actionType: 'market.unfreeze',
+        payload: { marketId, freezeAt: reopensAt.toISOString() },
+        reason: 'The fixture was postponed after we froze; nothing has been played.',
+        actor: finance,
+      });
+
+      // One signature does nothing. Reopening hands an informed trader a market
+      // full of people who have not seen the score, which is the asymmetry the
+      // freeze exists to prevent — performed deliberately.
+      await expect(approvals.approve({ approvalId: approval.id, actor: finance })).rejects.toThrow(
+        /four eyes means a second person/,
+      );
+      expect((await prisma.market.findUniqueOrThrow({ where: { id: marketId } })).state).toBe(
+        'frozen',
+      );
+
+      await approvals.approve({ approvalId: approval.id, actor: boss, totpCode: boss.code() });
+
+      const reopened = await prisma.market.findUniqueOrThrow({ where: { id: marketId } });
+      expect(reopened.state).toBe('active');
+      expect(reopened.frozenAt).toBeNull();
+      expect(reopened.freezeReason).toBeNull();
+      // The clock moved with it. Reopening without a new freeze time would
+      // re-freeze on the next sweep, which reads as the control being broken.
+      expect(reopened.freezeAt?.toISOString()).toBe(reopensAt.toISOString());
+      const marked = await prisma.marketAnnotation.findFirst({
+        where: { marketId, type: 'freeze' },
+        orderBy: { ts: 'desc' },
+      });
+      expect(marked?.label).toMatch(/reopened/i);
+    });
+
+    it('refuses to reopen anything that is not frozen', async () => {
+      const finance = await person('v-finance@example.ng', 'finance');
+      const boss = await staffWith2fa('v-admin@example.ng', 'admin');
+      const creator = await person('v-creator@example.ng');
+      const { marketId } = await liveMarket(creator.userId);
+
+      await prisma.market.update({ where: { id: marketId }, data: { state: 'dispute_window' } });
+
+      const approval = await approvals.propose({
+        actionType: 'market.unfreeze',
+        payload: { marketId, freezeAt: new Date(Date.now() + 3_600_000).toISOString() },
+        reason: 'Somebody asked for the market to be reopened for more trading.',
+        actor: finance,
+      });
+
+      // A market in its dispute window has a proposed result. Reopening it
+      // would be trading against a known outcome.
+      await expect(
+        approvals.approve({ approvalId: approval.id, actor: boss, totpCode: boss.code() }),
+      ).rejects.toThrow(/only a frozen market can be reopened/);
     });
 
     it('voids a live market through the workflow and refunds everyone', async () => {

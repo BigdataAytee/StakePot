@@ -6,6 +6,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { AdminAuditService } from '../audit/admin-audit.service';
 import { ThreadService } from '../community-layer/thread.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { PushSender } from '../notifications/push.sender';
+import { EmailSender } from '../notifications/email.sender';
+import { SmsSender } from '../notifications/sms.sender';
 import { TokenRevocationService } from '../auth/token-revocation.service';
 import { AuthService } from '../auth/auth.service';
 import { LedgerService } from '../ledger/ledger.service';
@@ -14,6 +18,7 @@ import type { PrismaService } from '../prisma/prisma.service';
 import type { PriceCacheService } from '../realtime/price-cache.service';
 import { RgService } from '../rg/rg.service';
 import { StatusService } from '../status/status.service';
+import { testOrderBook } from '../testing/order-book';
 import { resetDatabase } from '../testing/reset';
 import { TradeQueueService } from '../trade/trade-queue.service';
 import { TradeService } from '../trade/trade.service';
@@ -68,8 +73,14 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
       config,
       { publish: async () => undefined } as unknown as PriceCacheService,
       new RgService(prisma, config),
+      testOrderBook(prisma, ledger, wallet),
     );
-    queue = new TradeQueueService(trades, prisma, new ThreadService(prisma, config));
+    queue = new TradeQueueService(
+      trades,
+      prisma,
+      new ThreadService(prisma, config),
+      new NotificationsService(prisma, new PushSender(prisma), new EmailSender(), new SmsSender()),
+    );
     await queue.onModuleInit();
     abuse = new AbuseService(
       prisma,
@@ -356,7 +367,7 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
         marketId: m.id,
         outcomeId: m.outcomes[0]!.id,
         userId: washer,
-        shares: bought.shares.toString(),
+        shares: bought.trade!.shares.toString(),
         requestId: `wash-sell-${cycle}-${washer}`,
       });
     }
@@ -385,7 +396,7 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
         marketId: m.id,
         outcomeId: m.outcomes[0]!.id,
         userId: washer,
-        shares: bought.shares.toString(),
+        shares: bought.trade!.shares.toString(),
         requestId: `rewash-sell-${cycle}-${washer}`,
       });
     }
@@ -417,7 +428,7 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
         marketId: m.id,
         outcomeId: m.outcomes[0]!.id,
         userId: washer,
-        shares: bought.shares.toString(),
+        shares: bought.trade!.shares.toString(),
         requestId: `clr-sell-${cycle}-${washer}`,
       });
     }
@@ -523,7 +534,7 @@ describe.skipIf(!TEST_DATABASE_URL)('hardening (integration)', () => {
       marketId: m.id,
       outcomeId: m.outcomes[1]!.id,
       userId: bob,
-      shares: new Decimal(bought.shares.toString()).div(2).toString(),
+      shares: new Decimal(bought.trade!.shares.toString()).div(2).toString(),
       requestId: `aud-c-${bob}`,
     });
 

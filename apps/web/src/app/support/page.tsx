@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { SiteFooter } from '@/components/site-footer';
 
 import { API_URL } from '@/lib/api';
+import { PageShell } from '@/components/market/page-shell';
 
 interface Ticket {
   id: string;
@@ -82,7 +83,7 @@ export default function SupportPage() {
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-8">
+    <PageShell width="narrow">
       <h1 className="text-xl font-black">Support</h1>
       <p className="mt-2 text-md text-text-muted">
         Tell us what happened and we will come back to you. Payout questions get the fastest answer;
@@ -110,7 +111,7 @@ export default function SupportPage() {
           onChange={(event) => setSubject(event.target.value)}
           placeholder="One line: what is wrong?"
           aria-label="Subject"
-          className="w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-rise"
+          className="w-full rounded-md border border-border bg-surface px-3 py-2.5 focus:border-rise"
         />
         <textarea
           value={body}
@@ -118,7 +119,7 @@ export default function SupportPage() {
           rows={4}
           placeholder="What happened, and when?"
           aria-label="What happened"
-          className="w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-rise"
+          className="w-full rounded-md border border-border bg-surface px-3 py-2.5 focus:border-rise"
         />
 
         {error !== null && <p className="text-sm text-fall">{error}</p>}
@@ -163,6 +164,6 @@ export default function SupportPage() {
         )}
       </section>
       <SiteFooter />
-    </main>
+    </PageShell>
   );
 }

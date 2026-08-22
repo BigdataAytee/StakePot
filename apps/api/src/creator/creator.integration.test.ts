@@ -8,6 +8,8 @@ import { CommunityService } from '../community/community.service';
 import { SeedService } from '../community/seed.service';
 import { MarketVoidService } from '../community/void.service';
 import type { MarketTemplate } from '../community/market-template';
+import { MarketHealthService } from '../market/health.service';
+import { approvalAnswers, compliantTemplate } from '../testing/templates';
 import { LedgerService } from '../ledger/ledger.service';
 import { EmailSender } from '../notifications/email.sender';
 import { NotificationsService } from '../notifications/notifications.service';
@@ -47,18 +49,28 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
   let opportunities: OpportunityService;
   let community: CommunityService;
 
-  const template: MarketTemplate = {
+  const template: MarketTemplate = compliantTemplate({
     question: 'Will the Super Eagles beat Ghana in the next qualifier?',
     outcomes: [
-      { label: 'Yes', criteria: 'A Nigeria win at full time, per the CAF match report.' },
-      { label: 'No', criteria: 'A draw or a Ghana win at full time, per the CAF match report.' },
+      {
+        label: 'Yes',
+        criteria: 'The CAF match report records a Nigeria win at full time, read at 23:59 WAT.',
+      },
+      {
+        label: 'No',
+        criteria:
+          'The CAF match report records a draw or a Ghana win at full time, read at 23:59 WAT.',
+      },
     ],
     sourceName: 'CAF',
-    sourceUrl: 'https://www.cafonline.com/',
+    sourceUrl: 'https://www.cafonline.com/africa-cup-of-nations/matches/',
     eventDate: new Date(Date.now() + 20 * 86_400_000).toISOString(),
     voidDate: new Date(Date.now() + 27 * 86_400_000).toISOString(),
-    edgeCases: { abandoned: 'Void if the match is abandoned.' },
-  };
+    edgeCases: {
+      abandoned: 'Void if the match is abandoned.',
+      'no publication': 'If CAF publishes no match report by the void date, the market voids.',
+    },
+  });
 
   beforeAll(async () => {
     prisma = new PrismaClient({
@@ -86,7 +98,13 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     );
     creators = new CreatorService(prisma, config, notifications);
     analytics = new CreatorAnalyticsService(prisma);
-    autopsies = new AutopsyService(prisma, analytics, creators, notifications);
+    autopsies = new AutopsyService(
+      prisma,
+      analytics,
+      creators,
+      notifications,
+      new MarketHealthService(prisma),
+    );
     nudges = new NudgeService(prisma, config, notifications, analytics);
     opportunities = new OpportunityService(prisma, config, analytics);
     const seeds = new SeedService(prisma, config, wallet, voids, creators);
@@ -146,11 +164,11 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
   it('refuses a third market at level 1 — the cap is enforced, not described', async () => {
     const creatorId = await person('capped@example.com');
 
-    await community.create({ creatorId, template, liquidityParam: '50000' });
-    await community.create({ creatorId, template, liquidityParam: '50000' });
+    await community.create({ creatorId, template, liquidityParam: '50000', ...approvalAnswers() });
+    await community.create({ creatorId, template, liquidityParam: '50000', ...approvalAnswers() });
 
     await expect(
-      community.create({ creatorId, template, liquidityParam: '50000' }),
+      community.create({ creatorId, template, liquidityParam: '50000', ...approvalAnswers() }),
     ).rejects.toThrow(/2 markets at a time/);
   });
 
@@ -167,11 +185,13 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const first = await community.create({
       creatorId: standard,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
     const second = await community.create({
       creatorId: promoted,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 
@@ -192,6 +212,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 
@@ -290,6 +311,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 
@@ -333,6 +355,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
     await creators.ensureProfile(creatorId);
@@ -356,6 +379,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 
@@ -377,6 +401,39 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     expect(told).not.toBeNull();
   });
 
+  it('carries the Part 5 flags that fired into the post-mortem (rule 43)', async () => {
+    const creatorId = await person('flagged@example.com');
+    const { marketId } = await community.create({
+      creatorId,
+      template,
+      ...approvalAnswers(),
+      liquidityParam: '50000',
+    });
+    await creators.ensureProfile(creatorId);
+
+    // What the monitoring sweep would have written while this was live: it ran
+    // lopsided for three days, and recovered. On its final split alone the
+    // market looks fine, which is precisely why the flag has to survive.
+    await prisma.marketHealthFlag.create({
+      data: {
+        marketId,
+        rule: '35',
+        severity: 'watch',
+        message: 'Running 82/18 after 71h. Note it for the next retune.',
+        firstFiredAt: new Date('2026-03-01T09:00:00Z'),
+        lastFiredAt: new Date('2026-03-04T09:00:00Z'),
+        firings: 288,
+        clearedAt: new Date('2026-03-04T09:15:00Z'),
+      },
+    });
+
+    await autopsies.record({ marketId, kind: 'voided', voidReason: 'the window closed empty' });
+
+    const written = await autopsies.forMarket(marketId);
+    expect(written?.warnings.map((warning) => warning.rule)).toEqual(['35']);
+    expect(written?.warnings[0]?.clearedAt).not.toBeNull();
+  });
+
   // ------------------------------------------------------------- analytics
 
   it('counts views by source and refuses to invent a conversion rate', async () => {
@@ -384,6 +441,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 
@@ -411,6 +469,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 
@@ -460,6 +519,7 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const { marketId } = await community.create({
       creatorId,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
     await prisma.market.update({ where: { id: marketId }, data: { state: 'active' } });
@@ -514,11 +574,13 @@ describe.skipIf(!TEST_DATABASE_URL)('creator platform (integration)', () => {
     const firstMarket = await community.create({
       creatorId: first,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
     const secondMarket = await community.create({
       creatorId: second,
       template,
+      ...approvalAnswers(),
       liquidityParam: '50000',
     });
 

@@ -7,6 +7,7 @@ import { indexOf, toEngineState } from '../market/market-state';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SYSTEM_PLATFORM_ACCOUNT, type Posting } from '../ledger/posting';
+import { settleMatched, type MatchedHolding } from '../orderbook/settlement';
 
 export class ResolutionError extends Error {
   constructor(message: string) {
@@ -32,6 +33,10 @@ export interface ResolveOutcome {
   readonly creatorLegs: readonly { userId: string; amount: Decimal }[];
   /** The conduct bond returned to the creator on a clean resolution (Part 3 §5). */
   readonly bondRefunded: Decimal;
+  /** Paid out of the matched pool — ₦1 a share, funded entirely by its losers. */
+  readonly matchedPaid: Decimal;
+  /** Collateral the matched pool gave up. Equal to `matchedPaid`, by construction. */
+  readonly matchedReleased: Decimal;
 }
 
 const dec = (v: Decimal | { toString(): string }): Prisma.Decimal =>
@@ -145,8 +150,29 @@ export class ResolutionService {
         where: { marketId: input.marketId, fundClass: 'user_escrow' },
         _sum: { amount: true },
       });
+
+      /*
+        Escrow that belongs to the order book, subtracted before the pot claims
+        any of it.
+
+        This is the single most important line in the hybrid design. `user_escrow`
+        is one fund class and both legs use it, so without this subtraction the
+        pot's settlement would release a matched trader's collateral and divide
+        it among pot holders — the two pools cross-funding each other, in the
+        one direction where nobody would notice until a market with both legs
+        settled short.
+
+        Read by ledger type rather than by summing the columns: `order_lock`
+        less `order_release` is exactly "still locked against an open order, or
+        standing behind a matched position", derived the same way the figure it
+        is subtracted from is. Two numbers of the same kind subtract; a column
+        total and a ledger total are a guess.
+      */
+      const bookEscrow = await this.orderBookEscrow(tx, input.marketId);
+
       for (const row of escrowRows) {
-        const escrowed = new Decimal(row._sum.amount?.toString() ?? '0');
+        const total = new Decimal(row._sum.amount?.toString() ?? '0');
+        const escrowed = total.minus(bookEscrow.get(row.userId) ?? new Decimal(0));
         if (escrowed.lte(0)) continue;
         const isCreatorBond = bondHeld.gt(0) && row.userId === bond?.creatorId;
         const staked = isCreatorBond ? escrowed.minus(bondHeld) : escrowed;
@@ -263,6 +289,20 @@ export class ResolutionService {
       // share ratios the trading happened to produce.
       balanceOnLargestPayout(postings);
 
+      /*
+        The matched pool, settled after the pot's residual has been closed and
+        never before it.
+
+        Order matters here for a dull reason worth stating: `balanceOnLargestPayout`
+        folds the *pot's* rounding residual into a pot payout, and it finds that
+        payout by scanning the postings. Matched legs are exact — ₦1 a share,
+        no division, no residual — so letting them into that scan would let a
+        pot rounding error land on a matched holder's exact payout, which is the
+        one number on this platform that is promised not to move.
+      */
+      const matched = await this.settleMatchedPool(tx, input.marketId, input.winningOutcomeId);
+      postings.push(...matched.postings);
+
       await this.ledger.post(tx, postings, `resolve:${input.marketId}`);
 
       // One market, one resolution record. Where a result was proposed and sat
@@ -328,8 +368,72 @@ export class ResolutionService {
         payouts,
         creatorLegs,
         bondRefunded: bondHeld,
+        matchedPaid: matched.paid,
+        matchedReleased: matched.released,
       };
     });
+  }
+
+  /**
+   * Escrow this market is holding for the order book, per user.
+   *
+   * `order_lock` less `order_release`: money still locked behind an open order,
+   * plus the collateral behind every matched position. Both are held in
+   * `user_escrow` alongside pot stake, and the pot must not release either.
+   */
+  private async orderBookEscrow(tx: Tx, marketId: string): Promise<Map<string, Decimal>> {
+    const rows = await tx.ledgerEntry.groupBy({
+      by: ['userId'],
+      where: {
+        marketId,
+        fundClass: 'user_escrow',
+        type: { in: ['order_lock', 'order_release'] },
+      },
+      _sum: { amount: true },
+    });
+    return new Map(
+      rows.map((row) => [row.userId, new Decimal(row._sum.amount?.toString() ?? '0')]),
+    );
+  }
+
+  /**
+   * Settle the matched pool and clear it.
+   *
+   * Every open order was cancelled and refunded at freeze, so anything still
+   * locked here is collateral behind a position — which means the pool's escrow
+   * is exactly ₦1 per paired share and the winners are owed exactly that.
+   *
+   * The positions are zeroed rather than deleted: a settled market's ticket
+   * still shows what you held and what it paid, and a deleted row cannot.
+   */
+  private async settleMatchedPool(
+    tx: Tx,
+    marketId: string,
+    winningOutcomeId: string,
+  ): Promise<{ postings: Posting[]; paid: Decimal; released: Decimal }> {
+    const rows = await tx.matchedPosition.findMany({ where: { marketId } });
+    if (rows.length === 0) {
+      return { postings: [], paid: new Decimal(0), released: new Decimal(0) };
+    }
+
+    const holdings: MatchedHolding[] = rows.map((row) => ({
+      userId: row.userId,
+      outcomeId: row.outcomeId,
+      side: row.side,
+      shares: new Decimal(row.shares.toString()),
+      escrowed: new Decimal(row.escrowed.toString()),
+    }));
+
+    const settled = settleMatched({ marketId, winningOutcomeId, holdings });
+
+    for (const row of rows) {
+      await tx.matchedPosition.update({
+        where: { id: row.id },
+        data: { escrowed: dec(new Decimal(0)) },
+      });
+    }
+
+    return settled;
   }
 
   /**

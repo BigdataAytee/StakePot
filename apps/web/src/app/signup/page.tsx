@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { API_URL } from '@/lib/api';
 import { AuthShell } from '@/components/auth-shell';
 import { PasswordField } from '@/components/password-field';
 import { money } from '@/lib/format';
+import { safeNext } from '@/lib/pending-trade';
 import { setToken } from '@/lib/session';
 import { usePublicConfig } from '@/lib/public-config';
 
@@ -23,6 +24,14 @@ import { usePublicConfig } from '@/lib/public-config';
 export default function SignupPage() {
   const router = useRouter();
   const config = usePublicConfig();
+  // §2.17: `?ref=CODE` off a shared link. Read once, on the client, because
+  // the whole page is client-rendered and a Suspense boundary for one query
+  // parameter would cost more than it saves.
+  const [referralCode, setReferralCode] = useState('');
+  useEffect(() => {
+    const code = new URLSearchParams(window.location.search).get('ref');
+    if (code !== null) setReferralCode(code.trim().toUpperCase());
+  }, []);
   const [contact, setContact] = useState('');
   const [password, setPassword] = useState('');
   const [ageAttested, setAgeAttested] = useState(false);
@@ -44,6 +53,9 @@ export default function SignupPage() {
           ...(looksLikeEmail ? { email: contact.trim() } : { phone: contact.trim() }),
           password,
           ageAttested,
+          // A wrong code is ignored server-side rather than refused — a bad
+          // link must never be the reason somebody cannot open an account.
+          ...(referralCode.trim().length === 0 ? {} : { referralCode: referralCode.trim() }),
         }),
       });
 
@@ -67,7 +79,18 @@ export default function SignupPage() {
       // a code box between somebody and the thing they just signed up for reads
       // as a wall whether or not it is one. Verification is invited from the
       // header and required where money leaves; it is not the price of entry.
-      router.push('/markets');
+      /*
+       * Back where they came from, when they were sent here from somewhere.
+       *
+       * `?next=` is read off `window.location` inside the handler rather than
+       * with `useSearchParams`, which would drag this page into a Suspense
+       * boundary for a value only ever needed on submit. It goes through
+       * `safeNext` because it arrives from the query string: an unchecked
+       * redirect target on a login page is an open redirect, and the moment
+       * after authentication is exactly when somebody will follow it.
+       */
+      const next = safeNext(new URLSearchParams(window.location.search).get('next'));
+      router.push(next ?? '/');
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'that signup did not go through');
       setBusy(false);
@@ -94,7 +117,7 @@ export default function SignupPage() {
             onChange={(event) => setContact(event.target.value)}
             placeholder="you@example.com or 08031234567"
             autoComplete="username"
-            className="rounded-md border border-border bg-surface-raised px-3 py-3 text-md outline-none focus-visible:border-rise"
+            className="rounded-md border border-border bg-surface-raised px-3 py-3 text-md focus-visible:border-rise"
           />
           <span className="font-mono text-xs text-text-muted">
             {contact.length === 0
@@ -113,6 +136,14 @@ export default function SignupPage() {
           minLength={10}
           hint="At least 10 characters."
         />
+
+        {referralCode !== '' && (
+          <p className="rounded-md border border-rise/40 bg-rise-bg px-3 py-2 text-sm">
+            You were invited with code <span className="font-mono font-bold">{referralCode}</span>.
+            Whoever sent it is paid once you verify your contact and place a first stake — nothing
+            comes out of your balance.
+          </p>
+        )}
 
         {/*
           A 16px checkbox gating the only button on the screen is the kind of

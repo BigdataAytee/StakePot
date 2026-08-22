@@ -22,10 +22,24 @@ export class PublicConfigController {
 
   @Get('public')
   async publicConfig() {
-    const [starterBalance, signupBonus, exitFeeRate] = await Promise.all([
+    const [
+      starterBalance,
+      signupBonus,
+      exitFeeRate,
+      activationPool,
+      activationBackers,
+      activationMode,
+    ] = await Promise.all([
       this.config.get('starter_balance_spc'),
       this.config.get('signup_bonus_spc'),
       this.config.get('exit_fee_rate'),
+      // §7.2e's activation meters need to know what they are measuring
+      // against, and the thresholds are §6.4b config rather than constants —
+      // a meter with a hardcoded target would quietly lie the day somebody
+      // proposes a change to them.
+      this.config.get('community_activation_pool_spc'),
+      this.config.get('community_activation_backers'),
+      this.config.get('community_activation_mode'),
     ]);
 
     return {
@@ -33,6 +47,10 @@ export class PublicConfigController {
       signupBonusSpc: String(signupBonus),
       /** As a rate (0.01), because §2.3 states it as a percentage of proceeds. */
       exitFeeRate,
+      activationPoolSpc: String(activationPool),
+      activationBackers: Number(activationBackers),
+      /** `per_outcome` is the Rulebook rule; `total_pot` is §2.9's amendment. */
+      activationMode: String(activationMode),
     };
   }
 }

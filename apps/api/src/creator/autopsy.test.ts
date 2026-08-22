@@ -95,4 +95,55 @@ describe('market autopsy', () => {
     expect(typeof autopsy.tip).toBe('string');
     expect(autopsy.tip).toContain('criteria');
   });
+  // -------------------------------------------- checklist Part 5, at settlement
+
+  it('names the flag that fired even when the market settled looking healthy', () => {
+    // Rule 43 asks the post-mortem for "what you'd change", and the final split
+    // is exactly the number that cannot say it: this market ended 55/45, which
+    // is the shape the platform wants, after a day in which one account held
+    // most of it. Without the flag the review would congratulate the creator.
+    const autopsy = autopsyFor(
+      {
+        ...RESOLVED,
+        warnings: [
+          { rule: '36', message: 'One account holds 71% of a 3-trader market this early.' },
+        ],
+      },
+      DEFAULT_AUTOPSY_RULES,
+    );
+
+    expect(autopsy.signals.flaggedRules).toEqual(['36']);
+    expect(autopsy.tip).toContain('One account held most of this market');
+  });
+
+  it('puts a slow settlement ahead of a split verdict, and a dispute ahead of both', () => {
+    const late: AutopsyFacts = {
+      ...RESOLVED,
+      finalSplit: 0.93,
+      warnings: [
+        { rule: '39', message: 'The event was 4 days ago and nothing has been proposed.' },
+      ],
+    };
+    expect(autopsyFor(late, DEFAULT_AUTOPSY_RULES).tip).toContain('within hours');
+
+    // A dispute still outranks it: the criteria failing is the thing that cost
+    // the creator their clean record, and it is the thing to say.
+    const disputed = autopsyFor({ ...late, disputed: true }, DEFAULT_AUTOPSY_RULES);
+    expect(disputed.tip).toContain('exact field on the source page');
+  });
+
+  it('says nothing new about a market that was flagged and recovered', () => {
+    // Rule 35 fired at 48 hours and the market converged. It settled balanced,
+    // undisputed and well-staked — the flag did its job while it was still
+    // fixable, and repeating it now would be a scolding, not a lesson.
+    const autopsy = autopsyFor(
+      {
+        ...RESOLVED,
+        warnings: [{ rule: '35', message: 'Running 82/18 after 71h.' }],
+      },
+      DEFAULT_AUTOPSY_RULES,
+    );
+    expect(autopsy.signals.flaggedRules).toEqual(['35']);
+    expect(autopsy.tip).toBeNull();
+  });
 });

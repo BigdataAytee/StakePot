@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { freezeAtFor } from '@stakeam/rules';
 
 import { AdminAuditService } from '../audit/admin-audit.service';
 import { SeedService } from '../community/seed.service';
-import { screenTemplate, type MarketTemplate } from '../community/market-template';
+import { blockersOf, screenTemplate, type MarketTemplate } from '../community/market-template';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -40,6 +41,10 @@ export class OfficialMarketService {
     ip: string;
     liquidityParam?: string;
     seedPerOutcome?: string;
+    /** The review screen's answers to the rules only a person can settle. */
+    confirmations?: Record<string, boolean>;
+    /** Rules 5 and 16, attested by the staff member opening the market. */
+    attestedNoInfluence?: boolean;
     now?: Date;
   }): Promise<{ marketId: string; seeded: string }> {
     const now = params.now ?? new Date();
@@ -56,14 +61,38 @@ export class OfficialMarketService {
     }
 
     const template = draft.templateJson as unknown as MarketTemplate;
-    const problems = screenTemplate(template, { now });
-    if (problems.length > 0) {
+    // Re-run the checklist at the moment of publishing, not only when the draft
+    // was filed. A draft can sit in the queue past its own event date, and the
+    // rules that depend on the clock — the void date, the attention window —
+    // are only true as of the day somebody looked.
+    //
+    // `wizard`, because opening an AI draft *is* the admin path: whatever the
+    // Studio's review screen showed the reviewer has to be what the service
+    // enforces, or the screen is decoration.
+    const report = screenTemplate(
+      template,
+      {
+        now,
+        // The reviewer answered these on the way in. Passing them through means
+        // a draft cannot be published by calling this method directly with the
+        // questions unanswered.
+        confirmations: params.confirmations ?? {},
+        attestedNoInfluence: params.attestedNoInfluence ?? false,
+      },
+      'wizard',
+    );
+    if (report.blocked) {
       throw new OfficialMarketError(
-        `this draft no longer passes the screen: ${problems.map((p) => p.message).join(' ')}`,
+        `this draft no longer passes the checklist: ${blockersOf(report).join(' ')}`,
       );
     }
 
     const feeBps = await this.config.get('official_fee_bps');
+    // Rule 22: trading stops when the event starts, less the buffer. Written at
+    // creation rather than derived at read time, because it can be amended —
+    // and once it has been, the amended time is the one the money path obeys.
+    const eventDate = new Date(template.eventDate);
+    const freezeAt = freezeAtFor(eventDate, await this.config.get('freeze_buffer_seconds'));
     const liquidityParam = params.liquidityParam ?? '50000';
 
     const labels = [
@@ -82,7 +111,8 @@ export class OfficialMarketService {
         sourceUrl: template.sourceUrl,
         criteriaJson: criteria,
         edgeCasesJson: template.edgeCases as Prisma.InputJsonValue,
-        eventDate: new Date(template.eventDate),
+        eventDate,
+        freezeAt,
         voidDate: new Date(template.voidDate),
         liquidityParam: new Prisma.Decimal(liquidityParam),
         feeBps,
@@ -124,6 +154,67 @@ export class OfficialMarketService {
     });
 
     return { marketId: market.id, seeded: applied.total.toString() };
+  }
+
+  /**
+   * Add to a live official market's pot, symmetrically, and write it down.
+   *
+   * The seeding that already existed only ran at the moment a market opened,
+   * from its own defaults, with nobody able to choose an amount — so an
+   * operator watching a thin market had no way to do anything about it. This
+   * is that action.
+   *
+   * The money is `SeedService`'s job and the guards live with it, where the
+   * row lock is. What belongs here is the record: who did it, to which market,
+   * for how much, and why. A platform seed changes what every trader in that
+   * market is playing for, so "somebody decided this" has to be a row, not an
+   * inference from a jump in the pot.
+   */
+  async topUpSeed(params: {
+    marketId: string;
+    perOutcome: string;
+    reason: string;
+    staffId: string;
+    ip: string;
+    requestId: string;
+  }): Promise<{ marketId: string; added: string; potAfter: string; perOutcome: string }> {
+    const reason = params.reason.trim();
+    if (reason.length < 3) {
+      throw new OfficialMarketError('a platform seed needs a reason — it goes in the audit log');
+    }
+
+    const before = await this.prisma.market.findUnique({
+      where: { id: params.marketId },
+      select: { potTotal: true, state: true },
+    });
+    if (before === null) throw new OfficialMarketError('no such market');
+
+    const applied = await this.seeds.topUpOfficial({
+      marketId: params.marketId,
+      perOutcome: params.perOutcome,
+      requestId: params.requestId,
+    });
+
+    await this.audit.record({
+      staffId: params.staffId,
+      action: 'market.seed:top_up',
+      targetRef: `market:${params.marketId}`,
+      before: { potTotal: before.potTotal.toString(), state: before.state },
+      after: {
+        perOutcome: applied.perOutcome.toString(),
+        added: applied.total.toString(),
+        potTotal: applied.potAfter.toString(),
+        reason,
+      },
+      ip: params.ip,
+    });
+
+    return {
+      marketId: params.marketId,
+      added: applied.total.toString(),
+      perOutcome: applied.perOutcome.toString(),
+      potAfter: applied.potAfter.toString(),
+    };
   }
 
   /** Refuse a draft, with the reason kept on the row. */

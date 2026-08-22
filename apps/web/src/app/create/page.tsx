@@ -7,9 +7,13 @@ import { creator, type Opportunity } from '@/lib/creator-api';
 import { useFieldArray, useForm } from 'react-hook-form';
 import { z } from 'zod';
 
+import type { RuleReport } from '@stakeam/rules';
+
 import { BalanceMeter } from '@/components/balance-meter';
+import { RuleReportPanel } from '@/components/rules/rule-report';
+import { PageShell, PageTitle } from '@/components/market/page-shell';
 import { API_URL } from '@/lib/api';
-import { TICKET_TEMPLATES, type TicketTemplate } from '@/lib/templates';
+import { fetchTemplates, type TicketTemplate } from '@/lib/templates';
 
 /**
  * Community market creation (§2.5, §2.14a).
@@ -44,6 +48,13 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 interface CopilotResponse {
+  /**
+   * The co-pilot's receipt, cited by the submission.
+   *
+   * Absent on `balance-check`, which re-scores an edit rather than issuing a
+   * new one — so the receipt from the original run is the one that travels.
+   */
+  runId?: string;
   template: {
     question: string;
     outcomes: { label: string; criteria: string }[];
@@ -57,7 +68,24 @@ interface CopilotResponse {
   balanced: boolean;
   engagement: number;
   rationale: string;
-  problems: { code: string; message: string }[];
+  /** The whole checklist, rule by rule — see RuleReportPanel. */
+  report: RuleReport;
+  /** §2.14e's warnings. Present on balance-check, absent on the co-pilot. */
+  risks?: Risk[];
+}
+
+/**
+ * §2.14e — "auto-void risk warnings *before* posting".
+ *
+ * Warnings, never refusals. A creator whose market voids loses no money — the
+ * bond comes back — but they lose the week they spent telling people to back
+ * it, and that is what this is trying to save them.
+ */
+interface Risk {
+  code: string;
+  message: string;
+  suggestion: string;
+  severity: 'high' | 'medium' | 'low';
 }
 
 /** `2026-08-21T10:13:00.000Z` → `2026-08-21T10:13`, what a datetime-local wants. */
@@ -75,6 +103,30 @@ export default function CreatePage() {
   const [estimate, setEstimate] = useState<number | null>(null);
   const [rationale, setRationale] = useState<string | null>(null);
   const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
+  const [risks, setRisks] = useState<Risk[] | null>(null);
+  // What the checklist made of the draft, as of the last co-pilot or balance
+  // check. Held so the creator can see it while they fix things, rather than
+  // meeting it for the first time as a refusal at submit.
+  const [report, setReport] = useState<RuleReport | null>(null);
+  const [conflictAttested, setConflictAttested] = useState(false);
+  /**
+   * Which of the two doors this draft came through (checklist Part 4).
+   *
+   * Community creation runs the same checklist as the Studio and is stricter
+   * in one way: a creator starts from a template or from the co-pilot, and
+   * cannot hand-write a market from nothing. The API verifies whichever is
+   * cited, so this is a receipt to carry rather than the rule itself.
+   */
+  const [origin, setOrigin] = useState<
+    { kind: 'template'; templateId: string } | { kind: 'copilot'; runId: string } | null
+  >(null);
+  const [library, setLibrary] = useState<TicketTemplate[]>([]);
+
+  useEffect(() => {
+    void fetchTemplates()
+      .then(setLibrary)
+      .catch(() => setLibrary([]));
+  }, []);
 
   // §2.14b's feed. Public, so it renders before anybody signs in — the whole
   // point is to show a would-be creator that there is demand waiting.
@@ -142,7 +194,9 @@ export default function CreatePage() {
       });
       setEstimate(Math.max(...body.estimates));
       setRationale(body.rationale);
+      setReport(body.report);
       setTemplate(null);
+      if (body.runId !== undefined) setOrigin({ kind: 'copilot', runId: body.runId });
     } catch (caught) {
       setError((caught as Error).message);
     } finally {
@@ -173,6 +227,8 @@ export default function CreatePage() {
           sourceUrl: values.sourceUrl,
           eventDate: new Date(values.eventDate).toISOString(),
           voidDate: new Date(values.voidDate).toISOString(),
+          activationPath: values.activationPath,
+          conflictAttested,
         }),
       });
       const body = (await response.json()) as CopilotResponse & { message?: string };
@@ -181,6 +237,8 @@ export default function CreatePage() {
 
       setEstimate(Math.max(...body.estimates));
       setRationale(body.rationale);
+      setReport(body.report);
+      setRisks(body.risks ?? []);
     } catch (caught) {
       setError((caught as Error).message);
     } finally {
@@ -190,6 +248,7 @@ export default function CreatePage() {
 
   function applyTemplate(picked: TicketTemplate): void {
     setTemplate(picked);
+    setOrigin({ kind: 'template', templateId: picked.id });
     form.reset({
       question: picked.question,
       outcomes: picked.outcomes,
@@ -211,10 +270,27 @@ export default function CreatePage() {
     }
 
     try {
+      if (origin === null) {
+        // The service refuses this anyway; saying so here means the creator
+        // reads it beside the two buttons that fix it rather than after a
+        // round trip.
+        setError(
+          'Start from a template above, or describe the market and let the co-pilot structure it.',
+        );
+        return;
+      }
+
       const response = await fetch(`${API_URL}/community/markets`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-        body: JSON.stringify(values),
+        body: JSON.stringify({
+          ...values,
+          // Rules 5 and 16. Collected here and, until now, dropped on the way
+          // out — so rule 16 failed every submission that came through this
+          // form while every service-level test passed.
+          attestedNoInfluence: conflictAttested,
+          origin,
+        }),
       });
       const body = (await response.json()) as { state?: string; reason?: string; message?: string };
       if (!response.ok) throw new Error(body.message ?? `Submission failed (${response.status})`);
@@ -229,36 +305,35 @@ export default function CreatePage() {
 
   if (submitted !== null) {
     return (
-      <main className="mx-auto max-w-2xl px-4 py-10">
-        <h1 className="text-xl font-black">
-          {submitted.state === 'rejected' ? 'Not this one' : 'Sent for review'}
-        </h1>
-        <p className="mt-3 text-md text-text-muted">
-          {submitted.reason ??
-            'A reviewer checks every new market before it opens. You keep your bond either way unless you settle dishonestly.'}
-        </p>
-        <a
-          href="/"
-          className="mt-6 inline-block font-semibold text-rise underline underline-offset-2"
-        >
-          Back to markets
-        </a>
-      </main>
+      <PageShell width="narrow">
+        <div className="rounded-xl border border-border p-6">
+          <h1 className="text-xl font-bold">
+            {submitted.state === 'rejected' ? 'Not this one' : 'Sent for review'}
+          </h1>
+          <p className="mt-2 text-base text-text-muted">
+            {submitted.reason ??
+              'A reviewer checks every new market before it opens. You keep your bond either way unless you settle dishonestly.'}
+          </p>
+          <a
+            href="/"
+            className="mt-5 inline-block font-semibold text-brand underline underline-offset-2"
+          >
+            Back to markets
+          </a>
+        </div>
+      </PageShell>
     );
   }
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-8">
-      <header className="mb-6">
-        <h1 className="text-xl font-black leading-tight">Talk your own</h1>
-        <p className="mt-2 text-md text-text-muted">
-          Open a market for your people to call. You put up a bond, you settle it against one named
-          source, and you earn a cut of the losing pool.
-        </p>
-      </header>
+    <PageShell width="narrow">
+      <PageTitle
+        title="Talk your own"
+        blurb="Open a market for your people to call. You put up a bond, you settle it against one named source, and you earn a cut of the losing pool."
+      />
 
       {opportunities.length > 0 && (
-        <section className="mb-8 rounded-md border border-money/40 bg-money/5 p-4">
+        <section className="mb-8 rounded-xl border border-rise/40 bg-rise-bg p-4">
           <h2 className="text-sm font-semibold">People are already asking</h2>
           <p className="mt-1 text-sm text-text-muted">
             Nobody has opened a market for these yet. The first one to does.
@@ -284,7 +359,7 @@ export default function CreatePage() {
         </section>
       )}
 
-      <section className="mb-8 rounded-md border border-border p-4">
+      <section className="mb-8 rounded-xl border border-border p-4">
         <h2 className="text-sm font-semibold">Say it how you would say it</h2>
         <p className="mt-1 text-sm text-text-muted">
           Type your question the way you would ask a friend. The co-pilot turns it into a proper
@@ -295,13 +370,13 @@ export default function CreatePage() {
           onChange={(event) => setIdea(event.target.value)}
           rows={2}
           placeholder="who go win the Surulere LGA chairmanship"
-          className="mt-3 w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-rise"
+          className="mt-3 w-full rounded-md border border-border bg-surface px-3 py-2.5 focus:border-brand"
         />
         <button
           type="button"
           disabled={thinking || idea.trim().length < 10}
           onClick={() => void askCopilot()}
-          className="mt-2 rounded-md bg-rise px-4 py-2.5 font-bold text-paper transition-transform active:scale-press disabled:opacity-40"
+          className="mt-2 rounded-md bg-brand px-4 font-bold h-11 text-paper transition-transform active:scale-press disabled:opacity-40"
         >
           {thinking ? 'Thinking…' : 'Draft it for me'}
         </button>
@@ -312,16 +387,16 @@ export default function CreatePage() {
           Start from a template
         </h2>
         <div className="mt-3 grid grid-cols-2 gap-2">
-          {TICKET_TEMPLATES.map((option) => (
+          {library.map((option) => (
             <button
               key={option.id}
               type="button"
               onClick={() => applyTemplate(option)}
               aria-pressed={template?.id === option.id}
-              className={`rounded-md border px-3 py-2.5 text-left text-sm transition-colors ${
+              className={`rounded-lg border px-3 py-2.5 text-left text-sm transition-colors ${
                 template?.id === option.id
-                  ? 'border-rise bg-rise/10'
-                  : 'border-border hover:border-rise'
+                  ? 'border-brand bg-brand/10'
+                  : 'border-border hover:border-brand'
               }`}
             >
               <span className="block font-semibold">{option.name}</span>
@@ -337,7 +412,7 @@ export default function CreatePage() {
             {...form.register('question')}
             rows={2}
             placeholder="Will the Super Eagles beat Ivory Coast on Saturday?"
-            className="w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-rise"
+            className="w-full rounded-md border border-border bg-surface px-3 py-2.5 focus:border-brand"
           />
         </Field>
 
@@ -348,7 +423,7 @@ export default function CreatePage() {
               type="button"
               disabled={thinking}
               onClick={() => void checkBalance()}
-              className="rounded-sm border border-border px-3 py-1.5 text-sm disabled:opacity-40"
+              className="h-11 shrink-0 rounded-md border border-border px-3 text-sm font-semibold hover:border-text disabled:opacity-40"
             >
               {thinking ? 'Checking…' : 'Check the balance'}
             </button>
@@ -362,7 +437,7 @@ export default function CreatePage() {
             <button
               type="button"
               onClick={() => outcomes.append({ label: '', criteria: '' })}
-              className="flex items-center gap-1 text-sm text-rise"
+              className="flex items-center gap-1 text-sm font-semibold text-brand"
             >
               <Plus size={14} /> Add outcome
             </button>
@@ -374,12 +449,12 @@ export default function CreatePage() {
 
           <div className="mt-3 space-y-3">
             {outcomes.fields.map((field, index) => (
-              <div key={field.id} className="rounded-md border border-border p-3">
+              <div key={field.id} className="rounded-lg border border-border p-3">
                 <div className="flex items-center gap-2">
                   <input
                     {...form.register(`outcomes.${index}.label`)}
                     placeholder="YES"
-                    className="w-32 rounded-sm border border-border bg-surface px-2 py-1.5 font-semibold outline-none focus:border-rise"
+                    className="h-11 w-32 rounded-md border border-border bg-surface px-3 font-semibold focus:border-brand"
                   />
                   {outcomes.fields.length > 2 && (
                     <button
@@ -395,7 +470,7 @@ export default function CreatePage() {
                 <input
                   {...form.register(`outcomes.${index}.criteria`)}
                   placeholder="What exactly makes this the result?"
-                  className="mt-2 w-full rounded-sm border border-border bg-surface px-2 py-1.5 text-sm outline-none focus:border-rise"
+                  className="mt-2 h-11 w-full rounded-md border border-border bg-surface px-3 text-sm focus:border-brand"
                 />
                 <p className="mt-1 text-sm text-fall">
                   {form.formState.errors.outcomes?.[index]?.criteria?.message}
@@ -409,7 +484,7 @@ export default function CreatePage() {
           <input
             {...form.register('sourceName')}
             placeholder="CBN official rate"
-            className="w-full rounded-md border border-border bg-surface px-3 py-2.5 outline-none focus:border-rise"
+            className="h-11 w-full rounded-md border border-border bg-surface px-3 focus:border-brand"
           />
         </Field>
 
@@ -417,23 +492,23 @@ export default function CreatePage() {
           <input
             {...form.register('sourceUrl')}
             placeholder="https://www.cbn.gov.ng/rates/"
-            className="w-full rounded-md border border-border bg-surface px-3 py-2.5 font-mono text-sm outline-none focus:border-rise"
+            className="h-11 w-full rounded-md border border-border bg-surface px-3 font-mono text-sm focus:border-brand"
           />
         </Field>
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Event date" error={form.formState.errors.eventDate?.message}>
             <input
               type="datetime-local"
               {...form.register('eventDate')}
-              className="w-full rounded-md border border-border bg-surface px-3 py-2.5 font-mono text-sm outline-none focus:border-rise"
+              className="h-11 w-full rounded-md border border-border bg-surface px-3 font-mono text-sm focus:border-brand"
             />
           </Field>
           <Field label="Voids after" error={form.formState.errors.voidDate?.message}>
             <input
               type="datetime-local"
               {...form.register('voidDate')}
-              className="w-full rounded-md border border-border bg-surface px-3 py-2.5 font-mono text-sm outline-none focus:border-rise"
+              className="h-11 w-full rounded-md border border-border bg-surface px-3 font-mono text-sm focus:border-brand"
             />
           </Field>
         </div>
@@ -443,12 +518,22 @@ export default function CreatePage() {
           onChange={(path) => form.setValue('activationPath', path)}
         />
 
+        <ConflictAttestation value={conflictAttested} onChange={setConflictAttested} />
+
+        {report !== null && (
+          <div className="mt-4">
+            <RuleReportPanel report={report} />
+          </div>
+        )}
+
+        {risks !== null && <RiskPanel risks={risks} />}
+
         {error !== null && <p className="text-sm text-fall">{error}</p>}
 
         <button
           type="submit"
           disabled={form.formState.isSubmitting}
-          className="w-full rounded-md bg-rise py-3.5 font-bold text-paper transition-transform active:scale-press disabled:opacity-40"
+          className="w-full rounded-md bg-brand py-3.5 font-bold text-paper transition-transform active:scale-press disabled:opacity-40"
         >
           {form.formState.isSubmitting ? 'Sending…' : 'Send for review'}
         </button>
@@ -458,7 +543,95 @@ export default function CreatePage() {
           when you settle it — or if it never gets off the ground.
         </p>
       </form>
-    </main>
+    </PageShell>
+  );
+}
+
+/**
+ * §2.14e's warnings, shown where the creator can still act on them.
+ *
+ * Ordered by severity and each one paired with what to do instead, because a
+ * warning with no suggestion is just discouragement. Nothing here blocks the
+ * submit button: deciding which questions are worth asking is not ours to
+ * make, and the market that fills against our expectations is the interesting
+ * one.
+ */
+function RiskPanel({ risks }: { risks: Risk[] }) {
+  if (risks.length === 0) {
+    return (
+      <p className="rounded-lg border border-rise/40 bg-rise-bg px-3 py-2 text-sm">
+        Nothing obvious stands in the way of this one filling.
+      </p>
+    );
+  }
+
+  const order = { high: 0, medium: 1, low: 2 } as const;
+  const sorted = [...risks].sort((a, b) => order[a.severity] - order[b.severity]);
+
+  return (
+    <section className="rounded-xl border border-border">
+      <h2 className="border-b border-border px-4 py-2.5 text-sm font-semibold">Before you post</h2>
+      <ul className="divide-y divide-border">
+        {sorted.map((risk) => (
+          <li key={risk.code} className="px-4 py-3">
+            <p className="flex items-baseline gap-2 text-sm font-semibold">
+              <span
+                className={`mt-0.5 size-2 shrink-0 rounded-full ${
+                  risk.severity === 'high'
+                    ? 'bg-fall'
+                    : risk.severity === 'medium'
+                      ? 'bg-money'
+                      : 'bg-border'
+                }`}
+                aria-hidden
+              />
+              {risk.message}
+            </p>
+            <p className="mt-1 pl-4 text-sm text-text-muted">{risk.suggestion}</p>
+          </li>
+        ))}
+      </ul>
+      <p className="border-t border-border px-4 py-2.5 text-sm text-text-muted">
+        None of this stops you posting. If it voids, every stake is refunded in full and your bond
+        comes back.
+      </p>
+    </section>
+  );
+}
+
+/**
+ * The Rulebook Part 3 attestation, asked plainly.
+ *
+ * Not buried in the terms: the creator settles this market themselves, and the
+ * one thing that makes that safe is them saying up front whether they can
+ * influence the result. Declaring costs nothing; hiding it forfeits the bond,
+ * and it is only fair to say that where the question is asked.
+ */
+function ConflictAttestation({
+  value,
+  onChange,
+}: {
+  value: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-3 rounded-lg border border-border p-3">
+      <input
+        type="checkbox"
+        checked={value}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-0.5 size-4 accent-brand"
+      />
+      <span className="text-sm">
+        <span className="font-semibold">
+          I have no influence over this result and no inside knowledge of it.
+        </span>
+        <span className="mt-0.5 block text-text-muted">
+          You settle this market against the source you named. If that is not true of you here, say
+          so — declaring it costs nothing, and hiding it forfeits your bond.
+        </span>
+      </span>
+    </label>
   );
 }
 
@@ -468,7 +641,7 @@ export default function CreatePage() {
  * Presented as a real trade-off rather than a default and an advanced option:
  * Path A costs nothing but has to fill on its own; Path B opens now because the
  * creator (or a syndicate) put money on every outcome at once. The one thing a
- * creator must not misread is that seeding is not betting — the seed is
+ * creator must not misread is that seeding is not taking a side — the seed is
  * symmetric, so it cannot pay off for the person who also settles the market.
  */
 function ActivationPathChooser({
@@ -495,15 +668,15 @@ function ActivationPathChooser({
   return (
     <section>
       <h2 className="text-sm font-semibold">How should it open?</h2>
-      <div className="mt-2 grid grid-cols-2 gap-2">
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
         {options.map((option) => (
           <button
             key={option.id}
             type="button"
             onClick={() => onChange(option.id)}
             aria-pressed={value === option.id}
-            className={`rounded-md border px-3 py-2.5 text-left transition-colors ${
-              value === option.id ? 'border-rise bg-rise/10' : 'border-border hover:border-rise'
+            className={`rounded-lg border px-3 py-2.5 text-left transition-colors ${
+              value === option.id ? 'border-brand bg-brand/10' : 'border-border hover:border-brand'
             }`}
           >
             <span className="block text-sm font-semibold">{option.title}</span>

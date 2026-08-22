@@ -8,7 +8,12 @@ import { OpportunityService } from '../creator/opportunity.service';
 import { AbuseService } from '../hardening/abuse.service';
 import { LedgerAuditService } from '../hardening/ledger-audit.service';
 import { LeaderboardService } from '../leaderboard/leaderboard.service';
+import { ResearchService } from '../intel/research.service';
+import { MarketHealthService } from '../market/health.service';
+import { MarketFreezeService } from '../market/freeze.service';
+import { MarketMakerService } from '../liquidity/market-maker.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { ReconciliationService } from '../reconciliation/reconciliation.service';
 import { ResolutionFlowService } from '../resolution/resolution-flow.service';
 import { SupportService } from '../support/support.service';
 import { CommunityService } from './community.service';
@@ -22,6 +27,16 @@ const QUEUE = 'funding-window';
  * fill or refund. `dispute` is the 48h window on a proposed result. Three
  * deadlines, three job ids, so a market that carries more than one cannot lose
  * one to another's.
+ *
+ * `health-sweep` runs Part 5 of the ticket-creation checklist over everything
+ * live — the lopsided split, the early whale, the settlement nobody has
+ * prepared — and records what fires, so rule 43's post-mortem can say what went
+ * wrong during the market rather than only how it ended.
+ *
+ * `research-sweep` is the intelligence layer's heartbeat. Without it nothing
+ * reads a source, so every context panel, evidence panel and dossier is
+ * permanently empty — and empty is exactly what "quiet news week" looks like,
+ * which is why it went unnoticed until somebody went looking for the caller.
  *
  * `freeze-sweep` is the odd one out: a repeatable job rather than a deadline,
  * flipping markets whose event has started into `pending_resolution` so the
@@ -39,7 +54,11 @@ type CloseKind =
   | 'opportunity-sweep'
   | 'leaderboard-sweep'
   | 'abuse-sweep'
-  | 'ledger-audit';
+  | 'health-sweep'
+  | 'research-sweep'
+  | 'reconciliation'
+  | 'ledger-audit'
+  | 'maker-sweep';
 
 interface CloseJob {
   readonly marketId: string;
@@ -66,12 +85,17 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
     private readonly community: CommunityService,
     private readonly seeds: SeedService,
     private readonly resolutions: ResolutionFlowService,
+    private readonly freezes: MarketFreezeService,
     private readonly support: SupportService,
     private readonly nudges: NudgeService,
     private readonly opportunities: OpportunityService,
     private readonly leaderboards: LeaderboardService,
     private readonly abuse: AbuseService,
+    private readonly health: MarketHealthService,
+    private readonly research: ResearchService,
+    private readonly reconciliation: ReconciliationService,
     private readonly ledgerAudit: LedgerAuditService,
+    private readonly makers: MarketMakerService,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -117,7 +141,12 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       case 'dispute':
         return this.resolutions.closeDisputeWindow(marketId);
       case 'freeze-sweep':
-        return { frozen: await this.resolutions.freezeDueMarkets() };
+        // §2.3 and checklist rule 22: trading stops when the event starts.
+        // The money path checks the clock itself, so a late sweep costs
+        // accuracy on the screens rather than protection — but it is the sweep
+        // that makes every query, report and badge agree without each of them
+        // doing date arithmetic.
+        return this.freezes.sweep();
       case 'nudge-sweep':
         // §2.14d. The rules decide what is worth saying; the service's own
         // throttle decides who actually hears it.
@@ -138,6 +167,24 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       case 'abuse-sweep':
         // §6.5's queue. Detection only — every freeze is a person's decision.
         return this.abuse.sweep();
+      case 'research-sweep':
+        // The pipeline decides which sources are actually due from their own
+        // cadence, so this can run often and mostly do nothing. Detection and
+        // collection only — a pass cannot settle, publish or move money.
+        return this.research.pass();
+      case 'health-sweep':
+        // Part 5 of docs/ticket-creation-checklist.md. Detection only as well:
+        // a flag is something for an operator to read on the Manage tab and for
+        // the post-mortem to remember. Nothing here touches a market's state.
+        return this.health.sweep();
+      case 'reconciliation': {
+        // §2.7's nightly reconciliation: the ledger against the stored wallet
+        // totals, with withdrawals frozen on any mismatch. It had no caller at
+        // all, which is why the admin dashboard has read "reconciliation
+        // never-run" since the day it was built — accurately, and for months.
+        const outcome = await this.reconciliation.run('SPC', new Date());
+        return { status: outcome.status, diff: outcome.diff.toString() };
+      }
       case 'ledger-audit': {
         // §2.7's nightly invariant check. A violation here is arithmetic on our
         // own rows failing, so it is red by definition and opens an incident.
@@ -148,6 +195,16 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
         // §2.12's "SLA timers with escalation". A breach is a state of the
         // queue, so it is swept rather than timed per ticket.
         return { escalated: await this.support.escalateOverdue() };
+      case 'maker-sweep':
+        // The platform's market maker, one cycle per enabled market. A standing
+        // job rather than a timer per market: the maker's own `refreshMs` is
+        // about how stale a quote may get, and a sweep that runs more often
+        // than the slowest market simply finds nothing to do on the others.
+        //
+        // It moves money — quotes lock escrow — so it is the one sweep here
+        // that is not detection-only. What bounds it is the per-market budget,
+        // checked inside every cycle, under the market's row lock.
+        return this.makers.sweep();
       case 'window':
         return this.community.closeWindow(marketId);
     }
@@ -234,6 +291,15 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       { every: 300_000 },
       { name: 'close', data: { marketId: '', kind: 'freeze-sweep' } },
     );
+    // Every thirty seconds. The kill switch's promise is "within one cycle",
+    // and a cycle somebody has to wait five minutes for is a promise nobody
+    // trusts in an incident — the sweep is cheap and does nothing on a market
+    // whose quotes are still fresh.
+    await this.queue?.upsertJobScheduler(
+      'maker-sweep',
+      { every: 30_000 },
+      { name: 'close', data: { marketId: '', kind: 'maker-sweep' } },
+    );
     await this.queue?.upsertJobScheduler(
       'sla-sweep',
       { every: 300_000 },
@@ -265,6 +331,35 @@ export class FundingWindowWorker implements OnModuleInit, OnModuleDestroy {
       'abuse-sweep',
       { every: 3_600_000 },
       { name: 'close', data: { marketId: '', kind: 'abuse-sweep' } },
+    );
+    // Every fifteen minutes. The checklist's Part 5 thresholds are measured in
+    // hours and days — 48 hours lopsided, 24 hours of whale, hours to the event
+    // — so a quarter-hour sweep is well inside every one of them, and the pass
+    // is two grouped queries over what is live.
+    await this.queue?.upsertJobScheduler(
+      'health-sweep',
+      { every: 900_000 },
+      { name: 'close', data: { marketId: '', kind: 'health-sweep' } },
+    );
+    // Every five minutes. `pass()` reads each source's own crawl interval and
+    // skips the ones that are not due, so the frequency here is the *floor* on
+    // responsiveness rather than the crawl rate: a market settling in an hour
+    // wants its source read every two minutes, and it cannot be if nothing asks
+    // more often than that.
+    await this.queue?.upsertJobScheduler(
+      'research-sweep',
+      { every: 300_000 },
+      { name: 'close', data: { marketId: '', kind: 'research-sweep' } },
+    );
+    // §2.7's reconciliation, nightly at 02:00 UTC — 03:00 in Lagos, which is
+    // the quietest hour on a Nigerian shelf. A cron pattern rather than an
+    // interval because `every` counts from the last boot, and a control that
+    // freezes withdrawals should not drift onto peak trading because somebody
+    // redeployed at lunchtime.
+    await this.queue?.upsertJobScheduler(
+      'reconciliation',
+      { pattern: '0 2 * * *' },
+      { name: 'close', data: { marketId: '', kind: 'reconciliation' } },
     );
     // §2.7 says nightly. Six-hourly instead: the check is cheap, and the gap
     // between a broken invariant and somebody knowing about it is the window in

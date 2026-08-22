@@ -23,8 +23,30 @@ const schema = z.object({
    * paths that need it fail loudly on use rather than silently storing
    * plaintext. Required in production, and it must not be the JWT secret:
    * rotating one should never force rotating the other.
+   *
+   * Read through `config/secrets.ts`, not from here — that is what gives it a
+   * `_PREVIOUS` list and makes rotation something other than an outage. This
+   * entry stays so a boot with a too-short key still fails at boot.
    */
   SECRETS_KEY: z.string().min(32, 'SECRETS_KEY must be at least 32 characters').optional(),
+
+  /**
+   * Superseded values of a secret, comma-separated, newest first (§2.11).
+   *
+   * Rotation is: publish the new key here alongside the old, let the sweep
+   * re-seal, then delete the retired entry. Values listed here are accepted
+   * for reading and never used for writing.
+   */
+  SECRETS_KEY_PREVIOUS: z.string().optional(),
+  JWT_SECRET_PREVIOUS: z.string().optional(),
+
+  /**
+   * Signs proof-of-reserves exports (§2.10). Optional: without it the export
+   * still generates and says plainly that it is unsigned, which is more useful
+   * than refusing to produce the figures at all.
+   */
+  RESERVES_SIGNING_KEY: z.string().min(32).optional(),
+  RESERVES_SIGNING_KEY_PREVIOUS: z.string().optional(),
 
   // Optional in development; the features that need them fail loudly on use.
   ANTHROPIC_API_KEY: z.string().optional(),

@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { expect, test, type Page, type TestInfo } from '@playwright/test';
 
 import { resetAuthBudget } from './redis';
+import { enterStake, submitStake } from './trade';
 
 /**
  * The whole product, in order, in the browser a user gets — and a screenshot of
@@ -102,13 +103,27 @@ test.describe('the walkthrough', () => {
     }
   });
 
-  test('1 · the front door explains itself to a stranger', async ({ page }, testInfo) => {
+  test('1 · the front door is the product, not a brochure about it', async ({ page }, testInfo) => {
     await page.goto('/');
-    await expect(page.getByRole('heading', { name: /arguments get settled/i })).toBeVisible();
-    // §7.6's live card: a real market at real prices, not a picture of one.
-    await expect(page.getByText(/Live right now/i)).toBeVisible();
-    await expect(page.getByRole('heading', { name: /How it works/i })).toBeVisible();
-    await expect(page.getByRole('heading', { name: /trust the result/i })).toBeVisible();
+
+    // What a stranger gets in the first screenful: a way to search, the topics,
+    // and live questions at live prices. The explaining lives in the footer and
+    // the rules, where somebody who wants it goes looking.
+    await expect(page.getByRole('searchbox', { name: /search markets/i })).toBeVisible();
+    // Scoped to the category row: "Trending" is also the name of the default
+    // sort pill, so an unscoped match finds two links and fails on strictness
+    // rather than on the page being wrong.
+    await expect(
+      page.getByRole('navigation', { name: 'Categories' }).getByRole('link', { name: /Trending/ }),
+    ).toBeVisible();
+    await expect(page.getByRole('link', { name: /Sign up/i })).toBeVisible();
+
+    // At least one real market, and a percentage next to it — the thirty-second
+    // explanation §7.6 asks for, delivered by the markets rather than by prose.
+    const questions = page.getByRole('article');
+    await expect(questions.first()).toBeVisible();
+    await expect(page.getByText(/%/).first()).toBeVisible();
+
     await capture(page, 'landing', testInfo);
   });
 
@@ -116,7 +131,7 @@ test.describe('the walkthrough', () => {
     page,
   }, testInfo) => {
     await page.goto('/');
-    await page.getByRole('link', { name: /Start with a free balance/i }).click();
+    await page.getByRole('link', { name: /^Sign up$/i }).click();
     await expect(page).toHaveURL(/\/signup/);
 
     await page.getByLabel('Email or phone').fill(email);
@@ -130,8 +145,8 @@ test.describe('the walkthrough', () => {
 
     // Tier 0 lands in the markets with money to spend, and nothing on the way
     // in asks it to prove a contact.
-    await expect(page).toHaveURL(/\/markets/, { timeout: 15_000 });
-    await expect(page.getByText('Balance').first()).toBeVisible();
+    await expect(page).toHaveURL(/localhost:3000\/?$/, { timeout: 15_000 });
+    await expect(page.getByRole('link', { name: /your balance/i })).toBeVisible();
     await expect(page.getByText(/verify/i)).toHaveCount(0);
     await capture(page, 'markets-tier0', testInfo);
 
@@ -155,31 +170,30 @@ test.describe('the walkthrough', () => {
     await capture(page, 'verify-code', testInfo);
     await page.getByRole('button', { name: 'Verify' }).click();
 
-    await expect(page).toHaveURL(/\/markets/, { timeout: 15_000 });
+    await expect(page).toHaveURL(/localhost:3000\/?$/, { timeout: 15_000 });
 
     // Starter balance plus the verification bonus, visible in the header.
     const me = await get<{ tier: number; available: string }>('/auth/me', token);
     expect(me.tier).toBe(1);
     expect(Number(me.available)).toBe(15_000);
-    await expect(page.getByText('Balance').first()).toBeVisible();
+    await expect(page.getByRole('link', { name: /your balance/i })).toBeVisible();
     await expect(page.getByText('₦15k').first()).toBeVisible();
     await capture(page, 'markets-signed-in', testInfo);
   });
 
-  test('4 · both shelves are on the markets screen, and switchable', async ({ page }, testInfo) => {
+  test('4 · both shelves are on the board, and switchable', async ({ page }, testInfo) => {
     await signIn(page, email, password);
-    await page.goto('/markets');
-    await expect(page.getByRole('heading', { name: 'Official', exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Community', exact: true })).toBeVisible();
+    await page.goto('/');
     await expect(page.getByText(/naira close below/i)).toBeVisible();
     await expect(page.getByText(/BBNaija eviction/i)).toBeVisible();
     await capture(page, 'shelves', testInfo);
 
-    const shelf = page.getByRole('navigation', { name: 'Shelf' });
+    // The shelf lives on the board's pill row now. `/markets` was a second,
+    // worse copy of this screen — headed sections of the same cards — and it
+    // 301s here, so the filtering it carried is asserted where it actually is.
+    const shelf = page.getByRole('group', { name: 'Shelf' });
 
-    // Community alone. Two stacked sections and no control meant that on a
-    // phone one full shelf pushed the other off the screen, and the second read
-    // as missing rather than as further down.
+    // Community alone.
     await shelf.getByRole('link', { name: /^Community/ }).click();
     await expect(page).toHaveURL(/shelf=community/);
     await expect(page.getByText(/BBNaija eviction/i)).toBeVisible();
@@ -201,29 +215,29 @@ test.describe('the walkthrough', () => {
 
   test('4b · the shelf chips carry counts and are reachable with a thumb', async ({ page }) => {
     await signIn(page, email, password);
-    await page.goto('/markets');
+    await page.goto('/');
 
-    const chips = page.getByRole('navigation', { name: 'Shelf' }).getByRole('link');
+    const chips = page.getByRole('group', { name: 'Shelf' }).getByRole('link');
     await expect(chips).toHaveCount(3);
 
     // A count is what makes an empty shelf answerable without tapping into it.
     for (const chip of await chips.all()) {
       await expect(chip).toHaveText(/\d+$/);
       const box = await chip.boundingBox();
-      expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+      expect(box?.width ?? 0).toBeGreaterThanOrEqual(44);
     }
 
     // Deep-linkable, and the selected chip says so to a screen reader.
-    await page.goto('/markets?shelf=community');
+    await page.goto('/?shelf=community');
     await expect(
-      page.getByRole('navigation', { name: 'Shelf' }).getByRole('link', { name: /^Community/ }),
-    ).toHaveAttribute('aria-current', 'page');
+      page.getByRole('group', { name: 'Shelf' }).getByRole('link', { name: /^Community/ }),
+    ).toHaveAttribute('aria-current', 'true');
 
     // A shelf name that means nothing falls back to showing everything rather
     // than to an empty screen.
-    await page.goto('/markets?shelf=nonsense');
-    await expect(page.getByRole('heading', { name: 'Official', exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Community', exact: true })).toBeVisible();
+    await page.goto('/?shelf=nonsense');
+    await expect(page.getByText(/naira close below/i)).toBeVisible();
+    await expect(page.getByText(/BBNaija eviction/i)).toBeVisible();
   });
 
   test('5 · the ticket shows the chart, the argument bar and the money', async ({
@@ -232,7 +246,10 @@ test.describe('the walkthrough', () => {
     await signIn(page, email, password);
     await page.goto('/market/wt-naira');
     await expect(page.getByRole('heading', { name: /naira close below/i })).toBeVisible();
-    await expect(page.getByText('Pot')).toBeVisible();
+    // Exact, because the risk line above the trade button now ends "…paid from
+    // the pot" and a substring match finds both. The quote strip's cell label
+    // is the thing this assertion is actually about.
+    await expect(page.getByText('Pot', { exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: /Buy Yes/i })).toBeVisible();
     await capture(page, 'ticket', testInfo);
   });
@@ -241,10 +258,9 @@ test.describe('the walkthrough', () => {
     const token = await signIn(page, email, password);
     await page.goto('/market/wt-naira');
 
-    await page.getByRole('button', { name: /Buy Yes/i }).click();
-    await page.locator('input[inputmode="decimal"]').fill('2000');
+    await enterStake(page, { amount: '2000' });
     await capture(page, 'trade-sheet-buy', testInfo);
-    await page.getByRole('button', { name: 'Stake am' }).click();
+    await submitStake(page);
 
     await expect
       .poll(async () => (await get<unknown[]>('/me/positions', token)).length, {
@@ -266,7 +282,7 @@ test.describe('the walkthrough', () => {
     await page.goto('/market/wt-naira');
 
     await page.getByRole('button', { name: /Sell/i }).first().click();
-    await page.locator('input[inputmode="decimal"]').fill('500');
+    await page.locator('#trade-amount').fill('500');
 
     // §2.3's early-exit fee, itemised *inside the sheet* where the commitment
     // is made. Scoped to the dialog deliberately: an earlier version of this
@@ -307,6 +323,45 @@ test.describe('the walkthrough', () => {
       })
       .not.toBe(before.available);
     await capture(page, 'after-sell', testInfo);
+  });
+
+  test('7b · the context panel answers what this market is, under one frame', async ({
+    page,
+  }, testInfo) => {
+    await page.goto('/market/wt-naira');
+
+    // Rules leads, because it is the tab that changes whether to trade at all.
+    await expect(page.getByRole('tab', { name: 'Rules' })).toHaveAttribute('aria-selected', 'true');
+    // The settlement source, and — the part every reference leaves out — how
+    // often anybody actually reads it.
+    //
+    // Asserted on the clause that holds whether or not the research pipeline
+    // has found a figure for this market. The first version matched copy that
+    // only appeared in the no-reading branch, so the test passed on an empty
+    // database and failed the moment the panel had something to show.
+    await expect(page.getByText(/Read at settlement, not continuously/)).toBeVisible();
+
+    await page.getByRole('tab', { name: /^News/ }).click();
+    await expect(page.getByText(/CBN resumes dollar sales/)).toBeVisible();
+    await expect(page.getByText(/Pinned by/).first()).toBeVisible();
+
+    await page.getByRole('tab', { name: 'Stats' }).click();
+    // Lifetime, not the last day: a market that opened ten days ago has an
+    // opening price, and the panel has to have gone and got it.
+    await expect(page.getByRole('columnheader', { name: 'Opened' })).toBeVisible();
+    await expect(page.getByText('Biggest move')).toBeVisible();
+
+    // Placed after the buy and the sell rather than beside the ticket's other
+    // assertions, and deliberately: an activity feed with nothing in it proves
+    // only that the tab renders. By here this account has bought and sold, so
+    // the feed has something to be right or wrong about.
+    await page.getByRole('tab', { name: 'Activity' }).click();
+    await expect(page.getByText(/shown under a code, not a name/)).toBeVisible();
+    // `.first()`: the two Playwright projects share a database, so by the phone
+    // run the same fixture market carries the desktop run's sells as well.
+    await expect(page.getByText('sold').first()).toBeVisible();
+
+    await capture(page, 'context-panel', testInfo);
   });
 
   test('8 · the wallet history agrees with the ledger', async ({ page }, testInfo) => {
@@ -354,11 +409,111 @@ test.describe('the walkthrough', () => {
     await expect(page.getByRole('heading', { name: 'Talk your own' })).toBeVisible({
       timeout: 15_000,
     });
+
+    // The starter templates come from the API now, not from the bundle —
+    // checklist Part 4 makes "you started from a template" something the server
+    // verifies, and a list only the client held could not be checked against.
+    // So the assertion is that they actually arrive: a create page with no
+    // starting points is a blank form, which is the reason most people never
+    // make a market.
+    await expect(page.getByRole('button', { name: /Naira threshold/ })).toBeVisible({
+      timeout: 15_000,
+    });
+
     // The co-pilot and the reviewer both need the question engine, which has no
     // key in this environment — so the wizard is walked as far as it goes here,
     // and the create → fund → resolve arc for a *community* market is proven at
     // the API level in the integration suite until staging has a key.
     await capture(page, 'create-wizard', testInfo);
+  });
+
+  test('12b · the Studio opens a market in three steps, one screen each', async ({
+    page,
+  }, testInfo) => {
+    // The redesign's claim is that the form got shorter and the enforcement did
+    // not. `create-tab`'s unit suite proves the second half — every rule still
+    // has a field. This proves the first: three steps, each of which fits the
+    // phone without scrolling the page, and a review that will not publish
+    // while anything fails.
+    const staff = await staffAccount(`studio-${stamp}@stakeam.ng`, 'admin');
+    await page.addInitScript((value) => {
+      window.localStorage.setItem('stakeam.token', String(value));
+    }, staff);
+
+    await page.goto('/admin/markets?tab=create');
+    await expect(page.getByRole('heading', { name: 'What’s the question?' })).toBeVisible({
+      timeout: 20_000,
+    });
+
+    // Step 1 is one box. Not "mostly one box": the outcome builder is a line of
+    // text until somebody asks for a third answer.
+    await expect(page.locator('#question')).toBeVisible();
+    await expect(page.getByText('Two answers:')).toBeVisible();
+    await page.fill(
+      '#question',
+      'Will the official CBN closing rate print below N1,450 to the dollar on the stated date?',
+    );
+
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'How does it settle?' })).toBeVisible();
+
+    await page.fill('#source', 'Central Bank of Nigeria');
+    await page.fill('#sourceUrl', 'https://www.cbn.gov.ng/rates/exchratebycurrency.html');
+    const settle = new Date(Date.now() + 8 * 86_400_000);
+    settle.setHours(23, 59, 0, 0);
+    const pad = (value: number) => String(value).padStart(2, '0');
+    await page.fill(
+      '#eventDate',
+      `${settle.getFullYear()}-${pad(settle.getMonth() + 1)}-${pad(settle.getDate())}T23:59`,
+    );
+
+    // Rule 2 without a word about rule 2: the refund date arrives filled in,
+    // after the settle date, the moment the settle date is set.
+    await expect(page.locator('#voidDate')).not.toHaveValue('');
+
+    // And rule 26: the timezone is in the settlement wording, because the
+    // wording was composed from the field rather than typed by somebody who had
+    // just been told to remember it.
+    await expect(page.getByText(/23:59 WAT on/)).toBeVisible();
+
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Anything unusual?' })).toBeVisible();
+
+    // Rule 4's four cases, already answered. "The source publishes nothing" is
+    // the one the validator refuses a draft without, and the one a free-text
+    // box never got.
+    for (const label of [
+      'Postponed past the void date',
+      'Cancelled',
+      'The source publishes nothing',
+      'The figure is revised later',
+    ]) {
+      await expect(page.getByRole('checkbox', { name: label })).toBeChecked();
+    }
+    await page.locator('#attestation').check();
+
+    await page.getByRole('button', { name: 'Review it' }).click();
+    await expect(page.getByRole('heading', { name: 'Review' })).toBeVisible();
+
+    // The market as a trader meets it, before any verdict about it.
+    await expect(page.getByText('HOW IT WILL LOOK')).toBeVisible();
+    await expect(page.getByText(/Will the official CBN closing rate/)).toBeVisible();
+
+    // Publish is refused while the judgement calls are unanswered — an `ask` is
+    // a block, or the questions would be decoration.
+    const publish = page.getByRole('button', { name: /Open the market/ });
+    await expect(publish).toBeDisabled();
+
+    await page.locator('#judgement-25').getByRole('button', { name: 'Yes', exact: true }).click();
+    await page.locator('#judgement-18').getByRole('button', { name: 'Yes', exact: true }).click();
+    await page.locator('#judgement-R3').getByRole('button', { name: 'No', exact: true }).click();
+
+    // The whole checklist is still there — collapsed to what needs attention,
+    // one click from every line of it. The number is the register's, not a
+    // literal, so this asserts the shape and not today's rule count.
+    await expect(page.getByRole('button', { name: /All \d+ rules/ })).toBeVisible();
+
+    await capture(page, 'studio-three-step-review', testInfo);
   });
 
   test('13 · settling a market pays the winners and writes their receipt', async ({
@@ -425,7 +580,9 @@ test.describe('the walkthrough', () => {
     await capture(page, 'market-settled', testInfo);
 
     await page.goto('/wallet');
-    await expect(page.getByText('Winnings').first()).toBeVisible();
+    // "Returns on settlement", not "Winnings" — the wallet labels a settled
+    // position by what it is rather than by what a betting shop would call it.
+    await expect(page.getByText('Returns on settlement').first()).toBeVisible();
     await capture(page, 'wallet-after-settlement', testInfo);
   });
 

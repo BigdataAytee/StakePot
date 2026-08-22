@@ -140,7 +140,10 @@ async function request<T>(path: string, init?: RequestInit, requireToken = true)
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
-      'content-type': 'application/json',
+      // Only when there is a body: Fastify's JSON parser refuses an empty body
+      // that claims to be JSON, which turns every bodyless POST into a parser
+      // error that reads like a server fault.
+      ...(init?.body === undefined ? {} : { 'content-type': 'application/json' }),
       ...(token === null ? {} : { authorization: `Bearer ${token}` }),
       ...(init?.headers ?? {}),
     },

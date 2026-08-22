@@ -21,11 +21,26 @@ import {
   MinLength,
 } from 'class-validator';
 
+import { Decimal } from '@stakeam/engine';
+
 import { JwtGuard, type RequestWithUser } from '../auth/jwt.guard';
 import { TotpError, TotpService } from '../auth/totp.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { RgBlockedError, RgService } from '../rg/rg.service';
+import { PlatformConfigService } from '../platform-config/platform-config.service';
+import { ConsentService, type ConsentDocument } from '../account/consent.service';
+import { FreezeService } from '../account/freeze.service';
+import { ReferralService } from '../account/referral.service';
+import { SessionsService } from '../account/sessions.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { SupportError, SupportService } from '../support/support.service';
+import { checkTierCap } from '../trade/tier-cap';
+
+/** §2.18: accepting a document, or withdrawing marketing consent. */
+export class ConsentDto {
+  @IsIn(['terms', 'privacy', 'rules', 'marketing']) document!: ConsentDocument;
+  @IsOptional() @IsBoolean() accepted?: boolean;
+}
 
 export class LimitsDto {
   @IsOptional() @IsNumberString() depositLimit?: string;
@@ -86,6 +101,12 @@ export class AccountController {
     private readonly support: SupportService,
     private readonly notifications: NotificationsService,
     private readonly totp: TotpService,
+    private readonly prisma: PrismaService,
+    private readonly config: PlatformConfigService,
+    private readonly sessions: SessionsService,
+    private readonly freezes: FreezeService,
+    private readonly consents: ConsentService,
+    private readonly referrals: ReferralService,
   ) {}
 
   private me(request: RequestWithUser): { userId: string; role: UserRole } {
@@ -100,6 +121,54 @@ export class AccountController {
   @UseGuards(JwtGuard)
   async limits(@Req() request: RequestWithUser) {
     return this.rg.view(this.me(request).userId);
+  }
+
+  /**
+   * What this account may stake right now, and what is holding it back.
+   *
+   * §7.2d requires the Tier 0 cap and §2.12's limits to be visible *in the
+   * trade sheet*, not discovered by being refused after committing. That means
+   * one read the sheet can make before the person types an amount, answering
+   * the same question the trade path will answer — from the same rule
+   * (`checkTierCap`) and the same RG figures, so the screen and the engine
+   * cannot disagree.
+   */
+  @Get('trade-allowance')
+  @UseGuards(JwtGuard)
+  async tradeAllowance(@Req() request: RequestWithUser) {
+    const { userId } = this.me(request);
+
+    const [user, rg, capValue, wallets] = await Promise.all([
+      this.prisma.user.findUnique({ where: { id: userId }, select: { tier: true } }),
+      this.rg.view(userId),
+      this.config.get('tier0_stake_cap_spc'),
+      this.prisma.wallet.findMany({ where: { userId }, select: { escrowed: true } }),
+    ]);
+
+    const escrowed = wallets.reduce(
+      (total, row) => total.plus(new Decimal(row.escrowed.toString())),
+      new Decimal(0),
+    );
+    const tierCap = checkTierCap({
+      tier: user?.tier ?? 0,
+      escrowed,
+      amount: new Decimal(0),
+      cap: new Decimal(capValue.toString()),
+    });
+
+    return {
+      tier: user?.tier ?? 0,
+      escrowed: escrowed.toString(),
+      /** Null when uncapped — a verified account, or no cap configured. */
+      tierCapRemaining: tierCap.remaining === null ? null : tierCap.remaining.toString(),
+      selfExcluded: rg.selfExcluded,
+      cooloffUntil: rg.cooloffUntil,
+      stakeLimit: rg.effectiveStakeLimit,
+      stakedToday: rg.stakedToday,
+      lossLimit: rg.effectiveLossLimit,
+      lostToday: rg.lostToday,
+      helpline: rg.helpline,
+    };
   }
 
   @Post('limits')
@@ -260,6 +329,111 @@ export class AccountController {
   }
 
   // ------------------------------------------------------------------- staff 2FA
+
+  // ------------------------------------------------- sessions & devices (§2.18)
+
+  /**
+   * Where this account is signed in.
+   *
+   * The current session is marked so somebody cannot accidentally end it and
+   * conclude the button is broken.
+   */
+  @Get('sessions')
+  @UseGuards(JwtGuard)
+  async sessionList(@Req() request: RequestWithUser) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+
+    const [sessions, freeze] = await Promise.all([
+      this.sessions.list(user.userId, user.jti),
+      this.freezes.withdrawalsFrozen(user.userId),
+    ]);
+
+    return {
+      sessions,
+      // Shown here rather than only on the wallet: somebody checking their
+      // sessions is usually checking because something felt wrong, and the
+      // freeze is the other half of that story.
+      freeze: {
+        active: freeze.frozen,
+        until: freeze.until?.toISOString() ?? null,
+        reason: freeze.reason,
+      },
+    };
+  }
+
+  @Post('sessions/:id/revoke')
+  @UseGuards(JwtGuard)
+  async revokeSession(@Req() request: RequestWithUser, @Param('id') id: string) {
+    const { userId } = this.me(request);
+    return { revoked: await this.sessions.revoke(userId, id) };
+  }
+
+  /** End every session but this one. */
+  @Post('sessions/revoke-others')
+  @UseGuards(JwtGuard)
+  async revokeOtherSessions(@Req() request: RequestWithUser) {
+    const user = request.user;
+    if (user === undefined) throw new BadRequestException('no authenticated user');
+    // A token with no id predates session recording; there is nothing to spare
+    // and ending everything would log this person out too. Refuse rather than
+    // do something surprising.
+    if (user.jti === undefined) {
+      throw new BadRequestException('sign in again before ending your other sessions');
+    }
+    return { revoked: await this.sessions.revokeOthers(user.userId, user.jti) };
+  }
+
+  /**
+   * §2.18's one-tap "this wasn't me".
+   *
+   * Extends the freeze and ends every session rather than lifting anything:
+   * somebody pressing this is telling us an attacker is mid-way through, and
+   * the right answer is more friction, not less.
+   */
+  @Post('lock')
+  @UseGuards(JwtGuard)
+  async lock(@Req() request: RequestWithUser) {
+    const { userId } = this.me(request);
+    const { endsAt } = await this.freezes.lockDown(userId);
+    return { lockedUntil: endsAt.toISOString() };
+  }
+
+  // ------------------------------------------------------------ consents (§2.18)
+
+  @Get('consents')
+  @UseGuards(JwtGuard)
+  async consentHistory(@Req() request: RequestWithUser) {
+    const { userId } = this.me(request);
+    const [history, outstanding] = await Promise.all([
+      this.consents.historyFor(userId),
+      this.consents.outstanding(userId),
+    ]);
+    return { history, outstanding, marketing: await this.consents.marketingAllowed(userId) };
+  }
+
+  @Post('consents')
+  @UseGuards(JwtGuard)
+  async accept(@Req() request: RequestWithUser, @Body() body: ConsentDto) {
+    const { userId } = this.me(request);
+    const ip = request.ip ?? 'unknown';
+
+    if (body.document === 'marketing' && body.accepted === false) {
+      await this.consents.withdrawMarketing(userId, ip);
+      return { accepted: false };
+    }
+
+    await this.consents.record({ userId, document: body.document, ip });
+    return { accepted: true };
+  }
+
+  // ----------------------------------------------------------- referrals (§2.17)
+
+  @Get('referrals')
+  @UseGuards(JwtGuard)
+  async referralSummary(@Req() request: RequestWithUser) {
+    return this.referrals.summaryFor(this.me(request).userId);
+  }
 
   @Get('2fa')
   @UseGuards(JwtGuard)

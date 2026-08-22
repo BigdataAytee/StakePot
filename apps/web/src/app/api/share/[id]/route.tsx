@@ -205,8 +205,8 @@ export async function GET(
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <span style={{ color: palette.muted }}>Pot</span>
-          {/* Gold is money only (§7.4). This is a pot, so it is gold. */}
-          <span style={{ color: palette.gold, fontWeight: 800 }}>{pot} SPC</span>
+          {/* Money is green in this system — see docs/design-reference.html. */}
+          <span style={{ color: palette.green, fontWeight: 800 }}>{pot} SPC</span>
         </div>
         {handle !== null && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>

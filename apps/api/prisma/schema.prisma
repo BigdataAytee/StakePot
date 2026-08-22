@@ -60,6 +60,13 @@ enum LedgerType {
   /// workflow (§2.10). Typed distinctly so "money a human moved by hand" is one
   /// query, not an inference.
   adjustment
+  /// Money locked behind a resting limit order, or behind the collateral of a
+  /// matched position. Distinct from `trade_buy` because it is not a purchase:
+  /// nothing has been bought until the order fills, and a wallet history that
+  /// called it a trade would show a position the trader does not hold.
+  order_lock
+  /// That lock released — a cancelled order, or one swept at freeze time.
+  order_release
 }
 
 enum FundClass {
@@ -267,69 +274,81 @@ enum AnnotationType {
   news
   freeze
   resolution
+  /// The platform added to the pot symmetrically, taking no side. Its own type
+  /// because a reader looking at a jump in the pot with a flat price deserves
+  /// to be told which of the two it was.
+  seed
 }
 
 // ---------------------------------------------------------------- identity & money
 
 model User {
-  id              String   @id @default(cuid())
-  email           String?  @unique
-  phone           String?  @unique
+  id              String    @id @default(cuid())
+  email           String?   @unique
+  phone           String?   @unique
   /// The public name a creator is known by (§2.14c's "public creator profiles",
   /// §2.14d's share card). Claimed, not assigned, and unique because it is the
   /// profile URL — an account that has never created anything has none.
-  handle          String?  @unique
+  handle          String?   @unique
   displayName     String?
-  contactVerified Boolean  @default(false)
+  contactVerified Boolean   @default(false)
   /// 0 = unverified, 1 = contact verified, 2 = KYC passed
-  tier            Int      @default(0)
+  tier            Int       @default(0)
   kycRef          String?
   pwHash          String
   /// TOTP shared secret (§2.11). Present once enrolment starts; `totpConfirmedAt`
   /// is what makes it live, so a half-finished enrolment cannot lock anyone out.
   totpSecret      String?
   totpConfirmedAt DateTime?
-  role            UserRole @default(user)
+  role            UserRole  @default(user)
   /// Not enumerated in §3; kept free-form until the states are pinned down.
-  status          String   @default("active")
-  createdAt       DateTime @default(now())
+  status          String    @default("active")
+  createdAt       DateTime  @default(now())
 
-  wallets            Wallet[]
-  ledgerEntries      LedgerEntry[]
-  trades             Trade[]
-  positions          Position[]
-  markets            Market[]            @relation("MarketCreator")
-  syndicates         Syndicate[]
-  syndicateMembers   SyndicateMember[]
-  bonds              Bond[]
-  disputes           Dispute[]
-  supportTickets     SupportTicket[]
-  rgSettings         RgSettings?
-  notifications      Notification[]
-  notificationPrefs  NotificationPreference[]
-  pushSubscriptions  PushSubscription[]
-  supportMessages    SupportMessage[]
-  events             Event[]
-  creatorProfile     CreatorProfile?
-  following          Follower[]          @relation("Follows")
-  followers          Follower[]          @relation("FollowedBy")
-  autopsies          MarketAutopsy[]
-  comments           Comment[]
-  reputation         Reputation[]
-  squadsOwned        Squad[]
-  squadMemberships   SquadMember[]
-  challenges         Challenge[]
-  challengesAccepted Challenge[]        @relation("ChallengeAccepted")
-  commentReports     CommentReport[]
-  topCalls           TopCall[]
+  wallets              Wallet[]
+  ledgerEntries        LedgerEntry[]
+  trades               Trade[]
+  positions            Position[]
+  markets              Market[]                 @relation("MarketCreator")
+  syndicates           Syndicate[]
+  syndicateMembers     SyndicateMember[]
+  bonds                Bond[]
+  disputes             Dispute[]
+  supportTickets       SupportTicket[]
+  rgSettings           RgSettings?
+  notifications        Notification[]
+  notificationPrefs    NotificationPreference[]
+  pushSubscriptions    PushSubscription[]
+  supportMessages      SupportMessage[]
+  events               Event[]
+  creatorProfile       CreatorProfile?
+  following            Follower[]               @relation("Follows")
+  followers            Follower[]               @relation("FollowedBy")
+  autopsies            MarketAutopsy[]
+  copilotRuns          CopilotRun[]
+  comments             Comment[]
+  reputation           Reputation[]
+  squadsOwned          Squad[]
+  squadMemberships     SquadMember[]
+  challenges           Challenge[]
+  challengesAccepted   Challenge[]              @relation("ChallengeAccepted")
+  commentReports       CommentReport[]
+  topCalls             TopCall[]
   leaderboardSnapshots LeaderboardSnapshot[]
-  prizeAwards        PrizeAward[]
-  abuseFlags         AbuseFlag[]
-  abuseReviews       AbuseFlag[]        @relation("AbuseReviewer")
-  deviceFingerprints DeviceFingerprint[]
-  opportunities      Opportunity[]
-  proposedResolutions Resolution[]       @relation("ResolutionProposer")
-  finalizedResolutions Resolution[]      @relation("ResolutionFinalizer")
+  prizeAwards          PrizeAward[]
+  abuseFlags           AbuseFlag[]
+  abuseReviews         AbuseFlag[]              @relation("AbuseReviewer")
+  deviceFingerprints   DeviceFingerprint[]
+  opportunities        Opportunity[]
+  proposedResolutions  Resolution[]             @relation("ResolutionProposer")
+  finalizedResolutions Resolution[]             @relation("ResolutionFinalizer")
+  referralsMade        Referral[]               @relation("ReferralsMade")
+  referralReceived     Referral?                @relation("ReferralReceived")
+  consents             Consent[]
+  sessions             UserSession[]
+  freezes              AccountFreeze[]
+  orders               Order[]
+  matchedPositions     MatchedPosition[]
 
   @@map("users")
 }
@@ -371,7 +390,7 @@ model LedgerEntry {
 // ---------------------------------------------------------------- markets & trading
 
 model Market {
-  id                 String      @id @default(cuid())
+  id                 String         @id @default(cuid())
   shelf              MarketShelf
   question           String
   sourceName         String
@@ -379,8 +398,23 @@ model Market {
   criteriaJson       Json
   edgeCasesJson      Json
   eventDate          DateTime
+  /// When trading actually stops: the event start, less a configurable buffer
+  /// (`freeze_buffer_seconds`, default 2 minutes).
+  ///
+  /// Not the same column as `eventDate` and not derivable from it at read time,
+  /// because it can be amended — a fixture is rescheduled, or an admin freezes
+  /// early on a leak — and the amended time is what the money path must obey.
+  /// Nullable only for rows written before freeze times existed; the rules
+  /// module falls back to `eventDate` for those, which errs closed.
+  freezeAt           DateTime?
+  /// When the freeze actually happened, and why. Null while trading is open.
+  /// `frozenAt` is what makes the sweep idempotent: a late job re-running over
+  /// a market that is already frozen does nothing rather than re-annotating,
+  /// re-auditing and re-notifying everyone who holds a position.
+  frozenAt           DateTime?
+  freezeReason       String?
   voidDate           DateTime
-  state              MarketState @default(draft)
+  state              MarketState    @default(draft)
   activationPath     ActivationPath @default(organic)
   /// When the funding window closes. Path A activates or voids at this moment;
   /// Path B re-checks the participation floor. Stored rather than derived from
@@ -393,8 +427,8 @@ model Market {
   disputeClosesAt    DateTime?
   creatorId          String?
   /// Liquidity constant L from §2.3. Immutable once the market is created.
-  liquidityParam     Decimal     @db.Decimal(38, 18)
-  potTotal           Decimal     @default(0) @db.Decimal(38, 18)
+  liquidityParam     Decimal        @db.Decimal(38, 18)
+  potTotal           Decimal        @default(0) @db.Decimal(38, 18)
   feeBps             Int
   /// The creator's share of `feeBps`, fixed when the market opened (§2.14c's
   /// level 3 bump). Stored rather than read from config at settlement because
@@ -407,26 +441,30 @@ model Market {
   /// §2.14c's level 3 privilege and §6.2's admin placement, as one column: when
   /// a market was put on the front. Null means it is ranked like everything else.
   featuredAt         DateTime?
-  createdAt          DateTime    @default(now())
+  createdAt          DateTime       @default(now())
 
-  creator         User?             @relation("MarketCreator", fields: [creatorId], references: [id])
-  resolvedOutcome Outcome?          @relation("ResolvedOutcome", fields: [resolvedOutcomeId], references: [id])
-  outcomes        Outcome[]         @relation("MarketOutcomes")
-  trades          Trade[]
-  positions       Position[]
-  ledgerEntries   LedgerEntry[]
-  syndicates      Syndicate[]
-  bonds           Bond[]
-  resolutions     Resolution[]
-  disputes        Dispute[]
-  outcomeLog      MarketOutcomeLog?
-  supportTickets  SupportTicket[]
-  autopsy         MarketAutopsy?
-  comments        Comment[]
-  challenges      Challenge[]
-  topCalls        TopCall[]
-  priceHistory    PriceHistory[]
-  annotations     MarketAnnotation[]
+  creator          User?              @relation("MarketCreator", fields: [creatorId], references: [id])
+  resolvedOutcome  Outcome?           @relation("ResolvedOutcome", fields: [resolvedOutcomeId], references: [id])
+  outcomes         Outcome[]          @relation("MarketOutcomes")
+  trades           Trade[]
+  positions        Position[]
+  ledgerEntries    LedgerEntry[]
+  syndicates       Syndicate[]
+  bonds            Bond[]
+  resolutions      Resolution[]
+  disputes         Dispute[]
+  outcomeLog       MarketOutcomeLog?
+  supportTickets   SupportTicket[]
+  autopsy          MarketAutopsy?
+  comments         Comment[]
+  challenges       Challenge[]
+  topCalls         TopCall[]
+  priceHistory     PriceHistory[]
+  annotations      MarketAnnotation[]
+  healthFlags      MarketHealthFlag[]
+  orders           Order[]
+  matchedPositions MatchedPosition[]
+  maker            MarketMaker?
 
   @@index([shelf, state])
   @@index([state, eventDate])
@@ -463,13 +501,15 @@ model Outcome {
   /// The catch-all bucket on a multi-outcome ticket.
   isOther           Boolean @default(false)
 
-  market       Market         @relation("MarketOutcomes", fields: [marketId], references: [id], onDelete: Cascade)
-  wonBy        Market[]       @relation("ResolvedOutcome")
-  trades       Trade[]
-  positions    Position[]
-  resolutionsProposed Resolution[] @relation("ProposedOutcome")
-  resolutionsFinal    Resolution[] @relation("FinalOutcome")
-  priceHistory PriceHistory[]
+  market              Market            @relation("MarketOutcomes", fields: [marketId], references: [id], onDelete: Cascade)
+  wonBy               Market[]          @relation("ResolvedOutcome")
+  trades              Trade[]
+  positions           Position[]
+  resolutionsProposed Resolution[]      @relation("ProposedOutcome")
+  resolutionsFinal    Resolution[]      @relation("FinalOutcome")
+  priceHistory        PriceHistory[]
+  orders              Order[]
+  matchedPositions    MatchedPosition[]
 
   @@unique([marketId, ordinal])
   @@index([marketId])
@@ -519,24 +559,24 @@ model Position {
 // ---------------------------------------------------------------- syndicates & bonds
 
 model Syndicate {
-  id          String   @id @default(cuid())
-  marketId    String   @unique
-  creatorId   String
-  roundEndsAt DateTime
+  id              String         @id @default(cuid())
+  marketId        String         @unique
+  creatorId       String
+  roundEndsAt     DateTime
   /// Total the round must reach to activate: perOutcomeMin × outcomes.
-  minTotal    Decimal  @db.Decimal(38, 18)
+  minTotal        Decimal        @db.Decimal(38, 18)
   /// The Symmetric Seed minimum per pool ([20,000] pts).
-  perOutcomeMin   Decimal @db.Decimal(38, 18)
+  perOutcomeMin   Decimal        @db.Decimal(38, 18)
   /// Smallest contribution a sponsor may make ([2,000] pts).
-  minContribution Decimal @db.Decimal(38, 18)
+  minContribution Decimal        @db.Decimal(38, 18)
   /// Maximum sponsors on the round ([20]).
   maxSponsors     Int
   /// Organiser's cut of the syndicate fee, in basis points. 0 = pure pro-rata.
   /// Locked when the round opens: §3 says the split "is displayed on the market
   /// page before any sponsor joins and is locked once the Seeding Round opens".
-  organiserBps    Int     @default(0)
+  organiserBps    Int            @default(0)
   state           SyndicateState @default(open)
-  openedAt        DateTime @default(now())
+  openedAt        DateTime       @default(now())
   filledAt        DateTime?
 
   market  Market            @relation(fields: [marketId], references: [id])
@@ -548,14 +588,14 @@ model Syndicate {
 }
 
 model SyndicateMember {
-  id           String  @id @default(cuid())
+  id           String   @id @default(cuid())
   syndicateId  String
   userId       String
-  contribution Decimal @db.Decimal(38, 18)
+  contribution Decimal  @db.Decimal(38, 18)
   /// Share of the syndicate fee, as a fraction in [0,1]. Written when the round
   /// fills, not when a sponsor joins — pro-rata is only knowable once the round
   /// is closed. The shares sum to exactly 1; the organiser carries the remainder.
-  feeSharePct  Decimal @default(0) @db.Decimal(38, 18)
+  feeSharePct  Decimal  @default(0) @db.Decimal(38, 18)
   createdAt    DateTime @default(now())
 
   syndicate Syndicate @relation(fields: [syndicateId], references: [id], onDelete: Cascade)
@@ -566,12 +606,12 @@ model SyndicateMember {
 }
 
 model Bond {
-  id        String    @id @default(cuid())
+  id         String    @id @default(cuid())
   /// One bond per market — the creator's, posted at creation (Part 3 §1).
-  marketId  String    @unique
-  creatorId String
-  amount    Decimal   @db.Decimal(38, 18)
-  state     BondState @default(held)
+  marketId   String    @unique
+  creatorId  String
+  amount     Decimal   @db.Decimal(38, 18)
+  state      BondState @default(held)
   /// Why it was forfeited, for the audit trail (Part 3 §5).
   reason     String?
   createdAt  DateTime  @default(now())
@@ -587,15 +627,15 @@ model Bond {
 // ---------------------------------------------------------------- resolution & disputes
 
 model Resolution {
-  id                 String    @id @default(cuid())
-  marketId           String
-  proposedBy         String
-  proposedOutcomeId  String
-  evidenceUrl        String
-  proposedAt         DateTime  @default(now())
-  finalizedBy        String?
-  finalizedAt        DateTime?
-  finalOutcomeId     String?
+  id                String    @id @default(cuid())
+  marketId          String
+  proposedBy        String
+  proposedOutcomeId String
+  evidenceUrl       String
+  proposedAt        DateTime  @default(now())
+  finalizedBy       String?
+  finalizedAt       DateTime?
+  finalOutcomeId    String?
 
   market          Market   @relation(fields: [marketId], references: [id])
   proposer        User     @relation("ResolutionProposer", fields: [proposedBy], references: [id])
@@ -629,26 +669,45 @@ model Dispute {
 // ---------------------------------------------------------------- drafting & review
 
 model MarketDraft {
-  id                String      @id @default(cuid())
-  source            DraftSource
-  templateJson      Json
-  balanceEstimate   Decimal     @db.Decimal(38, 18)
-  engagementScore   Decimal     @db.Decimal(38, 18)
-  blocklistFlags    Json
-  state             DraftState  @default(suggested)
-  reviewedBy        String?
-  createdAt         DateTime    @default(now())
+  id              String      @id @default(cuid())
+  source          DraftSource
+  templateJson    Json
+  balanceEstimate Decimal     @db.Decimal(38, 18)
+  engagementScore Decimal     @db.Decimal(38, 18)
+  blocklistFlags  Json
+  /// What the research pipeline had read about this slot when the draft was
+  /// made: the clustered stories, the figures pulled out of them, and any
+  /// place two sources published different numbers for the same thing.
+  ///
+  /// Stored on the draft rather than recomputed when the Studio opens it, and
+  /// the distinction is the point. A panel rebuilt at review time would show
+  /// today's news beside a question written from last week's — which reads as
+  /// a citation and is not one. This is the reading the engine actually did.
+  ///
+  /// Null on drafts made before the pipeline existed, and on community
+  /// submissions, which are somebody's own idea rather than a briefing.
+  evidenceJson    Json?
+  state           DraftState  @default(suggested)
+  reviewedBy      String?
+  createdAt       DateTime    @default(now())
 
   @@index([state, createdAt])
   @@map("market_drafts")
 }
 
 model MarketOutcomeLog {
-  marketId     String  @id
-  initialSplit Decimal @db.Decimal(38, 18)
-  finalSplit   Decimal @db.Decimal(38, 18)
-  volume       Decimal @db.Decimal(38, 18)
-  disputeCount Int     @default(0)
+  marketId      String   @id
+  initialSplit  Decimal  @db.Decimal(38, 18)
+  finalSplit    Decimal  @db.Decimal(38, 18)
+  volume        Decimal  @db.Decimal(38, 18)
+  disputeCount  Int      @default(0)
+  /// Checklist rule numbers whose Part 5 monitoring flag fired while the market
+  /// was live, copied here at settlement. Rule 43 says the post-mortem is "the
+  /// data that trains the AI question engine": a market that ran 82/18 for a
+  /// week is a different training example from one that never tripped a flag,
+  /// and the split alone cannot tell the two apart — a question can settle
+  /// balanced after being lopsided for most of its life.
+  warningsFired String[]
 
   market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
 
@@ -754,21 +813,21 @@ model SupportMessage {
 }
 
 model RgSettings {
-  userId       String    @id
+  userId             String    @id
   /// Daily limits. Null means "no limit of your own" — the platform cap still
   /// applies, and in points mode it sits high but is fully enforced (§2.12).
-  depositLimit Decimal?  @db.Decimal(38, 18)
-  stakeLimit   Decimal?  @db.Decimal(38, 18)
-  lossLimit    Decimal?  @db.Decimal(38, 18)
-  cooloffUntil DateTime?
-  selfExcluded Boolean   @default(false)
+  depositLimit       Decimal?  @db.Decimal(38, 18)
+  stakeLimit         Decimal?  @db.Decimal(38, 18)
+  lossLimit          Decimal?  @db.Decimal(38, 18)
+  cooloffUntil       DateTime?
+  selfExcluded       Boolean   @default(false)
   /// When the exclusion was taken. Permanent per §2.12, and this is the record
   /// of when it started — a self-exclusion with no date is not evidence.
-  selfExcludedAt DateTime?
+  selfExcludedAt     DateTime?
   /// §2.12's session reality check, at [60] minutes of continuous use.
   sessionStartedAt   DateTime?
   lastRealityCheckAt DateTime?
-  updatedAt    DateTime  @updatedAt
+  updatedAt          DateTime  @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -870,25 +929,25 @@ model Event {
 // ---------------------------------------------------------------- creators & community
 
 model CreatorProfile {
-  userId            String  @id
+  userId                String    @id
   /// 1 | 2 | 3
-  level             Int     @default(1)
-  cleanResolutions  Int     @default(0)
+  level                 Int       @default(1)
+  cleanResolutions      Int       @default(0)
   /// Settled with a dispute upheld — the other half of the clean rate, and not
   /// derivable from `cleanResolutions` alone (§2.14c's level 3 needs both).
-  disputedResolutions Int   @default(0)
+  disputedResolutions   Int       @default(0)
   /// Voided *after* activation. A Path A market that never filled is not
   /// misconduct — nobody turned up — so it is counted separately from a void
   /// the creator caused, and only this one counts against the record.
-  voidedAfterActivation Int @default(0)
-  totalVolumeHosted Decimal @default(0) @db.Decimal(38, 18)
-  accuracyPct       Decimal @default(0) @db.Decimal(38, 18)
-  badgeFlags        Json
-  followerCount     Int     @default(0)
+  voidedAfterActivation Int       @default(0)
+  totalVolumeHosted     Decimal   @default(0) @db.Decimal(38, 18)
+  accuracyPct           Decimal   @default(0) @db.Decimal(38, 18)
+  badgeFlags            Json
+  followerCount         Int       @default(0)
   /// When the ladder last moved them, so a level change is a dated fact rather
   /// than a number that silently differs from what the creator was told.
-  levelUpdatedAt    DateTime?
-  createdAt         DateTime @default(now())
+  levelUpdatedAt        DateTime?
+  createdAt             DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -952,19 +1011,19 @@ model Opportunity {
 }
 
 model MarketAutopsy {
-  marketId       String   @id
-  creatorId      String
-  kind           AutopsyKind
-  outcomeSummary String
-  tipsJson       Json
+  marketId        String      @id
+  creatorId       String
+  kind            AutopsyKind
+  outcomeSummary  String
+  tipsJson        Json
   /// The signals §2.14d says "feed the AI engine's training loop (§2.9)". Kept
   /// as columns rather than inside `tipsJson` precisely because the loop has to
   /// query them — a JSON blob is a record, not a signal.
-  finalSplit     Decimal? @db.Decimal(38, 18)
-  volume         Decimal  @default(0) @db.Decimal(38, 18)
-  distinctStakers Int     @default(0)
-  views          Int      @default(0)
-  createdAt      DateTime @default(now())
+  finalSplit      Decimal?    @db.Decimal(38, 18)
+  volume          Decimal     @default(0) @db.Decimal(38, 18)
+  distinctStakers Int         @default(0)
+  views           Int         @default(0)
+  createdAt       DateTime    @default(now())
 
   market  Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
   creator User   @relation(fields: [creatorId], references: [id])
@@ -973,10 +1032,10 @@ model MarketAutopsy {
 }
 
 model Comment {
-  id       String       @id @default(cuid())
-  marketId String
-  userId   String
-  text     String
+  id               String       @id @default(cuid())
+  marketId         String
+  userId           String
+  text             String
   /// Snapshot of the commenter's position at the time, e.g. "YES@62" or "none".
   ///
   /// Written once and never recomputed. That permanence is the whole mechanism:
@@ -985,27 +1044,27 @@ model Comment {
   positionSnapshot String
   /// §2.15a's "reason prompts": a comment created by the optional one-line
   /// "why?" at trade time, rather than typed into the thread.
-  fromTrade Boolean     @default(false)
-  parentId String?
-  state    CommentState @default(live)
+  fromTrade        Boolean      @default(false)
+  parentId         String?
+  state            CommentState @default(live)
   /// §2.15a's prediction receipt, stamped at resolution. Null while the market
   /// is open, and null forever on a comment that held no position — that is not
   /// a wrong call, it is not a call.
-  calledIt Boolean?
+  calledIt         Boolean?
   /// How bold a correct call was, 0–1: a landed 15% shout is the platform's
   /// best marketing asset, the same call at 90% is a shrug.
-  boldness Decimal?     @db.Decimal(38, 18)
+  boldness         Decimal?     @db.Decimal(38, 18)
   /// What the §2.15e rules matched, kept so a held comment can be explained to
   /// the person who wrote it and checked by whoever reviews it.
-  flagsJson Json?
-  moderatedBy String?
-  moderatedAt DateTime?
-  createdAt DateTime    @default(now())
+  flagsJson        Json?
+  moderatedBy      String?
+  moderatedAt      DateTime?
+  createdAt        DateTime     @default(now())
 
-  market  Market    @relation(fields: [marketId], references: [id], onDelete: Cascade)
-  user    User      @relation(fields: [userId], references: [id])
-  parent  Comment?  @relation("CommentThread", fields: [parentId], references: [id])
-  replies Comment[] @relation("CommentThread")
+  market  Market          @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  user    User            @relation(fields: [userId], references: [id])
+  parent  Comment?        @relation("CommentThread", fields: [parentId], references: [id])
+  replies Comment[]       @relation("CommentThread")
   reports CommentReport[]
 
   @@index([marketId, createdAt])
@@ -1020,11 +1079,11 @@ model Comment {
 /// flag has no way to tell one furious reader from forty, and no way to show a
 /// reviewer what was actually objected to.
 model CommentReport {
-  id        String   @id @default(cuid())
-  commentId String
+  id         String   @id @default(cuid())
+  commentId  String
   reporterId String
-  reason    String
-  createdAt DateTime @default(now())
+  reason     String
+  createdAt  DateTime @default(now())
 
   comment  Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
   reporter User    @relation(fields: [reporterId], references: [id], onDelete: Cascade)
@@ -1081,15 +1140,15 @@ model SquadMember {
 }
 
 model SquadChallenge {
-  id             String  @id @default(cuid())
-  squadA         String
-  squadB         String
-  marketSetJson  Json
-  period         String
-  scoreA         Decimal @default(0) @db.Decimal(38, 18)
-  scoreB         Decimal @default(0) @db.Decimal(38, 18)
+  id            String  @id @default(cuid())
+  squadA        String
+  squadB        String
+  marketSetJson Json
+  period        String
+  scoreA        Decimal @default(0) @db.Decimal(38, 18)
+  scoreB        Decimal @default(0) @db.Decimal(38, 18)
   /// Not enumerated in §3.
-  state          String  @default("open")
+  state         String  @default("open")
 
   a Squad @relation("SquadA", fields: [squadA], references: [id])
   b Squad @relation("SquadB", fields: [squadB], references: [id])
@@ -1098,17 +1157,17 @@ model SquadChallenge {
 }
 
 model Challenge {
-  id               String   @id @default(cuid())
+  id               String    @id @default(cuid())
   marketId         String
   challengerId     String
   positionSnapshot String
-  linkToken        String   @unique
+  linkToken        String    @unique
   acceptedBy       String?
   acceptedAt       DateTime?
   /// How many people opened the link. §2.15d calls challenge links the
   /// strongest signup motivator, and a claim like that needs a denominator.
-  opens            Int      @default(0)
-  createdAt        DateTime @default(now())
+  opens            Int       @default(0)
+  createdAt        DateTime  @default(now())
 
   market     Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
   challenger User   @relation(fields: [challengerId], references: [id])
@@ -1159,6 +1218,11 @@ model MarketAnnotation {
   marketId String
   type     AnnotationType
   label    String
+  /// Where a `news` annotation came from. Null for platform-generated events,
+  /// which have no source to cite — see the migration for why.
+  url      String?
+  /// The staff account that pinned it, for `news`. Null for generated events.
+  pinnedBy String?
   ts       DateTime       @default(now())
 
   market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
@@ -1169,21 +1233,21 @@ model MarketAnnotation {
 
 /// §3 leaderboard snapshots — served from replicas, never the trade path (§11).
 model LeaderboardSnapshot {
-  period   String
-  userId   String
+  period         String
+  userId         String
   /// Which board this row is a standing on: profit and accuracy rank different
   /// people, and §2.8 asks for both.
-  board    LeaderboardBoard @default(profit)
-  profit   Decimal @db.Decimal(38, 18)
-  accuracy Decimal @db.Decimal(38, 18)
-  rank     Int
+  board          LeaderboardBoard @default(profit)
+  profit         Decimal          @db.Decimal(38, 18)
+  accuracy       Decimal          @db.Decimal(38, 18)
+  rank           Int
   /// The counts the numbers were computed from, kept so a published standing
   /// can be checked against its own inputs rather than only recomputed.
-  staked         Decimal @default(0) @db.Decimal(38, 18)
-  marketsSettled Int     @default(0)
-  marketsWon     Int     @default(0)
-  streak         Int     @default(0)
-  computedAt     DateTime @default(now())
+  staked         Decimal          @default(0) @db.Decimal(38, 18)
+  marketsSettled Int              @default(0)
+  marketsWon     Int              @default(0)
+  streak         Int              @default(0)
+  computedAt     DateTime         @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -1210,20 +1274,20 @@ model LeaderboardSnapshot {
 /// carries an airtime reference instead, which is why the payout reference is a
 /// column rather than an assumption.
 model PrizeRun {
-  id          String        @id @default(cuid())
+  id          String           @id @default(cuid())
   /// The leaderboard period this run rewards, e.g. `2026-W34`.
   period      String
   board       LeaderboardBoard
-  state       PrizeRunState @default(draft)
+  state       PrizeRunState    @default(draft)
   /// Total SPC across every award, held on the row so the approver sees one
   /// number rather than summing the table themselves.
-  totalAmount Decimal       @default(0) @db.Decimal(38, 18)
+  totalAmount Decimal          @default(0) @db.Decimal(38, 18)
   note        String?
   createdBy   String
   /// Set when the four-eyes approval executes. Until then nothing has moved.
   paidAt      DateTime?
   approvalId  String?
-  createdAt   DateTime      @default(now())
+  createdAt   DateTime         @default(now())
 
   awards PrizeAward[]
 
@@ -1233,11 +1297,11 @@ model PrizeRun {
 }
 
 model PrizeAward {
-  id       String  @id @default(cuid())
-  runId    String
-  userId   String
-  rank     Int
-  amount   Decimal @db.Decimal(38, 18)
+  id        String  @id @default(cuid())
+  runId     String
+  userId    String
+  rank      Int
+  amount    Decimal @db.Decimal(38, 18)
   /// Where the prize actually went. Null in points mode, an airtime or data
   /// reference once §9's licensed phase makes that real.
   payoutRef String?
@@ -1259,23 +1323,23 @@ model PrizeAward {
 /// only state is a boolean on a user row cannot show a reviewer *why* an account
 /// was flagged, and a flag nobody can check is a flag nobody should act on.
 model AbuseFlag {
-  id        String         @id @default(cuid())
-  userId    String
-  kind      AbuseFlagKind
-  state     AbuseFlagState @default(open)
+  id           String         @id @default(cuid())
+  userId       String
+  kind         AbuseFlagKind
+  state        AbuseFlagState @default(open)
   /// 0–1, so the queue can be ordered by how sure the rule was.
-  severity  Decimal        @db.Decimal(38, 18)
-  summary   String
+  severity     Decimal        @db.Decimal(38, 18)
+  summary      String
   /// The numbers the rule fired on. The reviewer sees the same arithmetic the
   /// detector did, which is what makes a decision defensible.
   evidenceJson Json
   /// Stable identity for what was detected, so a sweep that runs hourly updates
   /// an open flag rather than filing a new one every hour.
-  dedupeKey String         @unique
-  reviewedBy String?
-  reviewedAt DateTime?
-  note      String?
-  createdAt DateTime       @default(now())
+  dedupeKey    String         @unique
+  reviewedBy   String?
+  reviewedAt   DateTime?
+  note         String?
+  createdAt    DateTime       @default(now())
 
   user     User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   reviewer User? @relation("AbuseReviewer", fields: [reviewedBy], references: [id])
@@ -1336,4 +1400,772 @@ model ConfigVersion {
 
   @@index([key, proposedAt])
   @@map("config_versions")
+}
+
+// ------------------------------------------------- feature flags & canary (§2.13)
+
+/// A gate on a shipped-but-not-live feature (§2.13's "canary or feature-flag
+/// gating", §6.8's flags UI).
+///
+/// `rolloutPct` is what makes this a canary rather than a switch: a change goes
+/// to 5% of accounts, and the same account keeps the same answer across
+/// requests because the bucket is a hash of (key, userId), not a coin flip.
+/// A flag that flickers per request is worse than no flag — it makes a bug
+/// report unreproducible.
+model FeatureFlag {
+  key         String   @id
+  description String
+  /// Off entirely. The kill switch, checked before the rollout maths.
+  enabled     Boolean  @default(false)
+  /// 0–100. 100 with `enabled` means everyone.
+  rolloutPct  Int      @default(0)
+  /// Accounts always in, whatever the percentage — staff, and the people
+  /// debugging the thing.
+  allowList   String[] @default([])
+  updatedBy   String?
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  @@map("feature_flags")
+}
+
+// ------------------------------------------------------ operator broadcasts (§6.8)
+
+/// A notification sent to a segment of the userbase from the growth console.
+///
+/// Recorded before it is sent and never deleted: a broadcast is the one action
+/// in the console that reaches every member at once, and "what did we send, to
+/// whom, who approved it" has to survive the person who sent it.
+model Broadcast {
+  id         String    @id @default(cuid())
+  title      String
+  body       String
+  /// `all | tier1 | creators | dormant` — resolved at send time.
+  segment    String
+  channel    String    @default("in_app")
+  createdBy  String
+  approvedBy String?
+  sentAt     DateTime?
+  recipients Int       @default(0)
+  createdAt  DateTime  @default(now())
+
+  @@index([createdAt])
+  @@map("broadcasts")
+}
+
+// ------------------------------------------------------- restore drills (§2.13, §6.9)
+
+/// The record of a backup actually being restored (§2.13).
+///
+/// A backup nobody has restored is a hypothesis. The system room reads this to
+/// show when the last drill ran and whether it passed, because the useful
+/// question is never "are we taking backups" but "when did we last prove one
+/// works".
+model RestoreDrill {
+  id          String   @id @default(cuid())
+  ranAt       DateTime @default(now())
+  /// Which backup was restored — a filename or snapshot id.
+  backupRef   String
+  /// How long the restore took, in seconds. The recovery-time objective.
+  durationSec Int
+  passed      Boolean
+  /// Row counts compared after the restore, and anything that failed.
+  notes       String
+  ranBy       String
+
+  @@index([ranAt])
+  @@map("restore_drills")
+}
+
+// ----------------------------------------------------------- PII access log (§2.11)
+
+/// Every staff read of a member's personal details (§2.11's "field-level
+/// access logging").
+///
+/// Separate from `admin_audit`, which records mutations. A support agent
+/// reading a phone number changes nothing and is exactly the access that needs
+/// a trail — the abuse this catches is looking, not editing.
+model PiiAccessLog {
+  id        String   @id @default(cuid())
+  staffId   String
+  subjectId String
+  /// Which fields were revealed: `email`, `phone`, `kycRef`.
+  ///
+  /// Empty by default rather than absent. A list column with no default is
+  /// null until something writes it, and "we do not know which fields were
+  /// read" is the one answer an access log must never give; an empty array at
+  /// least says plainly that the row recorded none.
+  fields    String[] @default([])
+  reason    String
+  ip        String
+  createdAt DateTime @default(now())
+
+  @@index([subjectId, createdAt])
+  @@index([staffId, createdAt])
+  @@map("pii_access_log")
+}
+
+// ------------------------------------------------------------- referrals (§2.17)
+
+/// Who brought whom, and what it earned them (§2.17).
+///
+/// The reward is deliberately not paid on signup. A referral programme that
+/// pays on account creation pays for account creation, which is a bounty on
+/// fake accounts; this pays when the referred member does the thing the
+/// business actually wants, and `qualifiedAt` is when that happened.
+model Referral {
+  id          String    @id @default(cuid())
+  /// The account whose code was used.
+  referrerId  String
+  /// The new account. One row per referred account, ever.
+  referredId  String    @unique
+  code        String
+  qualifiedAt DateTime?
+  /// Paid once, on qualification, and only after the anti-abuse check.
+  rewardPaid  Decimal   @default(0) @db.Decimal(38, 18)
+  /// Set when the pair looks like self-referral — same device, same contact
+  /// domain, funded from the same source. Blocks the reward, keeps the row.
+  blockedFor  String?
+  createdAt   DateTime  @default(now())
+
+  referrer User @relation("ReferralsMade", fields: [referrerId], references: [id], onDelete: Cascade)
+  referred User @relation("ReferralReceived", fields: [referredId], references: [id], onDelete: Cascade)
+
+  @@index([referrerId])
+  @@index([code])
+  @@map("referrals")
+}
+
+// ------------------------------------------------- consent & sessions (§2.18)
+
+/// Acceptance of a specific version of a specific document (§2.18).
+///
+/// Versioned because "they agreed to the terms" is worthless without saying
+/// which terms. A new version does not invalidate the old row — it needs a new
+/// one, and the absence of it is what triggers the re-prompt.
+model Consent {
+  id         String   @id @default(cuid())
+  userId     String
+  /// `terms | privacy | age`
+  document   String
+  version    String
+  acceptedAt DateTime @default(now())
+  ip         String
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, document, version])
+  @@index([userId])
+  @@map("consents")
+}
+
+/// A live sign-in, so somebody can see where they are logged in and end it
+/// (§2.18's session/device management).
+model UserSession {
+  id         String    @id @default(cuid())
+  userId     String
+  /// Hash of the token's jti — never the token. A session list that can hand
+  /// back a working credential is a session list that is worth stealing.
+  tokenHash  String    @unique
+  userAgent  String
+  ip         String
+  lastSeenAt DateTime  @default(now())
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+  /// Why it ended: `user | password_change | sim_swap_freeze | staff`.
+  revokedFor String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@map("user_sessions")
+}
+
+/// A cooling period on an account after a contact change (§2.18's SIM-swap
+/// freeze).
+///
+/// The attack this exists for: take over the phone number, change the contact
+/// details, withdraw. The freeze does not stop somebody using the site — it
+/// stops money leaving while the real owner still has a chance to notice, and
+/// it is why the notification goes to the *old* contact.
+model AccountFreeze {
+  id        String    @id @default(cuid())
+  userId    String
+  reason    String
+  startedAt DateTime  @default(now())
+  endsAt    DateTime
+  liftedAt  DateTime?
+  liftedBy  String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, endsAt])
+  @@map("account_freezes")
+}
+
+// ---------------------------------------------------------------------------
+// The market intelligence layer.
+//
+// A registry of sources, what they published, and what a market makes of it.
+// The AI researches, analyses and proposes; humans decide. Nothing in this
+// section can settle a market or move money — the resolution path still runs
+// through a human proposal and a second human's confirmation, and the dossier
+// below is an advisory record that arrives in front of them, not instead of.
+// ---------------------------------------------------------------------------
+
+/// How often a source is read. `auto` is the default and the one that matters:
+/// it follows the markets the source is attached to, so a source feeding a
+/// market that settles tomorrow polls hard and drops back afterwards without
+/// anybody remembering to change it.
+enum SourceCadence {
+  auto
+  urgent
+  normal
+  background
+}
+
+/// Tier 1 settles markets. Tier 2 is context. Tier 3 never reaches a user.
+/// The policy behind these lives in `@stakeam/rules`, not in this column.
+enum SourceTier {
+  resolution
+  news
+  signal
+}
+
+/// How items are fetched, in the order the policy prefers them.
+enum SourceKind {
+  api
+  rss
+  sitemap
+  crawl
+}
+
+model Source {
+  id             String     @id @default(cuid())
+  tier           SourceTier
+  kind           SourceKind
+  /// What a market cites and a reader sees. "CBN", "NBS", "Premium Times".
+  name           String
+  /// The organisation's own address, for attribution.
+  homeUrl        String
+  /// Where items actually come from: the API endpoint, feed, or sitemap.
+  feedUrl        String?
+  /// 0-1, recomputed from `conflicts` and `corroborations` rather than
+  /// mutated in place — the first question about an automatic demotion is
+  /// "why", and that needs arithmetic reproducible from the rows.
+  trust          Decimal    @default(0) @db.Decimal(4, 3)
+  /// Times this source has been caught contradicting a tier-1 fact.
+  conflicts      Int        @default(0)
+  /// Times it has agreed with one since the last conflict.
+  corroborations Int        @default(0)
+
+  categories String[]
+  region     String?
+  language   String   @default("en")
+
+  /// The kill switch. Off means nothing is fetched and nothing is shown, and
+  /// the reason is kept so a source disabled at 3am is explicable at 9.
+  enabled        Boolean   @default(true)
+  disabledAt     DateTime?
+  disabledBy     String?
+  disabledReason String?
+
+  /// Politeness, per §"obey robots.txt, rate limits and ToS": the minimum gap
+  /// between two fetches of this host, and what its robots.txt last said.
+  politenessMs    Int       @default(2000)
+  robotsCheckedAt DateTime?
+  robotsAllows    Boolean   @default(true)
+
+  lastFetchAt  DateTime?
+  lastOkAt     DateTime?
+  failureCount Int       @default(0)
+  /// When this source last published something we kept. Distinct from
+  /// `lastOkAt`, which only says the request succeeded: a feed that returns 200
+  /// with nothing new for a fortnight is healthy by one measure and dead by the
+  /// one that matters.
+  lastItemAt   DateTime?
+  /// The last error, kept so "failing" on the Research tab can say why rather
+  /// than only that. Cleared on the next success.
+  lastError    String?
+
+  /// HTTP validators from the last successful read, sent back as
+  /// `If-None-Match` / `If-Modified-Since`.
+  ///
+  /// A feed polled every minute is 1,440 requests a day per source, and almost
+  /// all of them return the same bytes. Honouring 304 is the difference between
+  /// being a considerate client and being the reason a newsroom blocks the
+  /// range — and it is also most of the bandwidth bill.
+  etag         String?
+  lastModified String?
+
+  /// Which cadence tier this source polls on. `auto` follows the markets it is
+  /// attached to; the others pin it. See `packages/rules/src/sources.ts`.
+  cadence       SourceCadence @default(auto)
+  /// For sources that publish on a calendar — NBS monthly CPI, CBN daily rates
+  /// — the window to poll hard around, as a cron-ish hint rather than a
+  /// schedule the code obeys blindly. Null means poll on the tier.
+  publishWindow String?
+
+  createdAt DateTime @default(now())
+
+  items SourceItem[]
+
+  @@unique([tier, homeUrl])
+  @@index([tier, enabled])
+  @@map("sources")
+}
+
+/// One published thing.
+///
+/// Headline, link, timestamp and extracted facts only — never the article
+/// body. Storing full text of somebody else's journalism is a licensing
+/// problem this platform has no need to take on, and the facts are what the
+/// pipeline actually uses.
+model SourceItem {
+  id       String @id @default(cuid())
+  sourceId String
+
+  headline String
+  /// Unique so the same story fetched twice through two routes lands once.
+  url      String  @unique
+  /// The feed's own id for the entry, where it gives one.
+  ///
+  /// Deduped on separately from the URL, because the two catch different
+  /// mistakes: a publisher that appends a tracking parameter, moves to https
+  /// or re-slugs a headline emits a *new* URL for a story it has already
+  /// sent, and the guid is that publisher saying "this is the same item".
+  /// Null is common and allowed — Postgres lets a unique index hold many
+  /// nulls, so a feed with no guids simply falls back to the URL.
+  guid     String?
+
+  publishedAt DateTime
+  fetchedAt   DateTime @default(now())
+
+  /// The same story across forty outlets is one cluster with a source count.
+  clusterId String?
+
+  /// Figures, dates, scores and official statements pulled out of the item,
+  /// each with the source it came from.
+  factsJson    Json @default("{}")
+  entitiesJson Json @default("[]")
+
+  source Source             @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  links  MarketSourceItem[]
+
+  @@unique([sourceId, guid])
+  @@index([sourceId, publishedAt])
+  @@index([clusterId])
+  @@map("source_items")
+}
+
+/// How relevant one item is to one market, and whether staff pinned it.
+model MarketSourceItem {
+  marketId  String
+  itemId    String
+  /// 0-1. Entity and keyword overlap, plus embedding similarity.
+  relevance Decimal   @db.Decimal(4, 3)
+  /// Pinned items rank first and drop an annotation on the chart.
+  pinnedAt  DateTime?
+  pinnedBy  String?
+  createdAt DateTime  @default(now())
+
+  item SourceItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@id([marketId, itemId])
+  @@index([marketId, relevance])
+  @@map("market_source_items")
+}
+
+/// Two sources disagreeing about the same fact.
+///
+/// Flagged rather than averaged. An average of "1,532" and "1,498" is a number
+/// no source published, and settling a market on it would be indefensible.
+model SourceConflict {
+  id         String    @id @default(cuid())
+  marketId   String?
+  /// What they disagree about: "cbn.official_window.close".
+  factKey    String
+  /// Each side's claim, with the source that made it.
+  claimsJson Json
+  detectedAt DateTime  @default(now())
+  resolvedAt DateTime?
+  resolvedBy String?
+  note       String?
+
+  @@index([marketId, resolvedAt])
+  @@map("source_conflicts")
+}
+
+/// What the AI would propose, for a human to accept, change, or throw out.
+///
+/// Advisory by construction. There is no path from this table to a settled
+/// market: the resolution endpoints take a staff id, the four-eyes rule needs
+/// a second one, and `resolution.integration.test.ts` asserts that no service
+/// account can reach either.
+model ResolutionDossier {
+  id       String @id @default(cuid())
+  marketId String @unique
+
+  /// The outcome the analysis points at. Null when it will not guess.
+  proposedOutcomeId String?
+  /// 0-1. Low confidence is a recommendation to review for a void, not a
+  /// hedge on a guess.
+  confidence        Decimal @db.Decimal(4, 3)
+  /// True when the tier-1 source published nothing, or sources conflict, or
+  /// confidence is too low to propose at all.
+  recommendVoid     Boolean @default(false)
+
+  /// The written argument, citing each source by name and link.
+  reasoning     String
+  /// Every item the analysis leaned on, with what was extracted from it.
+  evidenceJson  Json   @default("[]")
+  /// Conflicts found while assembling it.
+  conflictsJson Json   @default("[]")
+
+  builtAt DateTime @default(now())
+
+  /// Set when a human acts on it, so a dossier nobody used is visible as such.
+  reviewedAt DateTime?
+  reviewedBy String?
+  /// Whether the human agreed with the proposal. The training signal.
+  accepted   Boolean?
+
+  @@index([reviewedAt])
+  @@map("resolution_dossiers")
+}
+
+/// Part 5 of docs/ticket-creation-checklist.md, made durable.
+///
+/// `packages/rules`' `healthFlags()` is a pure function over facts the database
+/// already has, so the Studio could — and does — compute it fresh on every
+/// read. This table exists for the other half of Part 5: rule 43's post-mortem
+/// asks what fired *during* the market's life, and a flag that is only ever
+/// computed on read disappears the moment the condition passes. A whale who
+/// held 60% of a thin market for a day and then got matched leaves no trace at
+/// settlement, which is exactly the market the question engine most needs to
+/// learn from.
+///
+/// One row per (market, rule): a sweep that finds the same condition still
+/// standing bumps `lastFiredAt` and `firings` rather than writing a second row,
+/// so the history reads as "flagged since Tuesday", not as 400 identical lines.
+model MarketHealthFlag {
+  id       String @id @default(uuid())
+  marketId String
+  /// The checklist rule number — 35, 36, 38 or 39.
+  rule     String
+  severity String
+  /// The most recent wording. It carries live numbers ("running 82/18 after
+  /// 71h"), so the latest is the useful one; `firstFiredAt` is what says how
+  /// long it has been true.
+  message  String
+
+  firstFiredAt DateTime  @default(now())
+  lastFiredAt  DateTime  @default(now())
+  firings      Int       @default(1)
+  /// Set by the first sweep that finds the condition gone. Kept rather than
+  /// deleted: "was lopsided for three days and recovered" is a post-mortem, and
+  /// deleting the row would make it look like nothing ever happened.
+  clearedAt    DateTime?
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@unique([marketId, rule])
+  @@index([marketId, clearedAt])
+  @@map("market_health_flags")
+}
+
+/// One run of the §2.14a co-pilot: what a creator typed, and what it made of it.
+///
+/// The co-pilot used to file nothing, on the sound reasoning that somebody
+/// still thinking should not be filling a review queue. That stops being true
+/// the moment the co-pilot becomes one of only two doors into community
+/// creation (checklist Part 4): "the AI structured this" has to be a fact the
+/// service can check, not a claim the client makes about itself.
+///
+/// So the run is recorded and its id is what a submission cites. What the
+/// creator typed is kept beside what the model returned because that pair is
+/// the most useful thing a reviewer can see — a question that drifted a long
+/// way from the sentence behind it is worth a second look, and neither half
+/// says so on its own.
+model CopilotRun {
+  id           String @id @default(cuid())
+  creatorId    String
+  /// The creator's own words. Their submission, not somebody else's data.
+  inputText    String
+  /// The template the model returned, before any editing the creator did.
+  proposalJson Json
+
+  /// Set when a submission cites this run. One run, one submission: a single
+  /// co-pilot call must not become a season ticket for hand-written markets.
+  usedAt      DateTime?
+  usedByDraft String?
+
+  createdAt DateTime @default(now())
+
+  creator User @relation(fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@index([creatorId, createdAt])
+  @@map("copilot_runs")
+}
+
+// ------------------------------------------------------ the order book (§2.3, hybrid layer)
+
+/// Which side of an outcome an order takes.
+///
+/// `buy` is the long side: it pays ₦1 per share if the outcome happens.
+/// `sell` is the short side: it pays ₦1 per share if the outcome does *not*.
+/// The two are counterparties to each other — a buy at 62 and a sell at 62
+/// together escrow exactly ₦1 per share, and exactly one of them is paid it.
+///
+/// Note this is not the same `sell` as `TradeSide.sell`. A pot sell returns
+/// shares to the pot for whatever the curve says they are worth now; a book
+/// sell opens a short position at a price the trader chose. They are different
+/// instruments and the enums are deliberately separate so no query can treat
+/// one as the other.
+enum OrderSide {
+  buy
+  sell
+}
+
+enum OrderState {
+  open
+  filled
+  cancelled
+}
+
+/// Which way a matched position pays.
+enum MatchSide {
+  /// Paid ₦1 per share if this outcome wins.
+  long
+  /// Paid ₦1 per share if this outcome loses.
+  short
+}
+
+/// A resting limit order.
+///
+/// Money is locked in escrow the moment it rests and stays locked until it
+/// fills or is cancelled — there is no state in which an order sits on the
+/// book backed by a balance the trader could have spent elsewhere. That is the
+/// whole reason `locked` is a column rather than a derivation: the amount that
+/// must be released on cancellation is the amount that was taken, recorded,
+/// not recomputed from a price that may since have moved.
+model Order {
+  id        String    @id @default(cuid())
+  marketId  String
+  outcomeId String
+  userId    String
+  side      OrderSide
+
+  /// The long side's price in kobo, 1–99. A `sell` at 62 is a willingness to
+  /// take the short side while the long side trades at 62 or better — one
+  /// number for both sides of the book, because they are one price.
+  priceKobo Int
+
+  /// Shares requested, and how many of them have filled. A share pays ₦1.
+  shares Decimal @db.Decimal(60, 30)
+  filled Decimal @default(0) @db.Decimal(60, 30)
+
+  /// Escrow still held against the unfilled remainder.
+  locked Decimal @default(0) @db.Decimal(38, 18)
+
+  state OrderState @default(open)
+
+  /// Posted by the platform's market maker rather than by a person.
+  ///
+  /// On the row rather than inferred from `userId == 'sys_platform'`, because
+  /// the disclosure on the market and the reconciliation of platform positions
+  /// both key off it, and both would silently stop working the day the maker
+  /// is given its own account. It is also what makes the ledger's
+  /// platform-liquidity tag checkable against the book.
+  maker Boolean @default(false)
+
+  /// The taker request that created this order — idempotency, as trades have.
+  requestId   String    @unique
+  createdAt   DateTime  @default(now())
+  cancelledAt DateTime?
+
+  market  Market  @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  outcome Outcome @relation(fields: [outcomeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// The book's read pattern: one side of one outcome, best price first, then
+  /// oldest first. Price-time priority is an index, not a sort in Node.
+  @@index([marketId, outcomeId, side, state, priceKobo, createdAt])
+  @@index([userId, state])
+  /// "Does the platform quote here" — the market's disclosure, and the
+  /// reconciliation of platform positions, both ask exactly this.
+  @@index([marketId, maker])
+  @@map("orders")
+}
+
+/// One match between a taker and a resting maker.
+///
+/// Kept as its own row rather than inferred from the order pair because a
+/// single incoming request can sweep several price levels, and "what did I
+/// actually pay" is then a list, not a number. It is also the audit trail: a
+/// matched fill moves money between two named users, and that has to be
+/// readable without replaying the book.
+model OrderFill {
+  id           String    @id @default(cuid())
+  marketId     String
+  outcomeId    String
+  /// The taker's idempotency key. Every fill from one request shares it.
+  requestId    String
+  makerOrderId String
+  takerUserId  String
+  makerUserId  String
+  /// Which side the taker took; the maker took the other.
+  takerSide    OrderSide
+  priceKobo    Int
+  shares       Decimal   @db.Decimal(60, 30)
+  createdAt    DateTime  @default(now())
+
+  @@index([marketId, createdAt])
+  @@index([requestId])
+  @@map("order_fills")
+}
+
+/// A position held against a matched counterparty rather than against the pot.
+///
+/// Deliberately not a column on `positions`. The pot's resolution reads
+/// `positions` to divide the pot among winning shares, and a matched share
+/// must never appear in that division — it is paid ₦1 from the collateral its
+/// own counterparty posted, and letting it into the pot's query would have the
+/// pot fund it. A separate table makes that mistake unrepresentable rather
+/// than merely discouraged.
+///
+/// The invariant, per (market, outcome):
+///
+///     Σ escrowed(long) + Σ escrowed(short) == ₦1 × Σ shares(long)
+///     Σ shares(long) == Σ shares(short)
+///
+/// Both hold by construction: every pair is minted together at a price that
+/// splits ₦1 between the two sides, and nothing else writes this table.
+model MatchedPosition {
+  id        String    @id @default(cuid())
+  userId    String
+  marketId  String
+  outcomeId String
+  side      MatchSide
+  shares    Decimal   @db.Decimal(60, 30)
+  /// This holder's contribution to the ₦1-per-share collateral behind those
+  /// shares. Their entry price, in other words — but stored as the total
+  /// rather than a rate, because the total is what has to leave escrow.
+  escrowed  Decimal   @db.Decimal(38, 18)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  market  Market  @relation(fields: [marketId], references: [id], onDelete: Cascade)
+  outcome Outcome @relation(fields: [outcomeId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, marketId, outcomeId, side])
+  @@index([marketId, outcomeId])
+  @@map("matched_positions")
+}
+
+// ---------------------------------------------------------------- platform liquidity
+
+/// Which kind of money a liquidity action moved.
+///
+/// `test` is points: the starter currency the whole platform already runs on,
+/// worth nothing outside it. `live` is naira, and is unreachable until
+/// licensing — gated by a feature flag *and* a config key, checked together,
+/// because one switch left on by accident is how a test tool spends real money.
+///
+/// Stored on the action rather than read from config at display time. Config is
+/// a current value; an audit row is a claim about the past, and "which mode was
+/// this in" has to survive somebody changing the mode afterwards.
+enum LiquidityMode {
+  test
+  live
+}
+
+/// Why the maker is not quoting.
+///
+/// Every one of these is a rule from §E enforced in code. They are an enum
+/// rather than a message so the dashboard can say *which* rule stopped it, and
+/// so a test can assert the reason rather than a string.
+enum MakerStatus {
+  /// Quoting normally.
+  quoting
+  /// Off by default. Nothing has enabled it.
+  idle
+  /// The budget is spent. It stops quoting entirely — it does not widen, it stops.
+  budget_spent
+  /// Real depth arrived. Above the threshold the market does not need us.
+  depth_reached
+  /// One side holds too much. It stops adding to that side.
+  inventory_capped
+  /// The market is frozen, or close enough to it.
+  market_closing
+  /// Somebody pulled the switch — this market's, or the global one.
+  killed
+}
+
+/// One market's maker: its budget, its rules, and where it has got to.
+///
+/// One row per market and no history: the history is the ledger and
+/// `admin_audit`, both of which already record every quote and every change.
+/// A second copy here would be a second thing to reconcile.
+model MarketMaker {
+  marketId String @id
+
+  /// Off until somebody turns it on, per market. There is no global "on".
+  enabled Boolean       @default(false)
+  mode    LiquidityMode @default(test)
+
+  /// The hard ceiling. Never exceeded, and when it is reached the maker stops
+  /// quoting rather than quoting smaller — a maker that keeps trading at the
+  /// edge of its budget is a maker whose budget is a suggestion.
+  budget Decimal @db.Decimal(38, 18)
+  /// Committed so far: escrow locked behind open quotes plus everything that
+  /// has actually filled. Derived from the ledger on every cycle and stored
+  /// here only so the dashboard need not recompute it to draw a bar.
+  spent  Decimal @default(0) @db.Decimal(38, 18)
+
+  /// Shares per quote, before fading.
+  quoteSize    Decimal @db.Decimal(38, 18)
+  /// Half-width in kobo: quotes go out at mid ± this. Widens on its own when
+  /// volume is thin, so this is a floor rather than a fixed number.
+  spreadKobo   Int
+  /// Never quote outside these. The maker has no view; these are the bounds
+  /// beyond which it declines to have one.
+  minPriceKobo Int     @default(2)
+  maxPriceKobo Int     @default(98)
+  /// How often the cycle runs, in milliseconds.
+  refreshMs    Int     @default(60000)
+
+  /// Stop quoting entirely once real resting depth on a side reaches this.
+  depthStop    Decimal @db.Decimal(38, 18)
+  /// Stop adding to a side once the maker holds this much of it.
+  inventoryCap Decimal @db.Decimal(38, 18)
+
+  status      MakerStatus @default(idle)
+  /// Why it is in that status, in the words the dashboard shows.
+  statusNote  String?
+  lastQuoteAt DateTime?
+  lastCycleAt DateTime?
+
+  /// Set when a kill switch is pulled. A killed maker will not quote again
+  /// until somebody clears it deliberately — a kill that a scheduled cycle can
+  /// undo is not a kill switch.
+  killedAt   DateTime?
+  killedBy   String?
+  killReason String?
+
+  /// True once a seed has been placed on this market in the same admin
+  /// session. §E: stacking maker exposure on top of a fresh seed without
+  /// noticing is the failure this is here to make somebody confirm.
+  seededBy       String?
+  seededAt       DateTime?
+  stackConfirmed Boolean   @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  market Market @relation(fields: [marketId], references: [id], onDelete: Cascade)
+
+  @@index([enabled, status])
+  @@map("market_makers")
 }
