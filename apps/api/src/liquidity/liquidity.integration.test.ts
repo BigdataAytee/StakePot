@@ -59,10 +59,26 @@ describe.skipIf(!TEST_DATABASE_URL)('platform liquidity (integration)', () => {
     const modes = new LiquidityModeService(config, {
       on: async () => false,
     } as unknown as FlagsService);
-    makers = new MarketMakerService(prisma, book, config, modes, new AdminAuditService(prisma));
+    makers = new MarketMakerService(
+      prisma,
+      book,
+      wallet,
+      config,
+      modes,
+      new AdminAuditService(prisma),
+    );
   });
 
   afterAll(async () => {
+    // Clean up after ourselves, not just before.
+    //
+    // `resetDatabase` runs in `beforeEach`, so every file leaves its last
+    // test's rows behind for the next one — normally harmless, and not
+    // harmless here: this suite's markets carry live maker rows and platform
+    // escrow, and the file that runs next found its own queued trade refused
+    // for reasons it could not see. A suite that tidies up only on the way in
+    // is a suite whose failures land on somebody else.
+    await resetDatabase(prisma);
     await prisma.$disconnect();
   });
 
@@ -120,13 +136,6 @@ describe.skipIf(!TEST_DATABASE_URL)('platform liquidity (integration)', () => {
           ],
         },
       },
-    });
-    // The maker spends the platform's own money, so it has to have some.
-    await wallet.issue({
-      userId: SYSTEM_PLATFORM_ACCOUNT,
-      amount: new Decimal(1_000_000),
-      type: 'seed',
-      ref: `float:${id}`,
     });
     return id;
   }
@@ -307,6 +316,47 @@ describe.skipIf(!TEST_DATABASE_URL)('platform liquidity (integration)', () => {
       confirmStacking: true,
     });
     expect(started.enabled).toBe(true);
+  });
+
+  it('mints the budget as points when it starts, and tops up rather than re-minting', async () => {
+    // A budget is a ceiling, not money. The platform account starts empty, so
+    // without this step a perfectly configured maker fails on its first quote
+    // with "insufficient funds for sys_platform" — which reads like a platform
+    // fault rather than the missing funding step it is. This is the TEST-mode
+    // stand-in for the connector that will draw on a real balance.
+    const marketId = await market();
+    await configure(marketId, { budget: '4000' });
+
+    const before = await wallet.balanceOf(SYSTEM_PLATFORM_ACCOUNT);
+    await makers.start({ marketId, staffId: STAFF, ip: '127.0.0.1' });
+    const afterFirst = await wallet.balanceOf(SYSTEM_PLATFORM_ACCOUNT);
+    expect(afterFirst.available.minus(before.available).eq(4_000)).toBe(true);
+
+    // Starting again mints nothing: the float is already there.
+    await makers.stop({ marketId, staffId: STAFF, ip: '127.0.0.1' });
+    await makers.start({ marketId, staffId: STAFF, ip: '127.0.0.1' });
+    const afterRestart = await wallet.balanceOf(SYSTEM_PLATFORM_ACCOUNT);
+    expect(afterRestart.available.eq(afterFirst.available)).toBe(true);
+
+    // Raising the budget tops the float up by the difference, not by the whole
+    // new budget — which is the bug this shape exists to avoid.
+    await configure(marketId, { budget: '6500' });
+    await makers.start({ marketId, staffId: STAFF, ip: '127.0.0.1' });
+    const afterRaise = await wallet.balanceOf(SYSTEM_PLATFORM_ACCOUNT);
+    expect(afterRaise.available.minus(afterFirst.available).eq(2_500)).toBe(true);
+  });
+
+  it('refuses to fund a live-mode maker, because the connector is a stub', async () => {
+    // The path that must not quietly work. LIVE is unreachable through the
+    // mode guard; this is the second door, checked at the money rather than at
+    // the request, so a maker row that somehow says `live` cannot quote.
+    const marketId = await market();
+    await configure(marketId);
+    await prisma.marketMaker.update({ where: { marketId }, data: { mode: 'live' } });
+
+    await expect(makers.start({ marketId, staffId: STAFF, ip: '127.0.0.1' })).rejects.toThrow(
+      /funding connector|not implemented/i,
+    );
   });
 
   it('refuses a budget above the configured ceiling', async () => {

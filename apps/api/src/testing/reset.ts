@@ -42,6 +42,11 @@ export async function resetDatabase(prisma: PrismaService): Promise<void> {
   await prisma.order.deleteMany();
   await prisma.matchedPosition.deleteMany();
 
+  // The platform's market makers. Same reason again, and the same class of
+  // symptom: a maker row surviving a reset is a market that quotes in the next
+  // test for reasons that test cannot see.
+  await prisma.marketMaker.deleteMany();
+
   await prisma.trade.deleteMany();
   await prisma.position.deleteMany();
   await prisma.resolution.deleteMany();

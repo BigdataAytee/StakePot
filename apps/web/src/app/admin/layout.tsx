@@ -19,6 +19,7 @@ import {
   Trophy,
   UserCog,
   Wallet,
+  Droplets,
 } from 'lucide-react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -63,6 +64,7 @@ const SCREENS = [
   { href: '/admin/resolution', label: 'Resolution', icon: Gavel },
   { href: '/admin/approvals', label: 'Approvals', icon: ShieldCheck },
   { href: '/admin/money', label: 'Money room', icon: Wallet },
+  { href: '/admin/liquidity', label: 'Liquidity', icon: Droplets },
   { href: '/admin/support', label: 'Support desk', icon: LifeBuoy },
   { href: '/admin/lifecycle', label: 'Lifecycle', icon: Timer },
   { href: '/admin/creators', label: 'Creators desk', icon: UserCog },

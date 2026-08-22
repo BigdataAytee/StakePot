@@ -4,6 +4,7 @@ import { AuditModule } from '../audit/audit.module';
 import { FlagsModule } from '../flags/flags.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { OrderBookModule } from '../orderbook/orderbook.module';
+import { WalletModule } from '../wallet/wallet.module';
 import { PlatformConfigModule } from '../platform-config/platform-config.module';
 import { PrismaModule } from '../prisma/prisma.module';
 import { StubFundingConnector } from './funding.connector';
@@ -33,6 +34,7 @@ import { LiquidityModeService } from './mode.service';
     LedgerModule,
     AuditModule,
     OrderBookModule,
+    WalletModule,
   ],
   providers: [LiquidityModeService, MarketMakerService, StubFundingConnector],
   exports: [LiquidityModeService, MarketMakerService, StubFundingConnector],

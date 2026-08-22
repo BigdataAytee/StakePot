@@ -8,6 +8,7 @@ import type { Tx } from '../ledger/ledger.service';
 import { indexOf, toEngineState } from '../market/market-state';
 import { KOBO_PER_SHARE } from '../orderbook/matching';
 import { OrderBookService } from '../orderbook/orderbook.service';
+import { WalletService } from '../wallet/wallet.service';
 import { PlatformConfigService } from '../platform-config/platform-config.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { LiquidityModeService } from './mode.service';
@@ -94,6 +95,7 @@ export class MarketMakerService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly book: OrderBookService,
+    private readonly wallet: WalletService,
     private readonly config: PlatformConfigService,
     private readonly modes: LiquidityModeService,
     private readonly audit: AdminAuditService,
@@ -197,6 +199,8 @@ export class MarketMakerService {
           'of a fresh seed stacks platform exposure — confirm that you mean to.',
       );
     }
+
+    await this.fund(maker);
 
     const saved = await this.prisma.marketMaker.update({
       where: { marketId: input.marketId },
@@ -496,6 +500,51 @@ export class MarketMakerService {
   }
 
   // ---------------------------------------------------------------- internals
+
+  /**
+   * Make sure the platform account actually holds this maker's budget.
+   *
+   * A budget is a *ceiling*, and a ceiling is not money. The maker escrows
+   * against `sys_platform` when it quotes, and that account starts at zero —
+   * so without this, a perfectly configured maker fails on its first quote
+   * with "insufficient funds for sys_platform", which reads like a platform
+   * fault rather than the missing step it is.
+   *
+   * In TEST mode the float is minted as points, which is what TEST mode *is*:
+   * the whole platform runs on points and they are worth nothing outside it.
+   * Idempotent on the ledger ref, and topped up rather than re-issued when a
+   * budget is raised, so restarting a maker does not mint its budget again.
+   *
+   * In LIVE mode this is where the fintech connector goes — reserve against a
+   * real processor balance, capture what is spent, release the rest. It throws
+   * `NotImplemented` today, which is the correct behaviour for an unbuilt
+   * payment path and the reason LIVE mode is unreachable.
+   */
+  private async fund(maker: MarketMaker): Promise<void> {
+    if (maker.mode === 'live') {
+      // Unreachable while LIVE is gated, and deliberately loud if it ever is
+      // not: better a refusal here than a maker quoting money nobody reserved.
+      throw new MarketMakerError(
+        'live-mode makers need the funding connector, which is not implemented until licensing',
+      );
+    }
+
+    const ref = `maker-float:${maker.marketId}`;
+    const issued = await this.prisma.ledgerEntry.aggregate({
+      where: { userId: SYSTEM_PLATFORM_ACCOUNT, ref, fundClass: 'user_available' },
+      _sum: { amount: true },
+    });
+    const already = num(issued._sum.amount ?? 0);
+    const shortfall = num(maker.budget).minus(already);
+    if (shortfall.lte(0)) return;
+
+    await this.wallet.issue({
+      userId: SYSTEM_PLATFORM_ACCOUNT,
+      amount: shortfall,
+      type: 'seed',
+      ref,
+    });
+  }
 
   private async require(marketId: string): Promise<MarketMaker> {
     const maker = await this.prisma.marketMaker.findUnique({ where: { marketId } });

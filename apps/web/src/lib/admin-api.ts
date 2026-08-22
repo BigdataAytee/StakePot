@@ -247,6 +247,76 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /** A market as the Studio's Manage tab sees it, flags and all. */
+/** TEST or LIVE, and exactly which switch is holding LIVE closed. */
+export interface LiquidityMode {
+  mode: 'test' | 'live';
+  liveAvailable: boolean;
+  flagOn: boolean;
+  configOn: boolean;
+  why: string;
+}
+
+/** One market as the seed tool sees it. */
+export interface LiquidityMarketRow {
+  marketId: string;
+  question: string;
+  shelf: string;
+  state: string;
+  pot: string;
+  seedPlaced: string;
+  split: { label: string; price: string }[];
+  maxStake: string;
+  hasMaker: boolean;
+  seedable: boolean;
+}
+
+export interface SeedPreview {
+  marketId: string;
+  perOutcome: string;
+  outcomes: number;
+  total: string;
+  potBefore: string;
+  potAfter: string;
+  pricesBefore: string[];
+  pricesAfter: string[];
+  priceMoved: boolean;
+  maxStakeBefore: string;
+  maxStakeAfter: string;
+  /** Always false — a symmetric seed changes the pot, never the sensitivity. */
+  absorbsMore: boolean;
+  mode: 'test' | 'live';
+}
+
+export interface MakerRow {
+  marketId: string;
+  question: string;
+  enabled: boolean;
+  mode: 'test' | 'live';
+  status:
+    | 'quoting'
+    | 'idle'
+    | 'budget_spent'
+    | 'depth_reached'
+    | 'inventory_capped'
+    | 'market_closing'
+    | 'killed';
+  statusNote: string | null;
+  budget: string;
+  spent: string;
+  remaining: string;
+  inventory: { long: string; short: string };
+  openQuotes: number;
+  trades: number;
+  realisedPnl: string;
+  unrealisedPnl: string;
+  lastQuoteAt: string | null;
+  lastCycleAt: string | null;
+  killedAt: string | null;
+  killReason: string | null;
+  seededAt: string | null;
+  stackConfirmed: boolean;
+}
+
 /** A source a market may name and settle against (tier 1 in the registry). */
 export interface SettlingSource {
   id: string;
@@ -522,6 +592,58 @@ export const admin = {
       method: 'POST',
       body: JSON.stringify({ text }),
     }).then((body) => body.template),
+  // ---------------------------------------------------------------- liquidity
+  /** The mode, and why LIVE is closed. A read: there is no setter. */
+  liquidityMode: () => request<LiquidityMode>('/admin/liquidity/mode'),
+  liquidityMarkets: () => request<LiquidityMarketRow[]>('/admin/liquidity/markets'),
+  seedPreview: (id: string, perOutcome: string) =>
+    request<SeedPreview>(`/admin/liquidity/seed/${id}/preview`, {
+      method: 'POST',
+      body: JSON.stringify({ perOutcome }),
+    }),
+  seedExecute: (id: string, body: { perOutcome: string; reason: string; requestId: string }) =>
+    request<{ marketId: string; added: string; potAfter: string; mode: string }>(
+      `/admin/liquidity/seed/${id}`,
+      { method: 'POST', body: JSON.stringify(body) },
+    ),
+  makers: () => request<MakerRow[]>('/admin/liquidity/makers'),
+  configureMaker: (
+    id: string,
+    body: {
+      budget: string;
+      quoteSize: string;
+      spreadKobo: number;
+      depthStop?: string;
+      inventoryCap?: string;
+      refreshMs?: number;
+    },
+  ) =>
+    request<MakerRow>(`/admin/liquidity/makers/${id}/config`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  startMaker: (id: string, confirmStacking = false) =>
+    request<MakerRow>(`/admin/liquidity/makers/${id}/start`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmStacking }),
+    }),
+  stopMaker: (id: string) =>
+    request<MakerRow>(`/admin/liquidity/makers/${id}/stop`, { method: 'POST', body: '{}' }),
+  killMaker: (id: string, reason: string) =>
+    request<{ marketId: string; cancelled: number }>(`/admin/liquidity/makers/${id}/kill`, {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+  killAllMakers: (reason: string) =>
+    request<{ markets: number; cancelled: number }>('/admin/liquidity/kill-all', {
+      method: 'POST',
+      body: JSON.stringify({ reason }),
+    }),
+  cycleMaker: (id: string) =>
+    request<{ status: string; quotes: number }>(`/admin/liquidity/makers/${id}/cycle`, {
+      method: 'POST',
+      body: '{}',
+    }),
   settlingSources: () => request<SettlingSource[]>('/admin/studio/sources'),
   /** The starter templates, retired ones included. */
   studioTemplates: () => request<LibraryTemplate[]>('/admin/studio/templates'),
